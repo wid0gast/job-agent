@@ -1,7 +1,7 @@
 # Job Agent: Plan
 
 Status: Phase 1 slice built (2026-10-13). Items marked **(exists)** are
-built; the rest is planned.
+built; the rest is planned. Next: the agents (A1 → A2 → A3) below.
 
 ## Goal
 
@@ -333,6 +333,83 @@ on the demo board.
 - **Interview prep:** when an invite arrives, produce a short brief on the
   company, role and likely questions.
 
+## Agents (next: A1 → A2 → A3)
+
+Today the app is a workflow: code picks every step and the model answers
+single JSON calls. That stays for known paths (the four supported systems,
+submits). Agents go where the path is unknown. **Safety stays in code**: no
+agent tool approves, submits, changes caps or edits an approved packet; the
+invented-number check, approval hash and CAPTCHA/code handoff apply as now.
+
+### Shared foundation
+
+- **Harness:** restore `harness.py` from commit `8c173bb` (loop, tool errors
+  returned to the model, JSONL step log, step cap) and `llm.complete()`. The
+  broker client already streams tool calls.
+- **Tools** wrap existing functions and return small JSON. `ask_user` uses
+  the worker's question box (with the hosted screenshot link).
+- **Trace page** (`/runs/<id>`): each step's reasoning, tool, arguments and
+  result summary, refreshing live. Linked from Today and Activity.
+- **Limits per run:** step cap, spend cap, wall-clock cap (hosted runs must
+  finish inside a 30-minute session, one model call at a time).
+- **Tests:** a scripted fake model drives each agent against the demo boards.
+
+### A1. Planner
+
+You give a goal on Today ("fill the queue with my 8 best ML internships,
+NYC or remote"). The agent plans and acts until the queue holds them.
+
+| Tool | Wraps |
+| --- | --- |
+| `refresh_jobs`, `rank_jobs` | `sources.refresh`, `matching.score` |
+| `list_jobs(filters)`, `read_job(id)` | tracker queries, posting text |
+| `check_caps(company)` | `tracker` cap check |
+| `prepare(id)`, `read_packet(id)` | `prepare.prepare`, packet summary (fit, gaps, needs-you items) |
+| `redo(id, note)` | re-prepare with a note (at most twice per job) |
+| `ask_user(question)` | one consolidated question instead of one per packet |
+| `finish(summary)` | ends the run |
+
+Done when: on the demo boards it fills the queue to the target, skips
+capped companies, asks one combined question for a shared gap, and the
+trace shows why it picked and redid each job.
+
+### A2. Unsupported sites, with learned replay
+
+For jobs on systems without a coded adapter (iCIMS, SmartRecruiters, Taleo,
+custom pages) and Workday walks that hit a new question.
+
+- **Explore:** a browser agent (the old snapshot/ref tools, final-submit
+  click blocked) fills the form from the packet tools (`answer_for(question)`
+  via `answers.py`, `ask_user`, `remember_answer`) and stops at the final
+  review page.
+- **Record:** each step saved by field label and role (not page refs), with
+  a page fingerprint. The packet shows the recording and a screenshot; the
+  approval hash covers it.
+- **Submit:** coded replay of the recording, checking each label exists
+  first. Any mismatch stops it as `needs_you` (re-explore needs a new
+  approval). The final click only ever happens in replay.
+- **Learn:** recordings are kept per system/site; the next job on the same
+  system replays with new values and the agent only handles new questions.
+- Local first; on the app store once the hosted browser works.
+
+Done when: iCIMS-like and custom-form copies on the demo site are explored,
+approved and replayed, and a changed form stops safely.
+
+### A3. Company research
+
+Only for jobs being prepared that need a cover letter or a "why us" answer.
+
+- **Tools:** `web_search`, `fetch_page` (visible text only), `read_job`,
+  `save_fact(fact, url, quote)`, `finish`.
+- **Truth rule, extended to the company:** code keeps a fact only if its
+  quote appears in a page the agent fetched. Letters and "why us" answers may
+  use only kept facts. At most about 8 fetches per job.
+- **Open:** which search API (a key for Brave or Tavily locally; the app store
+  needs one too).
+
+Done when: each letter's company claims link to a kept fact, and a planted
+false claim on a demo page is not used.
+
 ## Changes to existing code
 
 - `SUBMIT_MODE` stays, still `review` by default. `auto` gains the
@@ -343,8 +420,9 @@ on the demo board.
   coded submit step.
 - The terminal remains for setup and scripting. The dashboard becomes the
   main interface.
-- `sites.yaml` remains for LinkedIn, Handshake and Jobright; the master list
-  and company feeds become the main source.
+- The browsing-agent `run` flow, `sites.yaml` and `skills/` were removed
+  (2026-10-15); the master list and company feeds are the sources. A2
+  brings browser tools back for unsupported sites only.
 
 ## Open items
 
