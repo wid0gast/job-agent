@@ -1,0 +1,13 @@
+[project]
+name = "job-agent"
+version = "0.2.0"
+description = "Finds AI/ML jobs, tailors resumes and applies after you approve."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "httpx>=0.27,<1",
+  "playwright>=1.48,<2",
+  "pyyaml>=6,<7",
+  "markdown>=3.6,<4",
+  "pypdf>=5,<7",
+  "cryptography>=42",
+]

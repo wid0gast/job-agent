@@ -1,0 +1,27 @@
+# Written by the agent from profile/resume.md. Don't edit: it's replaced
+# whenever you accept a new master resume. To override a field, set it in
+# profile.yaml.
+contact:
+  name: Jane Doe
+  email: jane.doe@example.com
+  phone: +1 555 555 0100
+  location: New York, NY
+  country: United States
+  linkedin: https://www.linkedin.com/in/janedoe
+  github: https://github.com/janedoe
+education:
+- school: New York University
+  degree: B.S. Computer Science
+  major: Computer Science
+  start: Sep 2023
+  graduation: May 2027
+  gpa: '3.7'
+work_authorization:
+  status: ''
+  authorized_in_us: true
+  requires_sponsorship_now: false
+  requires_sponsorship_future: false
+  rule: Example data.
+derived:
+  from: profile/resume.md
+  on: '2026-10-14'

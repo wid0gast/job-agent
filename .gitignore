@@ -1,0 +1,18 @@
+# Personal data never leaves this machine.
+.env
+profile/
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Resume PDFs dropped in this folder by hand.
+/*.pdf
+# Personal files dropped in this folder by hand (job sheets, resumes).
+/*.csv
+!/companies.csv
+# LaTeX resumes dropped in this folder by hand.
+/*.tex
+# Probe binaries (large; rebuilt from upstream releases).
+probe/bin/
+.DS_Store

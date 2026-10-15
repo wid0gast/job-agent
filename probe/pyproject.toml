@@ -1,0 +1,6 @@
+[project]
+name = "job-agent-probe"
+version = "0.2.0"
+description = "Checks what the class platform supports for Job Agent."
+requires-python = ">=3.12,<3.13"
+dependencies = ["httpx>=0.27,<1", "pyyaml>=6,<7", "pypdf>=5,<7", "playwright>=1.48,<2"]

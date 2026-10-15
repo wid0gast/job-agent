@@ -1,0 +1,15 @@
+# Known application limits, keyed by company_id from companies.csv.
+# Companies without an entry get the default: COMPANY_CAP per COMPANY_WINDOW_DAYS (.env).
+# Limits learned from pages go to data/learned-rules.yaml; copy confirmed ones here.
+
+google:
+  max_applications: 3
+  window_days: 30          # rolling
+  reapply_same_job_days: 90
+  source: https://support.google.com/googlecareers/answer/6095391
+  confidence: official
+
+amazon:
+  max_active_applications: 10
+  source: forum reports
+  confidence: unverified

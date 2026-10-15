@@ -1,0 +1,94 @@
+% Resume style (preamble only). The agent writes the document body from your
+% resume. To use your own style, put a .tex file with the same macros in
+% profile/resume-templates/one-page.tex
+\documentclass[a4paper,10pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{multicol}
+\usepackage{bibentry}
+\usepackage{hanging}
+\usepackage[T1]{fontenc}
+\usepackage{charter}
+\usepackage{soul}
+\usepackage{fontawesome5}
+\usepackage{academicons}
+
+
+\pagestyle{fancy}
+\fancyhf{} % clear all header and footer fields
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.6in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1.2in}
+\addtolength{\topmargin}{-.7in}
+\addtolength{\textheight}{1.4in}
+
+\urlstyle{rm}
+
+\raggedbottom
+% Justified text with hyphenation disabled: TeX packs each line as full as it
+% can by adjusting word spacing, and never breaks a word across lines.
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\emergencystretch=3em
+\setlength{\tabcolsep}{0in}
+
+% Global list tightening
+\setlist{nosep, topsep=2pt, partopsep=0pt, itemsep=2pt, parsep=0pt}
+
+% Sections formatting
+\newcommand{\sectitlefmt}[1]{\so{\MakeUppercase{#1}}}
+\titleformat{\section}{\normalsize\bfseries}{}{0em}{\sectitlefmt}[\color{black}\titlerule]
+\titlespacing*{\section}{1pt}{7pt}{3pt}
+
+%-------------------------
+% Custom commands
+\newcommand\publication[1]{%
+    \smallskip\par\hangpara{1.5em}{1}\bibentry{#1}\smallskip
+}
+
+\newcommand{\resumeItem}[2]{
+  \item\small{
+    \textbf{#1}{: #2}
+  }
+}
+
+\newcommand{\resumeItemWithoutTitle}[1]{
+  \item\small{
+    {\vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{#3} & \textit{#4} \\
+    \end{tabular*}
+}
+
+\newcommand{\expSubheading}[4]{
+  \item
+  \textbf{#1}, \textit{#3} \hfill \textit{#4}
+}
+
+
+\newcommand{\resumeSubItem}[2]{\resumeItem{#1}{#2}}
+
+\renewcommand{\labelitemi}{\textbullet}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0pt, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=1.5em]}
+\newcommand{\resumeItemListEnd}{\end{itemize}}

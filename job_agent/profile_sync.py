@@ -1,0 +1,159 @@
+"""Your profile's facts come from your master resume, not from typing them twice.
+
+When a master resume is accepted, name, contact details, links, education and
+work authorization are read from it into profile/resume-profile.yaml (written
+by the agent, never by hand). profile.yaml holds only what a resume doesn't
+say (preferences, demographic answers, standard answers) and can override any
+field if you ever need to.
+
+Every value must appear in the resume text, or it is dropped. Work
+authorization is derived in code from the status the resume states, by fixed
+rules, and the rule used is recorded.
+"""
+
+import re
+from datetime import date
+
+import yaml
+
+from . import config
+
+PATH_NAME = "resume-profile.yaml"
+URL = re.compile(r"https?://[^\s·|,)]+")
+
+PROMPT = """
+You read a resume and copy out facts for job application forms. Copy values
+exactly as they appear (you may fix ALL-CAPS names to normal capitalization).
+Use "" for anything the resume doesn't state; never guess. Education entries
+most recent first. degree: the degree as written (e.g. "Master of Science").
+major: the field (e.g. "Statistics"). start/graduation: month and year as
+written (e.g. "May 2027"), or "" if absent. work_authorization_text: the
+resume's own sentence about visa or work status, or "".
+""".strip()
+
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "email": {"type": "string"},
+        "phone": {"type": "string"},
+        "location": {"type": "string"},
+        "work_authorization_text": {"type": "string"},
+        "education": {"type": "array", "items": {
+            "type": "object",
+            "properties": {k: {"type": "string"} for k in
+                           ("school", "location", "degree", "major", "start", "graduation", "gpa")},
+            "required": ["school", "location", "degree", "major", "start", "graduation", "gpa"],
+            "additionalProperties": False}},
+    },
+    "required": ["name", "email", "phone", "location", "work_authorization_text", "education"],
+    "additionalProperties": False,
+}
+
+# Status stated on a resume → how application questions are answered.
+# (pattern, authorized now, needs sponsorship now, needs sponsorship later, rule)
+STATUS_RULES = [
+    (r"u\.?s\.? citizen|citizenship", True, False, False, "U.S. citizen"),
+    (r"green card|permanent resident", True, False, False, "U.S. permanent resident"),
+    (r"\b(f-?1|cpt|opt|stem opt)\b", True, False, True,
+     "F-1 student: may work through CPT/OPT now; long-term employment needs sponsorship (H-1B)"),
+    (r"\bh-?1b\b", True, True, True, "H-1B: a new employer must sponsor a transfer"),
+    (r"\bj-?1\b", True, False, True, "J-1: work tied to the program; later employment needs sponsorship"),
+    (r"\b(ead|work permit|authorized to work)\b", True, False, False, "Stated as authorized to work"),
+]
+
+
+def path():
+    return config.PROFILE_DIR / PATH_NAME
+
+
+def squash(text: str) -> str:
+    """Letters and digits only, so an added comma or space isn't a new fact."""
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def work_authorization(text: str, country: str) -> dict:
+    """Answers implied by the resume's own status sentence, by fixed rules."""
+    for pattern, authorized, now, later, rule in STATUS_RULES:
+        if re.search(pattern, text, re.I):
+            return {"status": text, "authorized_in_us": authorized,
+                    "requires_sponsorship_now": now, "requires_sponsorship_future": later,
+                    "rule": rule}
+    if not text and country == "United States":
+        return {"status": "", "rule": "No status on the resume; nothing assumed."}
+    return {"status": text, "rule": "Status not recognized; nothing assumed."}
+
+
+def links(resume: str) -> dict:
+    found = {"linkedin": "", "github": "", "scholar": "", "website": ""}
+    first_lines = "\n".join(resume.splitlines()[:4])  # the contact block
+    for url in URL.findall(first_lines):
+        host = url.lower()
+        key = ("linkedin" if "linkedin.com" in host else "github" if "github.com" in host
+               else "scholar" if "scholar.google" in host else "website")
+        found[key] = found[key] or url
+    return found
+
+
+def derive(llm, resume: str) -> tuple[dict, list[str]]:
+    """Profile facts from the resume, and notes on anything dropped or inferred."""
+    reply = llm.json(PROMPT, resume, SCHEMA, "resume_facts")
+    text, notes = squash(resume), []
+
+    def keep(label: str, value: str) -> str:
+        value = (value or "").strip()
+        if value and squash(value) not in text:
+            notes.append(f"Dropped {label} {value!r}: not in the resume.")
+            return ""
+        return value
+
+    education = []
+    for entry in reply["education"]:
+        kept = {k: keep(f"education {k}", v) for k, v in entry.items()}
+        if kept["school"]:
+            education.append({k: v for k, v in kept.items() if v})
+    location = keep("location", reply["location"])
+    if not location and education:
+        location = education[0].get("location", "")
+    country = "United States" if re.search(r"\b(usa|united states|u\.s\.)\b|, [A-Z]{2}$",
+                                           location or "", re.I) else ""
+    contact = {"name": keep("name", reply["name"]), "email": keep("email", reply["email"]),
+               "phone": keep("phone", reply["phone"]), "location": location,
+               "country": country, **links(resume)}
+    status = keep("work authorization", reply["work_authorization_text"])
+    authorization = work_authorization(status, country)
+    notes.append(f"Work authorization: {authorization['rule']}")
+    for field in ("phone", "location"):
+        if not contact[field]:
+            notes.append(f"Your resume has no {field}; questions asking for it will come to you.")
+    profile = {
+        "contact": {k: v for k, v in contact.items() if v},
+        "education": education,
+        "work_authorization": authorization,
+        "derived": {"from": "profile/resume.md", "on": date.today().isoformat()},
+    }
+    return profile, notes
+
+
+def sync(llm, log=print) -> list[str]:
+    resume = config.read_master_resume()
+    profile, notes = derive(llm, resume)
+    header = ("# Written by the agent from profile/resume.md. Don't edit: it's replaced\n"
+              "# whenever you accept a new master resume. To override a field, set it in\n"
+              "# profile.yaml.\n")
+    path().write_text(header + yaml.safe_dump(profile, sort_keys=False, allow_unicode=True),
+                      encoding="utf-8")
+    for note in notes:
+        log(f"  {note}")
+    return notes
+
+
+def merge(base: dict, override: dict) -> dict:
+    """profile.yaml on top of the resume-derived profile, key by key."""
+    merged = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge(merged[key], value)
+        elif value not in (None, "", [], {}):
+            merged[key] = value
+    return merged

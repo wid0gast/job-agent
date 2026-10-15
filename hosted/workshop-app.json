@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "workshop.app.v1",
+  "slug": "job-agent",
+  "title": "Job Agent",
+  "description": "Finds matching jobs, tailors your resume, applies, and asks you before every submit.",
+  "runtime": {
+    "languages": ["python312"],
+    "profile": "standard",
+    "build": [
+      "python3.12", "-m", "py_compile",
+      "hosted/app.py",
+      "job_agent/harness.py",
+      "job_agent/tracker.py",
+      "job_agent/documents.py",
+      "job_agent/demo_site.py"
+    ],
+    "start": ["python3.12", "hosted/app.py"],
+    "port": 8080,
+    "healthPath": "/healthz"
+  },
+  "instructions": "Press Find and apply. Give the agent the emailed code from the Demo inbox, then review and approve each submission.",
+  "inference": {
+    "mode": "selectable",
+    "models": [
+      "deepseek/deepseek-v4.1-flash",
+      "openai/gpt-6-luna",
+      "z-ai/glm-5.3-flash"
+    ],
+    "defaultModel": "deepseek/deepseek-v4.1-flash",
+    "defaultProfile": "deepseek-auto",
+    "estimatedUsdPerVisit": { "low": 0.01, "high": 0.3 },
+    "estimateBasis": "Illustrative, unmeasured. A run of two applications uses up to about 75 model requests; portal limits apply."
+  },
+  "network": {
+    "classServices": [],
+    "publicHttpsDomains": [],
+    "publicWeb": false
+  },
+  "storage": { "visitorMiB": 0, "schema": "chat.v1" },
+  "integrations": []
+}

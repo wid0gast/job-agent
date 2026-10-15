@@ -1,0 +1,40 @@
+# What your resume can't say: job preferences and standard answers.
+# Your name, contact details, links, education and work authorization come
+# from your master resume (resume-profile.yaml, written by the agent when you
+# accept a master resume). To override any of those, add it here, e.g.
+#   contact:
+#     phone: "+1 555 555 0100"
+# This folder (profile/) is gitignored and stays on your machine, but its
+# contents are sent to your OpenRouter model while applying.
+
+preferences:
+  roles: ["Machine Learning Intern", "Data Science Intern", "AI Research Intern"]
+  # Hard filters (applied in code before any model call). Leave a list empty for no filter.
+  fields: [ai_ml_data]             # Simplify categories to pull.
+  job_types: [internship, full_time]
+  terms: ["Summer 2027"]           # Internship seasons; full-time roles have none.
+  locations: ["New York, NY", "Remote"]   # Or [any].
+  max_posting_age_days: 45
+  exclude_title_words: []
+  start_date: June 2027
+  willing_to_relocate: true
+  salary_expectation: ""           # Leave blank to have the agent ask or skip.
+  exclude_companies: []
+  notes: Prefer early-stage startups and AI teams.
+
+# Voluntary demographic questions. Remove a line to always decline that one.
+# Unlisted demographic questions are declined automatically.
+eeo:
+  gender: Decline to self-identify
+  race_ethnicity: Decline to self-identify
+  hispanic_latino: Decline to self-identify
+  veteran_status: I am not a protected veteran
+  disability_status: I do not wish to answer
+
+# Common questions answered up front. Add your own.
+standard_answers:
+  how_did_you_hear: Company careers page
+  earliest_start: June 2027
+  previously_worked_here: "No"
+  # Required one-option questions like "Privacy Statement: I acknowledge". true = acknowledge them.
+  accept_privacy_notices: true
