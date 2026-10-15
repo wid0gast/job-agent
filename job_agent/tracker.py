@@ -402,13 +402,6 @@ class Tracker:
         )
         self.db.commit()
 
-    @locked
-    def has_account(self, domain: str) -> bool:
-        return bool(
-            self.db.execute(
-                "SELECT 1 FROM accounts WHERE domain = ?", (domain,)
-            ).fetchone()
-        )
 
     # ----- tasks (dashboard → worker) ----------------------------------------
 

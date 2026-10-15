@@ -117,19 +117,11 @@ to this myself".
 Ashby and Workday in the demo site (traps included: hidden AI instructions, honeypots, an
 emailed code).
 
-### Browsing agent (the original flow)
-
-`uv run job-agent run "ML internships in NYC" --sites demo --max 2` searches
-the sites in `sites.yaml` and applies with a model driving the browser,
-asking you before each submit. Start the fake job board with
-`uv run job-agent demo-site` to try it. LinkedIn restricts automated
-activity, so keep volume low there.
-
 ### Settings (`.env`)
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `SUBMIT_MODE` | `review` | `auto` submits without asking. Keep `review` for LinkedIn. |
+| `SUBMIT_MODE` | `review` | `auto` submits approved-quality packets without asking. |
 | `DAILY_SUBMIT_LIMIT` | `15` | Hard cap on submissions per day. |
 | `BROWSER_CHANNEL` | `chrome` | `chromium` uses Playwright's browser (run `uv run playwright install chromium`). |
 | `COMPANY_CAP`, `COMPANY_WINDOW_DAYS` | `3`, `30` | Default per-company limit (rolling). Known limits are in `company-rules.yaml`. |
@@ -154,14 +146,11 @@ activity, so keep volume low there.
   response rate of mass ones, and sites restrict accounts that behave like
   bots. Hence the daily cap and the review step.
 
-LinkedIn's terms restrict automated activity and it can restrict accounts
-that use automation. Keep volume low there.
-
 ### Code map
 
 | File | What it does |
 | --- | --- |
-| `job_agent/cli.py` | Commands, and the original search → apply flow |
+| `job_agent/cli.py` | Commands |
 | `job_agent/sources.py` | Master list: Simplify JSON, Greenhouse boards, refresh |
 | `job_agent/filters.py` | Hard filters (location, term, degree, seniority, sponsorship text) |
 | `job_agent/companies.py` | Company IDs and aliases (`companies.csv`), caps (`company-rules.yaml`) |
@@ -179,29 +168,34 @@ that use automation. Keep volume low there.
 | `job_agent/profile_sync.py` | Profile facts from the master resume, work authorization rules |
 | `job_agent/history.py` | Application record: import a job sheet, export, outcome stats |
 | `job_agent/resumes.py` | Resume PDFs → Markdown → merged master, with truth checks |
-| `job_agent/llm.py` | OpenRouter client: JSON replies, retries, spending cap |
+| `job_agent/llm.py` | Model clients (OpenRouter, the class broker): JSON replies, retries, spending cap |
+| `job_agent/matching.py` | Ranks jobs against the description on the Search page |
+| `job_agent/latex.py` | Resumes in your LaTeX template, fitted to one or two pages |
 | `job_agent/ats.py` | Which application system a URL belongs to, and its job ID |
-| `job_agent/harness.py` | The agent loop: model call, tools, snapshot pruning, logs |
-| `job_agent/prompts.py` | Instructions for the search and apply agents |
-| `job_agent/tools.py` | Every tool the model can call, and the submit approval gate |
-| `job_agent/browser.py` | Chrome control: numbered visible elements, iframes, uploads |
+| `job_agent/prompts.py` | Instructions for each model step (fit, tailoring, answers, letters, ranking) |
+| `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |
 | `job_agent/documents.py` | Resume/cover letter PDFs and the invented-number check |
 | `job_agent/demo_site.py`, `demo_greenhouse.py`, `demo_lever.py`, `demo_ashby.py`, `demo_workday.py` | The fake job board and system copies for testing |
-| `skills/ats-playbook.md` | Notes on Workday, Greenhouse, Lever, Easy Apply, etc. |
-| `sites.yaml` | Which job sites to search and how |
+| `job_agent/hosted.py`, `netrelay.py` | The class app store version (below) |
 
 Full step-by-step logs of each run are in `data/logs/`.
 
-### Class platform version
+### Class app store version
 
-The workshop platform has no public web access or browser, so `hosted/` is a
-web version that runs the same agent loop, tracker and fact check against a
-built-in demo job board, using the platform's model access. Build the upload:
+`python -m job_agent.hosted` runs this same app on the class platform:
+everything lives in the session's workspace, models come from the class
+broker, Chromium is unpacked at build time (`scripts/hosted_build.py`), and
+`netrelay.py` carries the browser's and LaTeX's traffic through the platform
+proxy. Sessions keep nothing, so the dashboard offers a download of
+everything. Build the upload (no personal data goes in):
 
 ```sh
-uv run python scripts/package_hosted.py --slug <your address from My app> --output ../job-agent.zip
+uv run python scripts/package_app.py --output ../job-agent-app.zip
 ```
+
+`appstore/` holds its manifest, README and dependency lock;
+`appstore/bin/tectonic` is the Linux Tectonic 0.17.0 binary (not in git).
 
 ### Tests
 

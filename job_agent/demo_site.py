@@ -97,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
             words = [w for w in query.split() if len(w) > 2]
             listed = [
                 f'<a class="job" href="/jobs/{jid}"><b>{t}</b><br>{c} · {loc}</a>'
-                for jid, (c, t, loc, _) in JOBS.items()
+                for jid, (c, t, loc, d) in JOBS.items()
                 if not words or any(w in f"{c} {t} {d}".lower() for w in words)
             ] or ["<p>No matching jobs.</p>"]
             return self.send(page("Demo Job Board", "".join(listed)))

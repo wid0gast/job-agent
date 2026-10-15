@@ -1,15 +1,13 @@
-"""Command line entry point: setup, login, refresh, prepare, dashboard, worker, run, status."""
+"""Command line entry point: setup, refresh, prepare, resumes, history, dashboard, worker, status."""
 
 import argparse
-import json
-import re
 import shutil
 from datetime import datetime
 from pathlib import Path
 
 from . import config
-from .tracker import Tracker, now
-from .worker import BROWSER_PROFILE, DB_PATH, browser_lock
+from .tracker import Tracker
+from .worker import DB_PATH, browser_lock
 
 
 def cmd_setup(_args) -> None:
@@ -28,112 +26,6 @@ def cmd_setup(_args) -> None:
         "  2. Put your OpenRouter key and model in .env.\n"
         "  3. uv run job-agent dashboard   (refresh, prepare, approve, submit)"
     )
-
-
-def cmd_login(args) -> None:
-    from .browser import Browser
-
-    sites = config.load_sites()
-    settings = config.Settings.from_env(require_model=False)
-    with browser_lock():
-        _login(args, sites, settings, Browser)
-
-
-def _login(args, sites, settings, Browser) -> None:
-    browser = Browser(BROWSER_PROFILE, settings.browser_channel)
-    try:
-        for index, name in enumerate(args.sites):
-            if name not in sites:
-                raise SystemExit(f"Unknown site {name!r}. Known: {', '.join(sites)}")
-            page = browser.page if index == 0 else browser.context.new_page()
-            page.goto(sites[name]["login_url"])
-        input(
-            "Sign in to each tab in the Chrome window. Logins are saved in\n"
-            "data/browser-profile for future runs. Press Enter here when done. "
-        )
-    finally:
-        browser.close()
-
-
-def cmd_run(args) -> None:
-    with browser_lock():
-        _run(args)
-
-
-def _run(args) -> None:
-    from .browser import Browser
-    from .harness import AgentRun, OpenRouter
-    from .prompts import APPLY_PROMPT, SEARCH_PROMPT
-    from .tools import apply_tools, search_tools
-
-    settings = config.Settings.from_env()
-    profile = config.load_profile()
-    config.read_master_resume()  # Fail early if it is missing.
-    all_sites = config.load_sites()
-    unknown = [s for s in args.sites if s not in all_sites]
-    if unknown:
-        raise SystemExit(f"Unknown sites {unknown}. Known: {', '.join(all_sites)}")
-    sites = {name: all_sites[name] for name in args.sites}
-
-    tracker = Tracker(DB_PATH)
-    llm = OpenRouter(settings.api_key, settings.model, settings.spend_cap_usd,
-                     settings.data_collection)
-    run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-    logs = config.DATA_DIR / "logs" / run_id
-    started = "" if args.include_queued else now()
-    print(f"Model: {settings.model} · submit mode: {settings.submit_mode} · "
-          f"daily limit: {settings.daily_submit_limit} "
-          f"(used today: {tracker.submitted_today()})")
-
-    browser = Browser(BROWSER_PROFILE, settings.browser_channel)
-    try:
-        queued = tracker.leads(args.max, since=started)
-        if len(queued) < args.max and not args.no_search:
-            print(f"\n== Searching for {args.max - len(queued)} matching jobs")
-            search = AgentRun(llm, SEARCH_PROMPT, search_tools(browser, tracker,
-                              args.max - len(queued)), logs / "search.jsonl", max_steps=80)
-            search.run(json.dumps({
-                "request": args.request,
-                "target_new_leads": args.max - len(queued),
-                "sites": sites,
-                "search_preferences": profile.get("preferences", {}),
-                "education": profile.get("education", []),
-            }, indent=1))
-
-        jobs = tracker.leads(args.max, since=started)
-        print(f"\n== Applying to {len(jobs)} job(s)")
-        for job in jobs:
-            print(f"\n-- {job['title']} at {job['company']}  ({job['url']})")
-            tracker.update(job["id"], status="working")
-            slug = re.sub(r"[^a-z0-9]+", "-", f"{job['company']}-{job['title']}".lower())
-            job_dir = config.DATA_DIR / "applications" / f"{job['id']}-{slug[:60]}"
-            agent = AgentRun(llm, APPLY_PROMPT,
-                             apply_tools(browser, tracker, settings, profile, job, job_dir),
-                             logs / f"job-{job['id']}.jsonl", max_steps=150)
-            try:
-                outcome = agent.run(json.dumps({
-                    "job": {k: job[k] for k in ("url", "site", "company", "title", "location")},
-                    "user_request": args.request,
-                    "site_notes": all_sites.get(job["site"], {}).get("notes", ""),
-                }, indent=1))
-            except KeyboardInterrupt:
-                tracker.update(job["id"], status="needs_you", reason="Interrupted by user.")
-                raise
-            except Exception as error:  # noqa: BLE001 - record and move to the next job.
-                outcome = f"failed: {type(error).__name__}: {error}"
-                tracker.update(job["id"], status="failed", reason=outcome[:2000])
-            # An agent that stopped without finish_job leaves the job unresolved.
-            row = next(r for r in tracker.all() if r["id"] == job["id"])
-            if row["status"] == "working":
-                tracker.update(job["id"], status="needs_you",
-                               reason=f"Agent stopped without a recorded outcome: {outcome[:500]}")
-            print(f"   result: {outcome[:300]}")
-    except KeyboardInterrupt:
-        print("\nStopped.")
-    finally:
-        browser.close()
-    print(f"\nLogs: {logs}")
-    cmd_status(args)
 
 
 def cmd_status(_args) -> None:
@@ -282,17 +174,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="job-agent")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("setup", help="Create profile/ and .env from the examples.")
-    login = sub.add_parser("login", help="Open site login pages to sign in by hand.")
-    login.add_argument("sites", nargs="+")
-    run = sub.add_parser("run", help="Find matching jobs and apply.")
-    run.add_argument("request", help='What to apply for, e.g. "ML internships in NYC".')
-    run.add_argument("--max", type=int, default=3, help="Jobs to apply to this run.")
-    run.add_argument("--sites", type=lambda s: s.split(","), default=["linkedin"],
-                     help="Comma-separated keys from sites.yaml.")
-    run.add_argument("--include-queued", action="store_true",
-                     help="Also apply to leads found by earlier runs.")
-    run.add_argument("--no-search", action="store_true",
-                     help="Skip searching; apply to queued leads only (implies --include-queued).")
     status = sub.add_parser("status", help="List tracked jobs past the found stage.")
     status.add_argument("--all", action="store_true", help="Include found, filtered and closed jobs.")
     refresh = sub.add_parser("refresh", help="Pull the master job list (Simplify lists).")
@@ -314,12 +195,8 @@ def main() -> None:
     demo = sub.add_parser("demo-site", help="Serve a fake job board for safe testing.")
     demo.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    if getattr(args, "no_search", False):
-        args.include_queued = True
     {
         "setup": cmd_setup,
-        "login": cmd_login,
-        "run": cmd_run,
         "status": cmd_status,
         "refresh": cmd_refresh,
         "prepare": cmd_prepare,

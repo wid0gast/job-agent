@@ -13,8 +13,6 @@ HOSTED = bool(os.environ.get("JOB_AGENT_HOSTED"))
 PROFILE_DIR = HOME / "profile"
 PROFILE_EXAMPLE_DIR = ROOT / "profile.example"
 DATA_DIR = HOME / "data"
-SKILLS_DIR = ROOT / "skills"
-SITES_FILE = ROOT / "sites.yaml"
 
 
 def load_env_file(path: Path = ROOT / ".env") -> None:
@@ -69,10 +67,6 @@ class Settings:
             data_collection=os.environ.get("OPENROUTER_DATA_COLLECTION", "deny").strip(),
             cover_letter=os.environ.get("COVER_LETTER", "required").strip(),
         )
-
-
-def load_sites() -> dict:
-    return yaml.safe_load(SITES_FILE.read_text(encoding="utf-8"))
 
 
 def load_profile() -> dict:

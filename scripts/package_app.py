@@ -38,14 +38,14 @@ files = {
     "pyproject.toml": ROOT / "appstore/pyproject.toml",  # Dependencies only, like the class examples.
     "uv.lock": ROOT / "appstore/uv.lock",
     "scripts/hosted_build.py": ROOT / "scripts/hosted_build.py",
-    "bin/tectonic": ROOT / "probe/bin/tectonic",
-    "sites.yaml": ROOT / "sites.yaml",
+    "bin/tectonic": ROOT / "appstore/bin/tectonic",
     "companies.csv": ROOT / "companies.csv",
     "company-rules.yaml": ROOT / "company-rules.yaml",
 }
-for pattern in ("job_agent/*.py", "job_agent/templates/*.tex", "skills/*"):
+for pattern in ("job_agent/*.py", "job_agent/templates/*.tex"):
     for path in sorted(ROOT.glob(pattern)):
-        files[str(path.relative_to(ROOT))] = path
+        if not path.name.startswith("demo_"):  # Fake job boards for the tests.
+            files[str(path.relative_to(ROOT))] = path
 
 with ZipFile(args.output, "w") as archive:
     for name, path in sorted(files.items()):

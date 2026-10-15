@@ -18,7 +18,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REPORT = ROOT / "build-report.json"
 CHROMIUM = ROOT / "chromium"
-BIN = ROOT / "bin"
 REGISTRY = "https://registry.npmjs.org"
 PACKAGES = {"chromium": "@sparticuz/chromium"}
 report = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "python": sys.version.split()[0]}

@@ -13,7 +13,7 @@ from http.server import ThreadingHTTPServer
 
 from playwright.sync_api import expect, sync_playwright
 
-from job_agent import config, dashboard, demo_greenhouse, worker
+from job_agent import dashboard, demo_greenhouse, worker
 from job_agent.tracker import Tracker
 
 from test_pipeline import ScriptedModel, add_job, env as env  # noqa: F401 - fixtures

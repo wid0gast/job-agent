@@ -273,29 +273,6 @@ def tailored_resume(ctx, job, description, profile, master, folder, stem, full_n
         saved = documents.save_resume(ctx.headless, folder, f"{stem}_Resume", tailored, contact, pages,
                                       f"{full_name} Resume")
     return tailored, saved
-    fix = None
-    if saved["pages"] > pages:
-        log(f"  trimming: {saved['pages']} pages, limit {pages}")
-        fix = (f"Your previous version ran to {saved['pages']} pages; the limit is {pages}. "
-               "Cut the least relevant bullets, entries or sections so it fits.")
-    elif saved.get("fill", 1) < FILL_TARGET:
-        log(f"  filling: the last page is {round(100 * saved['fill'])}% used")
-        fix = (f"Your previous version left about {round(100 * (1 - saved['fill']))}% of the last page "
-               "empty. Add the next most relevant real material from the resume (more bullets, "
-               "publications, awards, projects) so it fills the page, without going over "
-               f"{pages} page(s).")
-    if fix:
-        retry = tailor(ctx, job, description, profile, master, pages, fix)
-        again = documents.save_resume(ctx.headless, folder, f"{stem}_Resume", retry, contact, pages,
-                                      f"{full_name} Resume")
-        better = (again["pages"] < saved["pages"]) if saved["pages"] > pages else (
-            again["pages"] <= pages and again.get("fill", 0) > saved.get("fill", 0))
-        if better and not retry.get("invented"):
-            return retry, again
-        # Keep the first version (rewrite its files, which the retry replaced).
-        saved = documents.save_resume(ctx.headless, folder, f"{stem}_Resume", tailored, contact, pages,
-                                      f"{full_name} Resume")
-    return tailored, saved
 
 
 def draft_missing(job_id: int, ctx, log=print) -> str:

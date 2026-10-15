@@ -85,7 +85,6 @@ class Relay(threading.Thread):
         self.port = self.server.getsockname()[1]
         self.up = upstream_proxy()
         self.errors: list[str] = []
-        self.tunnels = 0
         self.serve_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.serve_tls.load_cert_chain(*loopback_certificate())
         self.serve_tls.set_alpn_protocols(["http/1.1"])
@@ -132,7 +131,6 @@ class Relay(threading.Thread):
                 client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 browser = self.serve_tls.wrap_socket(client, server_side=True)
                 site.settimeout(None)
-                self.tunnels += 1
             else:  # Plain http://: hand the request to the platform proxy with the login added.
                 if self.up:
                     site = socket.create_connection((self.up["host"], self.up["port"]), timeout=30)

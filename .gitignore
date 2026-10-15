@@ -13,6 +13,6 @@ __pycache__/
 !/companies.csv
 # LaTeX resumes dropped in this folder by hand.
 /*.tex
-# Probe binaries (large; rebuilt from upstream releases).
-probe/bin/
+# Tectonic for the app store ZIP (large; from the tectonic 0.17.0 release, x86_64 musl).
+appstore/bin/
 .DS_Store

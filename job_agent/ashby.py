@@ -26,9 +26,6 @@ query ApiJobPosting($organizationHostedJobsPageName: String!, $jobPostingId: Str
   }
 }
 """
-KINDS = {"String": "text", "Email": "text", "Url": "text", "Phone": "text", "Number": "text",
-         "LongText": "textarea", "File": "file", "Boolean": "select", "ValueSelect": "select",
-         "MultiValueSelect": "multiselect", "Location": "search", "Date": "text"}
 
 TAG_JS = r"""
 () => {
