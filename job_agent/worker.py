@@ -124,6 +124,12 @@ def run_task(task: dict, ctx: Context, log) -> str:
         tracker.set_task(task["id"], status="running", question=None)
         raise TimeoutError("No reply within 15 minutes.")
 
+    if task["kind"] == "plan":
+        from . import planner
+
+        if ctx.llm is None:
+            raise ValueError("The planner needs a model: add an OpenRouter key and model in .env.")
+        return planner.run(task["arg"] or "", ctx, ask, log, task["id"])
     if task["kind"] == "warmup":
         from . import hosted
 

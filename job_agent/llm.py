@@ -1,4 +1,5 @@
-"""Model clients (OpenRouter locally, the class broker when hosted): JSON answers for pipeline steps.
+"""Model clients (OpenRouter locally, the class broker when hosted): tool-calling turns
+for agents and JSON answers for pipeline steps.
 
 Every response's `usage.cost` is added up so a run stops at the spending cap.
 Free models are rate limited (about 20 requests a minute), so 429s are retried.
@@ -59,6 +60,14 @@ class OpenRouter:
         self.calls += 1
         self.spent_usd += float((body.get("usage") or {}).get("cost") or 0)
         return body
+
+    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+        """One agent turn with tool declarations (used by harness.AgentRun)."""
+        body = self.post({"messages": messages, "tools": tools})
+        choice = body["choices"][0]
+        if choice.get("finish_reason") not in ("stop", "tool_calls", "end_turn"):
+            raise RuntimeError(f"Incomplete response: {choice.get('finish_reason')}")
+        return choice["message"]
 
     def json(self, system: str, user: str, schema: dict, name: str = "answer") -> dict:
         """A JSON object matching `schema`, retried once if the model gets it wrong.

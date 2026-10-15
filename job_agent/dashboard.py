@@ -238,6 +238,10 @@ def page_today(app: Dashboard, flash: str) -> bytes:
                             '<input type=text name=answer autofocus style="max-width:260px;margin-right:8px">')
                      + "</div>")
         job = f' <a href="/job/{task["job_id"]}">job {task["job_id"]}</a>' if task["job_id"] else ""
+        if task["kind"] == "plan":
+            job = f' <a href="/runs/{task["id"]}">trace</a>'
+            if task["arg"]:
+                job += f'<span class=kind>{esc(task["arg"][:90])}</span>'
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(task["kind"])}{job}</td>'
                     f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
                     f'<td class="muted">{esc((task["result"] or "")[:2000 if task["kind"] == "warmup" else 160])}</td></tr>')
@@ -250,6 +254,11 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
       · model {esc(app.settings.model or "not set")}</span>
     </div></div>
+    <div class="card"><h2>Give the agent a goal</h2>
+    <form method=post action="/plan"><input type=hidden name=token value="{app.token}">
+    <textarea name=goal rows=2 required placeholder="Fill the queue with my 8 best ML internships, NYC or remote. One per company."></textarea>
+    <div class=row style="margin-top:8px"><button class=primary>Start the agent</button>
+    <span class=muted>It finds, ranks, prepares and reviews applications, and asks you if it needs to. You still approve every one.</span></div></form></div>
     <div class="card"><h2>Tasks</h2><table><tr><th>#</th><th>Task</th><th>Status</th><th>Result</th></tr>
     {"".join(rows) or '<tr><td colspan=4 class=muted>Nothing yet. Refresh the job lists to start.</td></tr>'}
     </table></div>"""
@@ -625,6 +634,39 @@ def application_block(app: Dashboard, job: dict) -> str:
             f'<table style="margin-top:10px"><tr><th>When</th><th>What</th><th>Note</th></tr>{events}</table></div>')
 
 
+def page_run(app: Dashboard, task_id: int) -> bytes:
+    from .harness import read_trace
+    from .planner import trace_path
+
+    task = app.tracker.task(task_id)
+    if task is None:
+        return layout(app, "/", "<h1>No such run</h1>")
+    rows = []
+    for entry in read_trace(trace_path(task_id)):
+        kind, data = entry["kind"], entry["data"]
+        if kind == "thought":
+            rows.append(f'<div class=card style="margin:0 0 8px">{esc(data)}</div>')
+        elif kind == "call":
+            args = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)[:120]}" for k, v in data["args"].items())
+            rows.append(f'<div style="margin:0 0 4px"><b>→ {esc(data["name"])}</b>'
+                        f'<span class=muted>({esc(args)})</span></div>')
+        elif kind == "result":
+            ok = data.get("ok")
+            body = data.get("result") if ok else data.get("error")
+            text = json.dumps(body, ensure_ascii=False, indent=1) if not isinstance(body, str) else body
+            rows.append(f'<details style="margin:0 0 10px 18px"><summary class="{"muted" if ok else "bad"}">'
+                        f'{"result" if ok else "error"}: {esc(text[:140])}</summary><pre>{esc(text[:6000])}</pre></details>')
+        elif kind == "finish":
+            rows.append(f'<div class=card><h2>Report</h2>{esc(data)}</div>')
+    running = task["status"] in ("queued", "running", "waiting")
+    waiting = (f'<div class="flash warn">Waiting for you on <a href="/">Today</a>: {esc(task["question"])}</div>'
+               if task["status"] == "waiting" else "")
+    body = (f'<h1>Agent run {task_id} <span class="pill {esc(task["status"])}">{esc(task["status"])}</span></h1>'
+            f'<p class=muted>Goal: {esc(task["arg"])}</p>{waiting}'
+            + ("".join(rows) or "<p class=muted>Starting…</p>"))
+    return layout(app, "/", body, refresh=running and task["status"] != "waiting")
+
+
 def page_activity(app: Dashboard) -> bytes:
     text = LOG_PATH.read_text(encoding="utf-8")[-20000:] if LOG_PATH.exists() else "No activity yet."
     running = app.worker is not None and app.worker.poll() is None
@@ -696,6 +738,8 @@ def handler_for(app: Dashboard):
                 history.export_sheet(target, app.tracker)
                 return self.send(target.read_bytes(), ctype="text/csv",
                                  headers={"Content-Disposition": 'attachment; filename="applications.csv"'})
+            if parts[0] == "runs" and len(parts) == 2 and parts[1].isdigit():
+                return self.send(page_run(app, int(parts[1])))
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))
             if url.path == "/file":
@@ -758,6 +802,13 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 tracker.add_task("refresh")
                 return "Refreshing the job lists.", "/"
+            if path == "/plan":
+                goal = one.get("goal", "").strip()
+                if not goal:
+                    raise ValueError("Describe what the agent should do.")
+                app.ensure_worker()
+                task_id = tracker.add_task("plan", arg=goal[:1000])
+                return "The agent is working on it. Follow along here.", f"/runs/{task_id}"
             if path == "/prepare":
                 app.ensure_worker()
                 tracker.add_task("prepare", int(one["job_id"]))
