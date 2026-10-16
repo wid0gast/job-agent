@@ -19,7 +19,7 @@ MAX_REDOS = 2
 MAX_QUESTIONS = 3
 
 
-def trace_path(task_id: int) -> Path:
+def trace_path(task_id: int | str) -> Path:
     return config.DATA_DIR / "runs" / f"{task_id}.jsonl"
 
 
@@ -35,7 +35,8 @@ def run(goal: str, ctx, ask, log, task_id: int) -> str:
         "queue_now": Planner(ctx, ask, log).queue_status(),
         "search_settings": {k: prefs.get(k) for k in ("description", "roles", "job_types", "locations",
                                                        "terms", "fit_threshold")},
-        "systems_it_can_apply_on": sorted(systems.SUPPORTED),
+        "coded_systems": sorted(systems.SUPPORTED),
+        "other_systems": "filled by a browser agent during prepare (slower; prefer coded ones when equally good)",
     }, ensure_ascii=False, indent=1))
 
 
@@ -55,14 +56,14 @@ class Planner:
         return matching.score(self.ctx.llm, self.tracker, limit=max(1, min(limit, 200)), log=self.log)
 
     def list_jobs(self, status: str = "found", query: str = "", limit: int = 15,
-                  supported_only: bool = True):
+                  coded_only: bool = False):
         words = [w for w in query.lower().split() if w]
         rows = []
         for job in self.tracker.with_status(status):
             text = f"{job['title']} {job['company']} {job['location']}".lower()
             if words and not all(w in text for w in words):
                 continue
-            if supported_only and job["ats"] not in systems.SUPPORTED:
+            if coded_only and job["ats"] not in systems.SUPPORTED:
                 continue
             rows.append(job)
         rows.sort(key=lambda j: (-(matching.ranking_score(j)[0] or -1), -matching._epoch(j["posted_at"])))
@@ -163,8 +164,10 @@ class Planner:
             Tool("rank_jobs", "Score unranked found jobs against the user's description (one model "
                  "call per 25 jobs).", schema({"limit": integer}, []), self.rank_jobs),
             Tool("list_jobs", "Jobs with a status (found, prepared, needs_you, approved, submitted, "
-                 "filtered_out, failed), best score first. query matches title, company, location.",
-                 schema({"status": string, "query": string, "limit": integer, "supported_only": {"type": "boolean"}}, []),
+                 "filtered_out, failed), best score first. query matches title, company, location. "
+                 "how=coded jobs are fast and reliable; how=agent jobs are filled by a browser agent "
+                 "(slower, more model calls).",
+                 schema({"status": string, "query": string, "limit": integer, "coded_only": {"type": "boolean"}}, []),
                  self.list_jobs),
             Tool("read_job", "One job's details: match reason, locations, terms, fit if prepared.",
                  schema({"job_id": integer}), self.read_job),
@@ -194,7 +197,8 @@ def brief(job: dict) -> dict:
     score, kind = matching.ranking_score(job)
     return {"id": job["id"], "company": job["company"], "title": job["title"],
             "location": (job["location"] or "")[:60], "system": job["ats"],
-            "supported": job["ats"] in systems.SUPPORTED, "score": score, "score_kind": kind or None,
+            "how": "coded" if job["ats"] in systems.SUPPORTED else "agent", "score": score,
+            "score_kind": kind or None,
             "posted": (job["posted_at"] or "")[:10], "status": job["status"]}
 
 

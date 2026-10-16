@@ -9,7 +9,7 @@ and is never retried automatically after that.
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import answers, companies, forms, packets, systems
+from . import answers, companies, forms, packets, systems, web
 
 
 def submit(job_id: int, ctx, ask, log=print) -> str:
@@ -34,7 +34,8 @@ def submit(job_id: int, ctx, ask, log=print) -> str:
 
     browser = ctx.browser()
     page = browser.page
-    system = systems.adapter(packet["job"]["ats"])
+    # Explored applications replay their approved recording (web.walk).
+    system = web if packet.get("recording") else systems.adapter(packet["job"]["ats"])
     if hasattr(system, "walk"):
         return walk_submit(job_id, ctx, ask, log, system, packet, page, back_to_you)
     log("  opening the form")

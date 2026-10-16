@@ -9,6 +9,7 @@ this page's own origin with this session's token.
 import difflib
 import html
 import json
+import re
 import secrets
 import subprocess
 import sys
@@ -464,6 +465,16 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         for a in packet["answers"])
     tail = packet.get("submission")
     proof = ""
+    if packet.get("recording"):  # Filled by the explore agent; submit replays these steps.
+        from . import web
+
+        review = Path(packet["_dir"]) / "review.png"
+        shot = f' · <a target=_blank href="/file?path={esc(review)}">the form before submit</a>' if review.exists() else ""
+        steps = "".join(f"<li>{esc(line)}</li>" for line in web.summary(packet["recording"]))
+        proof += (f'<div class=card><b>Filled by the browser agent</b><p class=muted>On submit, code replays '
+                  f'these steps with your approved answers; nothing else is clicked. '
+                  f'<a href="/runs/explore-{job_id}">How it got there</a>{shot}</p>'
+                  f'<details><summary>{len(packet["recording"]["steps"])} recorded steps</summary><ol>{steps}</ol></details></div>')
     if tail:
         shot = f' <a target=_blank href="/file?path={esc(tail["screenshot"])}">screenshot</a>' if tail.get("screenshot") else ""
         proof = f'<div class=card><b>Submission</b><p>{esc(tail["result"].get("detail"))}{shot}</p></div>'
@@ -634,15 +645,21 @@ def application_block(app: Dashboard, job: dict) -> str:
             f'<table style="margin-top:10px"><tr><th>When</th><th>What</th><th>Note</th></tr>{events}</table></div>')
 
 
-def page_run(app: Dashboard, task_id: int) -> bytes:
+def page_run(app: Dashboard, name: str) -> bytes:
     from .harness import read_trace
     from .planner import trace_path
 
-    task = app.tracker.task(task_id)
+    if name.startswith("explore-"):  # An exploration: shown like a run, titled by its job.
+        job = app.tracker.get(int(name.split("-")[1]))
+        task = {"id": name, "status": "done", "question": None,
+                "arg": f"Fill in the application for {job['title']} at {job['company']}" if job else ""}
+    else:
+        task = app.tracker.task(int(name))
     if task is None:
         return layout(app, "/", "<h1>No such run</h1>")
+    task_id = task["id"]
     rows = []
-    for entry in read_trace(trace_path(task_id)):
+    for entry in read_trace(trace_path(name)):
         kind, data = entry["kind"], entry["data"]
         if kind == "thought":
             rows.append(f'<div class=card style="margin:0 0 8px">{esc(data)}</div>')
@@ -738,8 +755,8 @@ def handler_for(app: Dashboard):
                 history.export_sheet(target, app.tracker)
                 return self.send(target.read_bytes(), ctype="text/csv",
                                  headers={"Content-Disposition": 'attachment; filename="applications.csv"'})
-            if parts[0] == "runs" and len(parts) == 2 and parts[1].isdigit():
-                return self.send(page_run(app, int(parts[1])))
+            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"(explore-)?\d+", parts[1]):
+                return self.send(page_run(app, parts[1]))
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))
             if url.path == "/file":

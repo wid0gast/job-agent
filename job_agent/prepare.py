@@ -9,8 +9,10 @@ import html
 import json
 import re
 from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import urlsplit
 
-from . import answers, companies, config, documents, filters, latex, packets, systems
+from . import answers, companies, config, documents, filters, latex, packets, systems, web
 from .prompts import COVER_LETTER_PROMPT, FIT_PROMPT, TAILOR_PROMPT
 
 
@@ -114,9 +116,8 @@ def prepare(job_id: int, ctx, log=print, note: str = "") -> str:
 def build(job: dict, ctx, log, note: str = "") -> dict:
     settings, profile = ctx.settings, config.load_profile()
     details = json.loads(job["details"] or "{}")
-    system = systems.adapter(job["ats"])
-    if system is None:
-        raise Stop("found", f"Applying on {job['ats']} isn't supported yet.")
+    # Systems without a coded adapter are explored by an agent and replayed in code (web.py).
+    system = systems.adapter(job["ats"]) or web
     reason = filters.check(job, details, profile)
     if reason:
         raise Stop("filtered_out", reason)
@@ -126,14 +127,17 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         raise Stop("filtered_out", problem)
 
     log("  reading the posting")
-    board, job_key = system.resolve(ctx.http, job)
+    if system is web:
+        board, job_key = urlsplit(job["url"]).hostname, job["url"]
+    else:
+        board, job_key = system.resolve(ctx.http, job)
     if not board or not job_key:
         raise Stop("failed", f"Couldn't find this job's {job['ats']} board and ID.")
     try:
-        posting = system.fetch(ctx.http, board, job_key)
+        posting = web.fetch(ctx, job) if system is web else system.fetch(ctx.http, board, job_key)
     except systems.Closed as closed:
         raise Stop("closed", str(closed)) from None
-    data = posting["data"]
+    data = posting.get("data", {})
     # Posting HTML can hide text from people (white, 1px, display:none) to steer
     # AI tools; render it and keep only what a person would see.
     description = ctx.headless.visible_text(html.unescape(posting["html"] or ""))
@@ -157,14 +161,17 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
     if fit["score"] < threshold:
         raise Stop("filtered_out", f"Fit {fit['score']} is below your threshold of {threshold}.")
 
-    log("  reading the application form")
-    page = ctx.headless.new_page()
-    try:
-        fields, form_notes = system.read_form(page, board, job_key, data)
-    except systems.Closed as closed:
-        raise Stop("closed", str(closed)) from None
-    finally:
-        page.close()
+    if system is web:
+        fields, form_notes = [], []  # The explore agent finds the questions (below).
+    else:
+        log("  reading the application form")
+        page = ctx.headless.new_page()
+        try:
+            fields, form_notes = system.read_form(page, board, job_key, data)
+        except systems.Closed as closed:
+            raise Stop("closed", str(closed)) from None
+        finally:
+            page.close()
 
     if hasattr(system, "standard_fields"):  # Pages not visible yet (Workday).
         fields += system.standard_fields({f["key"] for f in fields})
@@ -179,10 +186,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                                        full_name, log, note)
     docs = {"resume": resume, "cover_letter": None}
 
-    letter_field = next((a for a in drafted if answers.is_cover_letter(a)), None)
-    wants_letter = letter_field and settings.cover_letter != "never" and (
-        settings.cover_letter == "always" or letter_field["required"])
-    if wants_letter:
+    def make_letter():
         log("  writing the cover letter")
         letter = ctx.llm.json(COVER_LETTER_PROMPT, json.dumps({
             "job": {"company": job["company"], "title": job["title"]},
@@ -194,8 +198,31 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         docs["cover_letter"] = documents.save_letter(ctx.headless, folder, f"{stem}_Cover_Letter",
                                                      letter, profile.get("contact", {}),
                                                      f"{full_name} Cover Letter")
+
+    letter_field = next((a for a in drafted if answers.is_cover_letter(a)), None)
+    wants_letter = letter_field and settings.cover_letter != "never" and (
+        settings.cover_letter == "always" or letter_field["required"])
+    if wants_letter:
+        make_letter()
         letter_field.update(value="cover_letter", source="model-essay",
                             note="Tailored cover letter (see documents).")
+
+    recording = None
+    if system is web:
+        def document(kind: str) -> Path:
+            if kind == "cover_letter" and not docs["cover_letter"]:
+                if settings.cover_letter == "never":
+                    raise ValueError("The user turned cover letters off; skip optional letter uploads.")
+                make_letter()
+            return Path(docs[kind]["pdf"])
+
+        log("  filling the application (explore agent)")
+        try:
+            explored = web.explore(ctx, job, description, document, log)
+        except ValueError as error:
+            raise Stop("failed", str(error)[:1500]) from None
+        drafted, open_fields, recording = explored["answers"], [], explored["recording"]
+        form_notes = [f"Filled by the explore agent: {explored['report']}"]
 
     if open_fields:
         log(f"  drafting {len(open_fields)} answer(s)")
@@ -208,7 +235,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         "job": {"id": job["id"], "company": job["company"], "title": job["title"],
                 "url": job["url"], "location": job["location"], "ats": job["ats"],
                 "board": board, "job_id": job_key, "company_id": company_id,
-                "apply_url": system.apply_url(board, job_key)},
+                "apply_url": job["url"] if system is web else system.apply_url(board, job_key)},
         "prepared_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "model": ctx.llm.model,
         "fit": fit,
@@ -224,6 +251,9 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                    "invented_numbers": tailored.get("invented", [])},
         "approved_hash": None,
     }
+    if recording:
+        packet["recording"] = recording
+        packet["job"]["apply_url"] = job["url"]
     packet["checks"]["consistency"] = packets.consistency(packet, profile)
     return packet
 

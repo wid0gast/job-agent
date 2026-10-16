@@ -48,7 +48,7 @@ def test_planner_prepares_asks_redoes_and_respects_guards(ctx):  # noqa: F811 - 
 
     assert report == "1 packet ready for review."
     listed = results[2]["result"]
-    assert {j["id"] for j in listed["jobs"]} == {first, second} and listed["jobs"][0]["supported"]
+    assert {j["id"] for j in listed["jobs"]} == {first, second} and listed["jobs"][0]["how"] == "coded"
     assert results[3]["result"]["can_apply"] is True
     prepared = results[4]["result"]
     assert prepared["status"] == "prepared" and prepared["fit"]["score"] == 85

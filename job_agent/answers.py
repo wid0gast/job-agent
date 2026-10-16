@@ -184,6 +184,9 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
     # education rows ("start-year--0") have their own keys above.
     if value is None and field["kind"] != "textarea" and "--" not in key:
         rules = [
+            (r"^(legal )?first name$|^given name$", first),
+            (r"^(legal )?last name$|^(surname|family name)$", last.strip()),
+            (r"^preferred (first )?name$", contact.get("preferred_name")),
             (r"^(full |legal )?name$", contact.get("name")),
             (r"^e-?mail( address)?$", contact.get("email")),
             (r"^(mobile |cell )?phone( number)?$", contact.get("phone")),

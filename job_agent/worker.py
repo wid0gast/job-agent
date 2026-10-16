@@ -56,6 +56,7 @@ class Context:
 
         self.settings, self.tracker = settings, tracker
         self.llm = client(settings)
+        self.ask = None  # Set per task: how a step asks you something.
         if require_model and self.llm is None:
             raise SystemExit("Set OPENROUTER_API_KEY and OPENROUTER_MODEL in .env.")
         self.http = http()
@@ -124,6 +125,7 @@ def run_task(task: dict, ctx: Context, log) -> str:
         tracker.set_task(task["id"], status="running", question=None)
         raise TimeoutError("No reply within 15 minutes.")
 
+    ctx.ask = ask  # Agents inside a step (the explorer during prepare) ask through this task.
     if task["kind"] == "plan":
         from . import planner
 
