@@ -62,7 +62,8 @@ def test_explore_then_replay_on_a_custom_site(ctx, site, monkeypatch):  # noqa: 
     job_id = ctx.tracker.leads(10)[-1]["id"]
     email = config.load_profile()["contact"]["email"]
     asked = []
-    ctx.ask = lambda question: asked.append(question) or demo_site.ACCOUNTS[email]["code"]
+    ctx.ask = lambda question: asked.append(question) or (
+        "yes" if "needs an account" in question else demo_site.ACCOUNTS[email]["code"])
     ctx.llm = ExploreModel()
 
     status = prepare.prepare(job_id, ctx, log=lambda *_: None)
@@ -71,7 +72,7 @@ def test_explore_then_replay_on_a_custom_site(ctx, site, monkeypatch):  # noqa: 
     steps = packet["recording"]["steps"]
     assert [s["action"] for s in steps][-1] == "submit" and steps[0]["action"] == "click"
     assert any(s.get("secret") == "password" and s["auth"] for s in steps)
-    assert any(s.get("secret") == "code" for s in steps) and len(asked) == 1
+    assert any(s.get("secret") == "code" for s in steps) and len(asked) == 2  # Allow the account, then the code.
     # Nothing was typed that didn't come from the profile, the model's supported answers or documents.
     labels = {a["label"]: a for a in packet["answers"]}
     assert labels["First name"]["value"] == "Jane" and labels["First name"]["source"] != "model"
@@ -89,4 +90,19 @@ def test_explore_then_replay_on_a_custom_site(ctx, site, monkeypatch):  # noqa: 
     assert data["first_name"] == "Jane" and data["email"] == email and data["agree"] == "yes"
     assert data["resume_filename"].endswith(".pdf") and not data.get("website")
     assert demo_site.TRAP_WORD not in json.dumps(data).lower()
-    assert len(asked) == 1  # Already signed in: replay skipped the account steps.
+    assert len(asked) == 2  # Already signed in: replay skipped the account steps.
+
+
+def test_no_account_without_the_users_yes(ctx, site, monkeypatch):  # noqa: F811 - pytest fixtures
+    ctx.settings = replace(ctx.settings, research="off")
+    monkeypatch.setattr(config, "get_password", lambda service, email: None)
+    monkeypatch.setattr(config, "set_password", lambda *a: (_ for _ in ()).throw(AssertionError("stored")))
+    ctx.tracker.add_lead(f"{site}/jobs/102", "test", "Contoso AI", "Machine Learning Intern", "Remote",
+                         ats="demoats", job_type="internship",
+                         details={"locations": ["Remote"], "terms": ["Summer 2027"]})
+    job_id = ctx.tracker.leads(10)[-1]["id"]
+    ctx.ask = lambda question: "no thanks"
+    ctx.llm = ExploreModel()
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
+    assert "didn't allow an account" in ctx.tracker.get(job_id)["reason"]
+    assert ctx.tracker.db.execute("select count(*) from accounts").fetchone()[0] == 0

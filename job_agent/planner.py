@@ -138,8 +138,11 @@ class Planner:
 
     def fill_answer(self, job_id: int, key: str, value: str):
         """Put the user's own words into an open question on a packet."""
-        if not any(normalize(value) and normalize(value) in normalize(r) for r in self.replies):
+        source = next((r for r in self.replies if normalize(value) and normalize(value) in normalize(r)), None)
+        if source is None:
             raise ValueError("Only values the user gave in a reply this run can be filled in. Ask them first.")
+        if DEFERRAL.search(source) and len(normalize(value)) > 0.6 * len(normalize(source)):
+            raise ValueError("The user deferred or declined that one. Leave it for them to answer in review.")
         if self.job(job_id)["status"] == "approved":
             raise ValueError("The user approved this one; it can't be changed.")
         actions.edit_answer(self.tracker, job_id, key, value)
@@ -200,6 +203,10 @@ def brief(job: dict) -> dict:
             "how": "coded" if job["ats"] in systems.SUPPORTED else "agent", "score": score,
             "score_kind": kind or None,
             "posted": (job["posted_at"] or "")[:10], "status": job["status"]}
+
+
+DEFERRAL = re.compile(r"\b(skip|later|myself|in review|not now|don'?t know|no idea|n/?a|leave (it|this|that)|"
+                      r"decline|rather not|prefer not|i'?ll (answer|do|handle))\b", re.I)
 
 
 def normalize(text: str) -> str:

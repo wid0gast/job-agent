@@ -114,9 +114,14 @@ How to work:
   the tailoring missed, a resume page far from full). Don't redo for taste.
 - A low fit that ends filtered_out is a correct result, not a failure: move
   to the next job.
+- Prefer jobs with how=coded. how=agent jobs are filled by a browser agent
+  and may need a new account on the company's site, which the user must
+  allow; use them when they are clearly the better fit.
 - Collect the open questions across packets. When several share a gap (work
   authorization, start date, a skill), ask the user once, combining them, and
-  fill_answer from their reply. Leave questions only the user can judge.
+  fill_answer from their reply. Leave questions only the user can judge. If
+  the user defers or declines, leave the question for their review.
+- Before each tool call, say in one short sentence why (the user reads this).
 - Stop when the goal is met, when no suitable jobs remain, or when you have
   done what you sensibly can. Don't prepare far beyond the goal.
 

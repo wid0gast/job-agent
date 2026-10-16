@@ -65,3 +65,14 @@ def test_planner_prepares_asks_redoes_and_respects_guards(ctx):  # noqa: F811 - 
 
     kinds = [e["kind"] for e in read_trace(planner.trace_path(7))]
     assert kinds.count("call") == 8 and kinds[-1] == "finish"
+
+
+def test_fill_answer_refuses_a_deferral(ctx):  # noqa: F811 - pytest fixture
+    plan = planner.Planner(ctx, lambda q: "I'll answer that one myself in review.", lambda *_: None)
+    plan.ask_user("Link to your favorite project?")
+    try:
+        plan.fill_answer(1, "q", "I'll answer that one myself in review.")
+    except ValueError as error:
+        assert "deferred" in str(error)
+    else:
+        raise AssertionError("a deferral was filled in")

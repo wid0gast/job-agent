@@ -312,8 +312,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
         score, kind = matching.ranking_score(job)
         why = json.loads(job["details"] or "{}").get("match", {}).get("why", "") if kind == "match" else ""
         if job["status"] == "found":
-            act = form(app, "/prepare", "Prepare", {"job_id": job["id"]}) if job["ats"] in systems.SUPPORTED \
-                else f'<span class="muted">{esc(job["ats"])} not supported yet</span>'
+            act = prepare_button(app, job)
         elif job["status"] in ("failed", "rejected", "skipped", "closed", "filtered_out"):
             act = form(app, "/requeue", "Back to found", {"job_id": job["id"]})
         else:
@@ -420,6 +419,13 @@ def answer_input(app: Dashboard, job_id: int, answer: dict, editable: bool) -> s
             f'{field}<div class=row style="margin-top:4px"><button>Save</button>{remember}</div></form>')
 
 
+def prepare_button(app: Dashboard, job: dict) -> str:
+    """Coded systems prepare directly; others are filled by the browser agent (slower)."""
+    if job["ats"] in systems.SUPPORTED:
+        return form(app, "/prepare", "Prepare", {"job_id": job["id"]})
+    return form(app, "/prepare", "Prepare (agent fills the form)", {"job_id": job["id"]})
+
+
 def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     job = app.tracker.get(job_id)
     if job is None:
@@ -434,6 +440,10 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         fit = details.get("fit")
         extra = f'<div class=card><b>Fit {fit["score"]}</b><p>{esc(fit["summary"])}</p></div>' if fit else ""
         note = "" if job["status"] == "submitted" else '<p class=muted>Not prepared yet.</p>'
+        if job["status"] == "found":
+            note += prepare_button(app, job)
+        elif job["status"] in ("failed", "rejected", "skipped", "closed", "filtered_out"):
+            note += form(app, "/requeue", "Back to found", {"job_id": job_id}) + " "
         mark = (form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id})
                 if job["status"] in ("found", "filtered_out", "closed", "skipped", "failed", "rejected") else "")
         return layout(app, "/applications" if job["status"] == "submitted" else "/jobs",

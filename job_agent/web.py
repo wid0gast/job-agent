@@ -98,6 +98,7 @@ class Explorer:
         self.steps: list[dict] = []
         self.replies: list[str] = []
         self.auth_pages: set[str] = set()
+        self.allowed_hosts: set[str] = set()
         self.final = False
 
     # ----- recording --------------------------------------------------------
@@ -117,6 +118,21 @@ class Explorer:
             step["target"] = self.target(ref)
         self.steps.append(step)
 
+    def account_consent(self) -> None:
+        """A page with a password box means an account in the user's name: ask first."""
+        if not self.view.has_password_field():
+            return
+        email = self.profile.get("contact", {}).get("email") or "your email"
+        host = urlsplit(self.view.page.url).hostname or ""
+        if host in self.allowed_hosts or config.get_password(f"{KEYCHAIN}:{host}", email):
+            return
+        reply = self.ask(f"To apply to {self.job['title']} at {self.job['company']}, {host} needs an account "
+                         f"with {email}. Reply yes to let the agent create one (the password is generated "
+                         "and stored for you), or anything else to stop. Nothing is sent before you answer.")
+        if reply.strip().lower() not in ("yes", "y", "ok", "yes please"):
+            raise StopRun(f"Gave up: you didn't allow an account on {host}.")
+        self.allowed_hosts.add(host)
+
     def observed(self, done: str) -> dict:
         return {"done": done, "page": self.view.snapshot()}
 
@@ -135,6 +151,7 @@ class Explorer:
 
     def click(self, ref: str):
         element = self.view.element(ref)
+        self.account_consent()
         if FINAL_SUBMIT.match(element.get("name") or ""):
             raise PermissionError(f"{ref} ({element['name']!r}) looks like the final submit. "
                                   "Call final_step with it instead.")
@@ -151,6 +168,11 @@ class Explorer:
     def fill_field(self, ref: str):
         """Answer a question from the profile/saved answers/model and fill it in."""
         element = self.view.element(ref)
+        self.account_consent()
+        if element.get("type") == "password":
+            raise ValueError("That's a password box: use fill_password.")
+        if element.get("type") == "file":
+            raise ValueError("That's a file field: use upload_document.")
         field = self.field_for(ref, element)
         answer = next((a for a in self.answers if a["target"] == field["target"]), None)
         if answer is None:
@@ -176,6 +198,12 @@ class Explorer:
     def upload_document(self, ref: str, document: str):
         if document not in ("resume", "cover_letter"):
             raise ValueError("document is resume or cover_letter.")
+        element = self.view.element(ref)
+        self.account_consent()
+        if element.get("type") != "file" and element.get("tag") not in ("button", "a") \
+                and element.get("role") != "button":
+            raise ValueError("That isn't a file upload. A cover letter text box is a question: use "
+                             "fill_field, or leave an optional one alone.")
         path = self.document(document)
         self.view.upload(ref, path)
         self.record(ref, "upload", document=document)
@@ -186,6 +214,7 @@ class Explorer:
         host = urlsplit(self.view.page.url).hostname or ""
         if not email:
             raise ValueError("The profile has no email for an account.")
+        self.account_consent()
         password = config.get_password(f"{KEYCHAIN}:{host}", email)
         if password is None:
             password = new_password()
@@ -249,6 +278,7 @@ class Explorer:
             options, widget = [], "text"
             kind = "textarea" if tag == "textarea" else "text"
             label = element.get("name") or element.get("field") or "Field"
+        label = forms.clean(label)  # "First name *" -> "First name", so profile rules match.
         target = json.dumps([element.get("frame"), element.get("field") or label])
         return {"key": f"web_{len(self.answers) + 1}", "label": label, "kind": kind,
                 "required": bool(element.get("required")), "options": options, "section": "",
