@@ -95,6 +95,26 @@ final button only when that button says Submit. When it stops, the Chrome
 window stays on that page, so you can also finish by hand and mark it done. From the terminal, `uv run job-agent refresh`
 and `uv run job-agent prepare --top 3` do the same unattended steps.
 
+### The agents
+
+Most of the app is a fixed pipeline (find → rank → prepare → approve →
+submit). Three agents handle the parts with no fixed path. None can approve
+or submit for you, change caps, or invent an answer; those checks are code.
+
+- **Planner** (Today → "Give the agent a goal"): you say what you want, e.g.
+  "fill the queue with my 8 best ML internships, NYC or remote". It refreshes,
+  ranks, checks caps, prepares, reviews each packet, redoes weak ones with a
+  specific note, and asks you one combined question when several applications
+  share a gap. Each run has a live trace (reasoning and tool calls).
+- **Explorer** (systems without a coded filler: iCIMS, custom career pages):
+  during prepare it fills the form in the browser, creating an account and
+  asking you for emailed codes if needed, and stops at the final submit.
+  Every value comes from the answer pipeline, your replies or your documents.
+  After you approve, code replays its recorded steps; the job page shows them.
+- **Researcher** (for cover letters and "why us" answers): searches and reads
+  the company's pages and keeps a fact only if its quote is visibly on a page
+  it read. Letters and answers may only use those facts.
+
 ### Your applications
 
 The **Applications** page is your record: every job you've applied to (by the
@@ -129,6 +149,8 @@ emailed code).
 | `SPEND_CAP_USD` | `1.00` | A run stops once model spending reaches this. |
 | `OPENROUTER_DATA_COLLECTION` | `deny` | Skip providers that keep your data. Some free models need `allow`. |
 | `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
+| `RESEARCH` | `auto` | Research the company for letters and "why us" answers, or `off`. |
+| `BRAVE_API_KEY` | (empty) | Search for research. Without it, a free search is tried (best effort). |
 
 ### Design principles
 
@@ -172,7 +194,11 @@ emailed code).
 | `job_agent/matching.py` | Ranks jobs against the description on the Search page |
 | `job_agent/latex.py` | Resumes in your LaTeX template, fitted to one or two pages |
 | `job_agent/ats.py` | Which application system a URL belongs to, and its job ID |
-| `job_agent/prompts.py` | Instructions for each model step (fit, tailoring, answers, letters, ranking) |
+| `job_agent/prompts.py` | Instructions for each model step and each agent |
+| `job_agent/harness.py` | The agent loop: tool calls, errors back to the model, limits, traces |
+| `job_agent/planner.py` | The planner agent and its pipeline tools |
+| `job_agent/web.py`, `pageview.py` | The explorer agent, its page view, and the coded replay |
+| `job_agent/research.py` | The research agent: search, read, quote-checked facts |
 | `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |
 | `job_agent/documents.py` | Resume/cover letter PDFs and the invented-number check |

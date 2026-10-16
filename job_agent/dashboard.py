@@ -465,6 +465,13 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         for a in packet["answers"])
     tail = packet.get("submission")
     proof = ""
+    if packet.get("research"):  # Company facts the letter and "why us" answers could use.
+        facts = "".join(f'<li>{esc(f["fact"])} <span class=muted>“{esc(f["quote"][:160])}”</span> '
+                        f'<a href="{esc(f["url"])}" target=_blank rel=noopener>source</a></li>'
+                        for f in packet["research"]["facts"])
+        proof += (f'<div class=card><b>Company research</b><p class=muted>{esc(packet["research"]["summary"])} '
+                  f'<a href="/runs/research-{job_id}">How it searched</a></p>'
+                  f'<ul>{facts or "<li class=muted>No verified facts; the letter sticks to the posting.</li>"}</ul></div>')
     if packet.get("recording"):  # Filled by the explore agent; submit replays these steps.
         from . import web
 
@@ -649,10 +656,12 @@ def page_run(app: Dashboard, name: str) -> bytes:
     from .harness import read_trace
     from .planner import trace_path
 
-    if name.startswith("explore-"):  # An exploration: shown like a run, titled by its job.
-        job = app.tracker.get(int(name.split("-")[1]))
+    if "-" in name:  # An exploration or research run: shown like a run, titled by its job.
+        kind, job_id = name.split("-")
+        job = app.tracker.get(int(job_id))
+        doing = "Fill in the application" if kind == "explore" else "Research the company"
         task = {"id": name, "status": "done", "question": None,
-                "arg": f"Fill in the application for {job['title']} at {job['company']}" if job else ""}
+                "arg": f"{doing} for {job['title']} at {job['company']}" if job else ""}
     else:
         task = app.tracker.task(int(name))
     if task is None:
@@ -755,7 +764,7 @@ def handler_for(app: Dashboard):
                 history.export_sheet(target, app.tracker)
                 return self.send(target.read_bytes(), ctype="text/csv",
                                  headers={"Content-Disposition": 'attachment; filename="applications.csv"'})
-            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"(explore-)?\d+", parts[1]):
+            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"((explore|research)-)?\d+", parts[1]):
                 return self.send(page_run(app, parts[1]))
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))

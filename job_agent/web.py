@@ -54,7 +54,7 @@ def fetch(ctx, job: dict) -> dict:
 
 # ----- explore -------------------------------------------------------------
 
-def explore(ctx, job: dict, description: str, document, log) -> dict:
+def explore(ctx, job: dict, description: str, document, log, facts=lambda: []) -> dict:
     """Run the explore agent. `document(kind)` returns a PDF path ("resume",
     "cover_letter"), making the letter on first request. Returns answers,
     recording and the agent's report; raises ValueError if it didn't reach
@@ -67,7 +67,7 @@ def explore(ctx, job: dict, description: str, document, log) -> dict:
     view = PageView(browser.context, page)
     view.goto(job["url"])
     explorer = Explorer(ctx, job, description, view, document, log,
-                        getattr(ctx, "ask", None) or (lambda question: ""))
+                        getattr(ctx, "ask", None) or (lambda question: ""), facts)
     profile = config.load_profile()
     agent = AgentRun(ctx.llm, EXPLORE_PROMPT, explorer.tools(), trace_path(trace_name(job["id"])),
                      max_steps=70, max_seconds=15 * 60,
@@ -90,9 +90,9 @@ def explore(ctx, job: dict, description: str, document, log) -> dict:
 
 
 class Explorer:
-    def __init__(self, ctx, job, description, view: PageView, document, log, ask):
+    def __init__(self, ctx, job, description, view: PageView, document, log, ask, facts=lambda: []):
         self.ctx, self.job, self.description, self.view = ctx, job, description, view
-        self.document, self.log, self.ask = document, log, ask
+        self.document, self.log, self.ask, self.facts = document, log, ask, facts
         self.profile, self.saved = config.load_profile(), config.load_answers()
         self.answers: list[dict] = []
         self.steps: list[dict] = []
@@ -157,9 +157,12 @@ class Explorer:
             drafted, open_fields = answers.draft([field], self.profile, self.job, self.saved)
             answer = drafted[0]
             if open_fields and self.ctx.llm is not None:
+                from .research import wanted
+
                 answers.ask_model(self.ctx.llm, open_fields, self.profile, config.read_master_resume(),
                                   self.job, self.description, config.read_optional("story-bank.md"),
-                                  config.read_optional("writing-sample.md"))
+                                  config.read_optional("writing-sample.md"),
+                                  self.facts() if wanted(field) else None)
             self.answers.append(answer)
         value = answer.get("value")
         action = {"choice": "choose", "check": "check"}.get(field["widget"], "fill" if field["kind"] != "select" else "select")

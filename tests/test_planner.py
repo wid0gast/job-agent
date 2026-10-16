@@ -2,6 +2,7 @@
 with a scripted model: tools work, guards hold, and the trace records it all."""
 
 import json
+from dataclasses import replace
 
 from job_agent import packets, planner
 from job_agent.harness import read_trace
@@ -25,6 +26,7 @@ class AgentModel(ScriptedModel):
 
 
 def test_planner_prepares_asks_redoes_and_respects_guards(ctx):  # noqa: F811 - pytest fixture
+    ctx.settings = replace(ctx.settings, research="off")  # Research has its own test.
     first, second = add_job(ctx, "4001"), add_job(ctx, "4002")
     steps = [
         lambda last: ("queue_status", {}),

@@ -354,7 +354,7 @@ invented-number check, approval hash and CAPTCHA/code handoff apply as now.
   finish inside a 30-minute session, one model call at a time).
 - **Tests:** a scripted fake model drives each agent against the demo boards.
 
-### A1. Planner
+### A1. Planner **(exists)**
 
 You give a goal on Today ("fill the queue with my 8 best ML internships,
 NYC or remote"). The agent plans and acts until the queue holds them.
@@ -373,7 +373,7 @@ Done when: on the demo boards it fills the queue to the target, skips
 capped companies, asks one combined question for a shared gap, and the
 trace shows why it picked and redid each job.
 
-### A2. Unsupported sites, with learned replay
+### A2. Unsupported sites, with learned replay **(exists, except reuse across jobs)**
 
 For jobs on systems without a coded adapter (iCIMS, SmartRecruiters, Taleo,
 custom pages) and Workday walks that hit a new question.
@@ -388,14 +388,14 @@ custom pages) and Workday walks that hit a new question.
 - **Submit:** coded replay of the recording, checking each label exists
   first. Any mismatch stops it as `needs_you` (re-explore needs a new
   approval). The final click only ever happens in replay.
-- **Learn:** recordings are kept per system/site; the next job on the same
-  system replays with new values and the agent only handles new questions.
+- **Learn (not yet):** reuse a site's recording for the next job there, so the
+  agent only handles new questions. Today each job is explored fresh.
 - Local first; on the app store once the hosted browser works.
 
 Done when: iCIMS-like and custom-form copies on the demo site are explored,
 approved and replayed, and a changed form stops safely.
 
-### A3. Company research
+### A3. Company research **(exists)**
 
 Only for jobs being prepared that need a cover letter or a "why us" answer.
 
@@ -404,8 +404,7 @@ Only for jobs being prepared that need a cover letter or a "why us" answer.
 - **Truth rule, extended to the company:** code keeps a fact only if its
   quote appears in a page the agent fetched. Letters and "why us" answers may
   use only kept facts. At most about 8 fetches per job.
-- **Open:** which search API (a key for Brave or Tavily locally; the app store
-  needs one too).
+- **Search:** Brave with `BRAVE_API_KEY`, else DuckDuckGo Lite (free, best effort).
 
 Done when: each letter's company claims link to a kept fact, and a planted
 false claim on a demo page is not used.

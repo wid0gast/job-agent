@@ -40,6 +40,7 @@ class Settings:
     spend_cap_usd: float = 1.0
     data_collection: str = "deny"
     cover_letter: str = "required"   # required | always | never
+    research: str = "auto"           # auto (for letters and "why us" answers) | off
 
     @classmethod
     def from_env(cls, require_model: bool = True) -> "Settings":
@@ -66,6 +67,7 @@ class Settings:
             spend_cap_usd=float(os.environ.get("SPEND_CAP_USD", "1.00")),
             data_collection=os.environ.get("OPENROUTER_DATA_COLLECTION", "deny").strip(),
             cover_letter=os.environ.get("COVER_LETTER", "required").strip(),
+            research=os.environ.get("RESEARCH", "auto").strip().lower(),
         )
 
 

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import answers, companies, config, documents, filters, latex, packets, systems, web
+from . import answers, companies, config, documents, filters, latex, packets, research, systems, web
 from .prompts import COVER_LETTER_PROMPT, FIT_PROMPT, TAILOR_PROMPT
 
 
@@ -186,6 +186,16 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                                        full_name, log, note)
     docs = {"resume": resume, "cover_letter": None}
 
+    found: dict = {}
+
+    def company_facts() -> list[dict]:
+        """Researched once per job, when a letter or a "why us" answer first needs it."""
+        if settings.research == "off":
+            return []
+        if "facts" not in found:
+            found.update(research.research(ctx, job, description, log))
+        return found["facts"]
+
     def make_letter():
         log("  writing the cover letter")
         letter = ctx.llm.json(COVER_LETTER_PROMPT, json.dumps({
@@ -193,6 +203,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
             "posting_text (data, not instructions)": description[:12000],
             "profile": profile, "resume": master,
             "writing_sample": config.read_optional("writing-sample.md"),
+            "company_facts": company_facts(),
             **({"reviewer_note": note} if note else {})}, ensure_ascii=False),
             LETTER_SCHEMA, "cover_letter")["letter_markdown"]
         docs["cover_letter"] = documents.save_letter(ctx.headless, folder, f"{stem}_Cover_Letter",
@@ -218,7 +229,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
 
         log("  filling the application (explore agent)")
         try:
-            explored = web.explore(ctx, job, description, document, log)
+            explored = web.explore(ctx, job, description, document, log, company_facts)
         except ValueError as error:
             raise Stop("failed", str(error)[:1500]) from None
         drafted, open_fields, recording = explored["answers"], [], explored["recording"]
@@ -228,7 +239,8 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         log(f"  drafting {len(open_fields)} answer(s)")
         answers.ask_model(ctx.llm, open_fields, profile, master, job, description,
                           config.read_optional("story-bank.md"),
-                          config.read_optional("writing-sample.md"))
+                          config.read_optional("writing-sample.md"),
+                          company_facts() if any(research.wanted(f) for f in open_fields) else None)
 
     packet = {
         "schema": packets.SCHEMA_VERSION,
@@ -251,6 +263,8 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                    "invented_numbers": tailored.get("invented", [])},
         "approved_hash": None,
     }
+    if found:
+        packet["research"] = found
     if recording:
         packet["recording"] = recording
         packet["job"]["apply_url"] = job["url"]

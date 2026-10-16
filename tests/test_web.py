@@ -3,6 +3,7 @@ agent (a scripted policy here) creates an account with an emailed code, fills
 an iframe form and stops at submit; after approval, code replays it."""
 
 import json
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 from job_agent import actions, config, demo_site, packets, prepare, submit
@@ -50,6 +51,7 @@ class ExploreModel(ScriptedModel):
 
 
 def test_explore_then_replay_on_a_custom_site(ctx, site, monkeypatch):  # noqa: F811 - pytest fixtures
+    ctx.settings = replace(ctx.settings, research="off")  # Research has its own test.
     received, passwords = [], {}
     monkeypatch.setattr(demo_site, "report_submission", lambda job_id, data: received.append(data))
     monkeypatch.setattr(config, "get_password", lambda service, email: passwords.get((service, email)))
