@@ -44,9 +44,17 @@ class OpenRouter:
             "provider": {"require_parameters": True, "data_collection": self.data_collection},
             **payload,
         }
+        import httpx
+
         for attempt in range(5):
-            response = self.client.post(
-                self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
+            try:
+                response = self.client.post(
+                    self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
+            except httpx.TransportError:  # A dropped connection: try again, a few times.
+                if attempt == 4:
+                    raise
+                time.sleep(5 * (attempt + 1))
+                continue
             if response.status_code in (429, 502, 503) and attempt < 4:
                 wait = float(response.headers.get("retry-after") or 0) or 8 * (attempt + 1)
                 time.sleep(min(wait, 60))
