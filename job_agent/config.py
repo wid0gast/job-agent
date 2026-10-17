@@ -66,6 +66,22 @@ class Settings:
         )
 
 
+# A new profile starts with these templates. Your resume comes from the Resumes page;
+# profile.example/resume.md (Jane Doe) is only an example.
+STARTER_FILES = ("profile.yaml", "story-bank.md")
+
+
+def ensure_profile() -> bool:
+    """Create profile/ from the templates on first run; True if it was created."""
+    if (PROFILE_DIR / "profile.yaml").exists():
+        return False
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    for name in STARTER_FILES:
+        if not (PROFILE_DIR / name).exists():
+            (PROFILE_DIR / name).write_text((PROFILE_EXAMPLE_DIR / name).read_text(encoding="utf-8"), encoding="utf-8")
+    return True
+
+
 def load_profile() -> dict:
     """Facts from your resume (resume-profile.yaml), profile.yaml on top, then the
     Search page's settings (search.yaml) for preferences."""

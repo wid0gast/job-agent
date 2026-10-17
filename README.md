@@ -42,7 +42,11 @@ Then:
    never adds facts. Optional: `profile/writing-sample.md` (a few paragraphs you
    wrote) so cover letters sound like you.
 3. Connect Claude (see **Connecting Claude** below). If Claude Code is
-   installed and signed in, there's nothing to do.
+   installed and signed in, there's nothing to do; otherwise use the
+   dashboard's **Connect Claude** page (the status chip, top right).
+
+To try it without your own resume, upload `examples/jane-doe-resume.pdf`
+(a made-up candidate) on the Resumes page.
 4. Optional: `profile/story-bank.md` (your real examples) and
    `profile/writing-sample.md` help with essay questions.
 
@@ -54,8 +58,10 @@ Profile and resume content is sent to Claude while applying.
 `MODEL_BACKEND=auto` (the default) uses the first of these that's available:
 
 1. **Claude Code, with your own sign-in.** Install
-   [Claude Code](https://code.claude.com/docs/en/setup), run `claude` once and
-   sign in with your Claude account. Job Agent then runs it in headless mode
+   [Claude Code](https://code.claude.com/docs/en/setup) and sign in with your
+   Claude account: on the dashboard's **Connect Claude** page ("Sign in with
+   Claude" opens Claude's sign-in page; paste the code it shows), or by
+   running `claude` once in a terminal. Job Agent then runs it in headless mode
    (`claude -p`) for each model request: a fresh, unsaved session with Claude
    Code's own tools turned off. Usage counts against your Claude plan, like
    using Claude Code yourself, and nothing is billed per token. An

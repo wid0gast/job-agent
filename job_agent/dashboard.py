@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from email.parser import BytesParser
 from email.policy import default as email_policy
 
-from . import actions, config, history, matching, packets, resumes, sources, systems
+from . import actions, claude_login, config, history, matching, packets, resumes, sources, systems
 from .tracker import OUTCOMES, Tracker
 from .worker import DB_PATH
 
@@ -29,35 +29,109 @@ QUEUE = ("prepared", "needs_you", "approved", "submitting")
 ORDER = ("found", "preparing", "prepared", "needs_you", "approved", "submitting", "submitted",
          "filtered_out", "failed", "rejected", "skipped", "closed", "working")
 
+# A briefcase with a spark: the app's mark, inline so the page loads nothing else.
+LOGO = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2.5"/>'
+        '<path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M3 13h18"/></svg>')
+
 CSS = """
-:root{--bg:#f7f7f5;--card:#fff;--text:#1d1d1b;--muted:#6b6b66;--line:#e3e2dd;--accent:#2357d9;
---good:#1f7a3f;--bad:#b3261e;--warn:#9a6200;--pill:#efeee9}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#1f1f1d;--text:#ecebe6;--muted:#a3a29b;
---line:#33332f;--accent:#7aa2ff;--good:#6fcf8e;--bad:#ff8a80;--warn:#f2b84b;--pill:#2a2a27}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
-font:14px/1.45 system-ui,-apple-system,sans-serif}
-header{display:flex;gap:18px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);
-background:var(--card);flex-wrap:wrap}header b{font-size:15px}header a{color:var(--muted);text-decoration:none}
-header a.on{color:var(--text);font-weight:600}main{max-width:1100px;margin:0 auto;padding:20px 16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:0 0 16px}
-h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:0 0 10px}
-table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:7px 8px;border-top:1px solid var(--line);
-vertical-align:top}th{color:var(--muted);font-weight:500;border-top:0}
-.pill{display:inline-block;padding:1px 8px;border-radius:99px;background:var(--pill);font-size:12px}
+:root{--bg:#f6f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--line:#e4e7ef;--soft:#f1f3f9;
+--accent:#4f46e5;--accent-2:#7c3aed;--accent-soft:#eef0ff;--good:#059669;--good-soft:#e7f8f1;
+--bad:#dc2626;--bad-soft:#fdecec;--warn:#b45309;--warn-soft:#fff5e5;--info:#0369a1;--info-soft:#e8f4fb;
+--shadow:0 1px 2px rgba(15,23,42,.04),0 4px 16px rgba(15,23,42,.05);--radius:14px}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d14;--card:#141824;--text:#e6e8f0;--muted:#94a0b8;
+--line:#242a3a;--soft:#1a1f2e;--accent:#8b85ff;--accent-2:#b18cff;--accent-soft:#1f2147;--good:#34d399;
+--good-soft:#0f2a22;--bad:#f87171;--bad-soft:#2d1517;--warn:#fbbf24;--warn-soft:#2b2210;--info:#60a5fa;
+--info-soft:#12233a;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
+font:14px/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:5;display:flex;gap:6px;align-items:center;padding:10px 24px;
+background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:blur(10px);
+border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:9px;margin-right:14px;font-weight:700;font-size:15px;
+color:var(--text);letter-spacing:-.01em}.brand:hover{text-decoration:none}
+.logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:#fff;
+background:linear-gradient(135deg,var(--accent),var(--accent-2));box-shadow:0 2px 8px rgba(79,70,229,.35)}
+header nav{display:flex;gap:2px;flex-wrap:wrap}
+header nav a{color:var(--muted);padding:6px 11px;border-radius:9px;font-weight:500}
+header nav a:hover{background:var(--soft);color:var(--text);text-decoration:none}
+header nav a.on{background:var(--accent-soft);color:var(--accent)}
+.chip{margin-left:auto;display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:99px;
+border:1px solid var(--line);background:var(--card);color:var(--text);font-size:12.5px;font-weight:500}
+.chip:hover{text-decoration:none;border-color:var(--accent)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}.dot.on{background:var(--good);
+box-shadow:0 0 0 3px var(--good-soft)}.dot.off{background:var(--bad);box-shadow:0 0 0 3px var(--bad-soft)}
+main{max-width:1160px;margin:0 auto;padding:28px 24px 48px}
+h1{font-size:24px;letter-spacing:-.02em;margin:0 0 18px}h2{font-size:15px;margin:0 0 12px;letter-spacing:-.01em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;
+margin:0 0 18px;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:separate;border-spacing:0}
+td,th{text-align:left;padding:11px 10px;border-top:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-top:0}
+tbody tr:hover td,table tr:hover td{background:color-mix(in srgb,var(--soft) 70%,transparent)}
+td a{font-weight:600;color:var(--text)}td a:hover{color:var(--accent)}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--muted);
+font-size:12px;font-weight:600;white-space:nowrap}
+.pill.found{background:var(--info-soft);color:var(--info)}
+.pill.preparing,.pill.working,.pill.running,.pill.queued,.pill.submitting{background:var(--accent-soft);color:var(--accent)}
+.pill.prepared{background:var(--accent-soft);color:var(--accent)}
+.pill.approved,.pill.submitted,.pill.done{background:var(--good-soft);color:var(--good)}
+.pill.needs_you,.pill.waiting{background:var(--warn-soft);color:var(--warn)}
+.pill.failed,.pill.rejected{background:var(--bad-soft);color:var(--bad)}
 .submitted,.approved,.good{color:var(--good)}.failed,.needs_you,.rejected{color:var(--bad)}.prepared{color:var(--accent)}
 .muted{color:var(--muted)}.warn{color:var(--warn)}.bad{color:var(--bad)}
-button,.button{font:inherit;padding:6px 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);
-color:var(--text);cursor:pointer;text-decoration:none;display:inline-block}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-input[type=text],input[type=number],textarea,select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--line);
-border-radius:7px;background:var(--bg);color:var(--text)}textarea{min-height:90px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.stats{display:grid;
-grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}.stat{padding:12px;border:1px solid var(--line);
-border-radius:9px;background:var(--card)}.stat b{display:block;font-size:22px}
-.flash{padding:10px 14px;border-radius:8px;margin-bottom:14px;background:var(--pill)}
-pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;max-height:520px;overflow:auto}
-.src{font-size:12px;color:var(--muted)}
-.below{opacity:.45}.score{font-weight:700;font-size:16px}.kind{font-size:11px;color:var(--muted);display:block}
+button,.button{font:inherit;font-weight:600;padding:8px 14px;border-radius:10px;border:1px solid var(--line);
+background:var(--card);color:var(--text);cursor:pointer;text-decoration:none;display:inline-block;
+transition:background .15s,border-color .15s,transform .05s}
+button:hover,.button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));text-decoration:none}
+button:active{transform:translateY(1px)}
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
+box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover{filter:brightness(1.06)}
+input[type=text],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
+padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);
+transition:border-color .15s,box-shadow .15s}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
+box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}textarea{min-height:90px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.stat{position:relative;padding:16px 16px 14px;border:1px solid var(--line);border-radius:var(--radius);
+background:var(--card);box-shadow:var(--shadow);overflow:hidden;transition:transform .12s,border-color .12s}
+.stat:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.stat::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--muted)}
+.stat b{display:block;font-size:28px;letter-spacing:-.02em;line-height:1.15}
+.stat span{font-size:12.5px;font-weight:500;text-transform:capitalize}
+.st-found::before{background:var(--info)}.st-prepared::before{background:var(--accent)}
+.st-needs_you::before{background:var(--warn)}.st-approved::before{background:var(--good)}
+.st-submitted::before{background:linear-gradient(90deg,var(--good),var(--accent))}
+.flash{padding:12px 16px;border-radius:12px;margin-bottom:16px;background:var(--info-soft);color:var(--text);
+border:1px solid color-mix(in srgb,var(--info) 25%,transparent)}
+.flash.warn{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.flash.bad{background:var(--bad-soft);border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
+.flash.good{background:var(--good-soft);border-color:color-mix(in srgb,var(--good) 30%,transparent)}
+.flash.warn,.flash.bad{color:var(--text)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px}
+.tab{padding:6px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--muted);
+font-weight:600;font-size:13px;text-transform:capitalize}
+.tab:hover{color:var(--text);text-decoration:none;border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.tab.on{background:var(--text);border-color:var(--text);color:var(--card)}
+pre{white-space:pre-wrap;font:12px/1.55 ui-monospace,"SF Mono",monospace;max-height:520px;overflow:auto;
+background:var(--soft);border-radius:10px;padding:12px}
+code{font:12.5px ui-monospace,"SF Mono",monospace;background:var(--soft);padding:1px 6px;border-radius:6px}
+.src{font-size:12px;color:var(--muted);margin-top:2px}
+.below{opacity:.45}
+.score{display:inline-grid;place-items:center;min-width:42px;height:30px;padding:0 8px;border-radius:9px;
+font-weight:700;font-size:14.5px;background:var(--soft);color:var(--text)}
+.score.b-high{background:var(--good-soft);color:var(--good)}.score.b-mid{background:var(--warn-soft);color:var(--warn)}
+.score.b-low{background:var(--bad-soft);color:var(--bad)}
+.kind{font-size:10.5px;color:var(--muted);display:block;margin-top:3px;text-transform:uppercase;letter-spacing:.05em}
+.steps{counter-reset:step;list-style:none;padding:0;margin:0}
+.steps li{counter-increment:step;display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;min-height:38px;
+padding:0 0 12px}.steps li form.code{flex-basis:100%;margin-left:40px}
+.steps li::before{content:counter(step);flex:none;width:26px;height:26px;border-radius:50%;
+display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent)}
+.steps li.done::before{content:"✓";background:var(--good-soft);color:var(--good)}
 .diff .add{background:color-mix(in srgb,var(--good) 18%,transparent)}
 .diff .del{background:color-mix(in srgb,var(--bad) 18%,transparent);text-decoration:line-through}
 """
@@ -76,10 +150,34 @@ class Dashboard:
         from .llm import client
 
         llm = client(settings)
-        self.llm_missing = llm is None  # Shown as a banner: how to connect Claude.
-        self.connection = ("Claude not connected" if llm is None else
-                           f"Claude via {'Claude Code (your plan)' if type(llm).__name__ == 'ClaudeCode' else 'API key'}"
-                           + (f", {llm.model}" if llm.model else ""))
+        self.backend = None if llm is None else type(llm).__name__  # ClaudeCode or AnthropicAPI
+        self.model = llm.model if llm else ""
+        self._missing: bool | None = None  # Tests set llm_missing directly.
+
+    @property
+    def llm_missing(self) -> bool:
+        """No usable connection: none set up, or Claude Code isn't signed in."""
+        if self._missing is not None:
+            return self._missing
+        if self.backend == "ClaudeCode":
+            return not claude_login.status()["loggedIn"]
+        return self.backend is None
+
+    @llm_missing.setter
+    def llm_missing(self, value: bool) -> None:
+        self._missing = value
+
+    @property
+    def connection(self) -> str:
+        if self.backend == "AnthropicAPI":
+            return f"Anthropic API · {self.model}"
+        if self.backend == "ClaudeCode":
+            info = claude_login.status()
+            if not info["loggedIn"]:
+                return "Claude: not signed in"
+            # The plan only: the header shows on every page (and in screenshots); the Connect page has the email.
+            return claude_login.describe({**info, "email": ""}) + (f" · {self.model}" if self.model else "")
+        return "Claude not connected"
 
     def ensure_worker(self) -> None:
         if self.worker and self.worker.poll() is None:
@@ -105,6 +203,8 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
              ("/queue", "Approval queue"), ("/applications", "Applications"),
              ("/resumes", "Resumes"), ("/activity", "Activity")]
     nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
+    chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
+            f'{esc(app.connection)}</a>')
     auto = '<meta http-equiv="refresh" content="4">' if refresh else ""
     banner = ('<div class="flash warn">Auto-submit is on.</div>'
               if app.settings.submit_mode == "auto" else "")
@@ -112,17 +212,17 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
             f"content='width=device-width,initial-scale=1'>{auto}<title>Job Agent</title>"
-            f"<link rel=stylesheet href=/style.css></head><body><header><b>Job Agent</b>{nav}</header>"
+            f"<link rel=stylesheet href=/style.css></head><body><header>"
+            f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
             f"<main>{banner}{note}{body}</main></body></html>").encode()
 
 
 def start_here(app: Dashboard, active: str) -> str:
     """First-run guidance: connect Claude, then upload a resume and describe the jobs you want."""
-    from .llm import NOT_SET_UP
-
     parts = []
-    if app.llm_missing:
-        parts.append(f'<div class="flash bad">{esc(NOT_SET_UP)}</div>')
+    if app.llm_missing and active != "/connect":
+        parts.append('<div class="flash bad"><b>Claude isn\'t connected yet.</b> '
+                     '<a href="/connect">Connect Claude</a> to rank jobs and prepare applications.</div>')
     if not (config.PROFILE_DIR / "resume.md").exists() and active not in ("/resumes",):
         parts.append('<div class="flash warn">Start here: <a href="/resumes">upload your resume PDF(s)</a>, '
                      'accept the merged master resume, then describe the jobs you want on '
@@ -142,12 +242,59 @@ def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
 
 # ----- pages ----------------------------------------------------------------
 
+
+def page_connect(app: Dashboard, flash: str) -> bytes:
+    """Connect Claude: your Claude Code sign-in (your plan), or an API key."""
+    if app.backend == "AnthropicAPI":
+        body = f"""<h1>Connect Claude</h1>
+    <div class=card><h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Connected with an
+    Anthropic API key</h2><p class=muted>Model <code>{esc(app.model)}</code>, billed per token by Anthropic, with a
+    spending cap of ${app.settings.spend_cap_usd:.2f} per run (<code>SPEND_CAP_USD</code>). To use your Claude plan
+    instead, set <code>MODEL_BACKEND=claude-code</code> in <code>.env</code> and restart.</p></div>"""
+        return layout(app, "/connect", body, flash)
+    info = claude_login.status(fresh=True)
+    login = claude_login.current()
+    if not info["installed"]:
+        state = """<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>Claude Code isn't
+        installed</h2><p class=muted>Job Agent reaches Claude through Claude Code, signed in with your own Claude
+        account. Install it (<a href="https://code.claude.com/docs/en/setup" target=_blank>instructions</a>), then
+        reload this page.</p>"""
+    elif info["loggedIn"]:
+        state = (f'<h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Connected to '
+                 f'{esc(claude_login.describe(info))}</h2><p class=muted>Each model request runs Claude Code headless '
+                 f'with your sign-in: a fresh, unsaved session with its own tools off. Usage counts against your '
+                 f'Claude plan; nothing is billed per token.</p>'
+                 + form(app, "/connect/logout", "Sign out of Claude Code"))
+    else:
+        waiting = login is not None and login.running and login.url
+        step2 = (f'<li>Approve on the Claude page (<a href="{esc(login.url)}" target=_blank>open it again</a>) '
+                 f'and copy the code it shows.</li><li>Paste the code here:'
+                 f'<form method=post action="/connect/code" class="row code">'
+                 f'<input type=hidden name=token value="{app.token}">'
+                 f'<input type=text name=code required autofocus placeholder="Code from the Claude page" '
+                 f'style="max-width:420px"><button class=primary>Connect</button></form></li>'
+                 if waiting else
+                 '<li>Approve on the Claude page and copy the code it shows.</li><li>Paste the code here.</li>')
+        state = (f'<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>Not signed in'
+                 f'</h2><p class=muted>Sign in with your Claude account (Pro or Max) to use your plan. No API key.'
+                 f'</p><ol class=steps><li class="{"done" if waiting else ""}">'
+                 + (form(app, "/connect/start", "Sign in with Claude", primary=True) if not waiting else
+                    "A Claude sign-in page opened in your browser.")
+                 + f'</li>{step2}</ol>')
+    body = f"""<h1>Connect Claude</h1>
+    <div class=card>{state}</div>
+    <div class=card><h2>Prefer an API key?</h2><p class=muted style="margin:0">Put
+    <code>MODEL_BACKEND=anthropic</code> and <code>ANTHROPIC_API_KEY=…</code> in <code>.env</code> (or sign in with
+    Anthropic's <code>ant auth login</code>) and restart. Billed per token, with <code>SPEND_CAP_USD</code> per run.
+    Job Agent is a personal tool: use your own account or key on your own computer.</p></div>"""
+    return layout(app, "/connect", body, flash)
+
 def page_today(app: Dashboard, flash: str) -> bytes:
     jobs = app.tracker.all()
     counts = {s: 0 for s in ORDER}
     for job in jobs:
         counts[job["status"]] = counts.get(job["status"], 0) + 1
-    stats = "".join(f'<a class="stat" href="/jobs?status={s}" style="text-decoration:none;color:inherit">'
+    stats = "".join(f'<a class="stat st-{s}" href="/jobs?status={s}" style="text-decoration:none;color:inherit">'
                     f'<b>{counts[s]}</b><span class="muted">{s.replace("_", " ")}</span></a>'
                     for s in ("found", "prepared", "needs_you", "approved", "submitted", "filtered_out")
                     if s in counts)
@@ -220,8 +367,8 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     profile = config.load_profile()
     threshold = config.fit_threshold(profile, app.settings)
     views = [("active", "To apply"), *[(s, s.replace("_", " ")) for s in ORDER if s != "working"], ("all", "all")]
-    tabs = " ".join(f'<a class="button" href="/jobs?status={key}" style="{"font-weight:600" if key == status else ""}">'
-                    f'{name}</a>' for key, name in views)
+    tabs = "".join(f'<a class="tab{" on" if key == status else ""}" href="/jobs?status={key}">{name}</a>'
+                   for key, name in views)
     wanted = ACTIVE if status == "active" else tuple(ORDER) if status == "all" else (status,)
     jobs = app.tracker.with_status(*wanted)
 
@@ -239,7 +386,9 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
         else:
             act = f'<a href="/job/{job["id"]}">open</a>'
         below = score is not None and kind != "keyword" and score < threshold
-        badge = (f'<span class=score>{score}</span><span class=kind>{kind}</span>' if score is not None
+        band = ("" if score is None or kind == "keyword" else
+                "b-high" if score >= 80 else "b-mid" if score >= threshold else "b-low")
+        badge = (f'<span class="score {band}">{score}</span><span class=kind>{kind}</span>' if score is not None
                  else '<span class=muted>—</span>')
         rows.append(f'<tr class="{"below" if below else ""}"><td>{badge}</td>'
                     f'<td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
@@ -266,7 +415,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     <b>keyword</b> (free and instant: title words against your role titles and description; ranked below
     model scores). Greyed rows are below your
     threshold of <b>{threshold}</b> (<a href="/search">change</a>); jobs whose fit falls below it aren't prepared.</p></div>
-    <div class="row" style="margin-bottom:14px">{tabs}</div>
+    <div class="tabs">{tabs}</div>
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>System</th><th>Status</th><th></th></tr>
     {"".join(rows) or '<tr><td colspan=6 class=muted>None.</td></tr>'}</table>
     {f'<p class=muted>Showing the top 500 of {len(jobs)}.</p>' if len(jobs) > 500 else ''}</div>"""
@@ -683,6 +832,8 @@ def handler_for(app: Dashboard):
                 return self.send(page_activity(app))
             if url.path == "/search":
                 return self.send(page_search(app, flash))
+            if url.path == "/connect":
+                return self.send(page_connect(app, flash))
             if url.path == "/resumes":
                 return self.send(page_resumes(app, flash))
             if url.path == "/applications":
@@ -751,6 +902,17 @@ def handler_for(app: Dashboard):
         def act(self, path: str, one: dict, fields: dict, back: str) -> tuple[str, str]:
             tracker = app.tracker
             ids = [int(i) for raw in fields.get("ids", []) for i in raw.split(",") if i.strip().isdigit()]
+            if path == "/connect/start":
+                login = claude_login.start()
+                if not login.url:
+                    raise ValueError("Claude Code didn't start its sign-in: " + " ".join(login.output)[-200:])
+                return "A Claude sign-in page opened in your browser. Approve it, then paste the code here.", "/connect"
+            if path == "/connect/code":
+                info = claude_login.finish(one.get("code", ""))
+                return f"Connected: {claude_login.describe(info)}.", "/connect"
+            if path == "/connect/logout":
+                claude_login.logout()
+                return "Signed out of Claude Code on this computer.", "/connect"
             if path == "/refresh":
                 app.ensure_worker()
                 tracker.add_task("refresh")
@@ -902,6 +1064,7 @@ def handler_for(app: Dashboard):
 
 
 def serve(settings, port: int = 8770, start_worker: bool = True, host: str = "127.0.0.1") -> None:
+    config.ensure_profile()
     app = Dashboard(settings, port)
     if start_worker:
         app.ensure_worker()

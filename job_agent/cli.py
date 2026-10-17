@@ -11,21 +11,17 @@ from .worker import DB_PATH, browser_lock
 
 
 def cmd_setup(_args) -> None:
-    if not config.PROFILE_DIR.exists():
-        shutil.copytree(config.PROFILE_EXAMPLE_DIR, config.PROFILE_DIR)
-        print("Created profile/ from profile.example/.")
+    if config.ensure_profile():
+        print("Created profile/ with your job preferences template.")
     env = config.ROOT / ".env"
     if not env.exists():
         shutil.copy(config.ROOT / ".env.example", env)
         print("Created .env from .env.example.")
     print(
-        "\nNext:\n"
-        "  1. Edit profile/profile.yaml and replace profile/resume.md with your\n"
-        "     full master resume (everything true you might ever include).\n"
-        "     Optional: add profile/writing-sample.md so cover letters sound like you.\n"
-        "  2. Connect Claude: install Claude Code and sign in (uses your Claude plan),\n"
-        "     or put ANTHROPIC_API_KEY in .env.\n"
-        "  3. uv run job-agent dashboard   (refresh, prepare, approve, submit)"
+        "\nNext: uv run job-agent dashboard, then follow its steps:\n"
+        "  1. Connect Claude (your Claude plan via Claude Code, or an API key).\n"
+        "  2. Resumes: upload your resume PDF(s) and accept the master resume.\n"
+        "  3. Search: describe the jobs you want, and save."
     )
 
 

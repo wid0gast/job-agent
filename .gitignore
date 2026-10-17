@@ -16,3 +16,5 @@ __pycache__/
 # Tectonic for the app store ZIP (large; from the tectonic 0.17.0 release, x86_64 musl).
 appstore/bin/
 .DS_Store
+# The clean demo copy used for README screenshots.
+/.demo/
