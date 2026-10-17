@@ -71,9 +71,11 @@ class AgentRun:
         for _ in range(self.max_steps):
             if time.time() > deadline:
                 return self.end(f"Stopped at the time limit ({self.max_seconds / 60:.0f} minutes).")
-            self.prune_snapshots()
+            if not getattr(self.llm, "prunes_context", False):  # Else the API clears old results itself.
+                self.prune_snapshots()
             message = self.llm.complete(self.messages, declarations)
-            message = {k: message[k] for k in ("content", "tool_calls") if message.get(k)}
+            # provider_content: the model's reply as sent, replayed unchanged (thinking blocks included).
+            message = {k: message[k] for k in ("content", "tool_calls", "provider_content") if message.get(k)}
             message["role"] = "assistant"
             self.messages.append(message)
             if message.get("content"):

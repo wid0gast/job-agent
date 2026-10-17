@@ -25,7 +25,7 @@ def trace_path(task_id: int | str) -> Path:
 
 def run(goal: str, ctx, ask, log, task_id: int) -> str:
     agent = AgentRun(ctx.llm, PLANNER_PROMPT, Planner(ctx, ask, log).tools(), trace_path(task_id),
-                     max_steps=40, max_seconds=18 * 60 if config.HOSTED else 45 * 60,
+                     max_steps=40, max_seconds=45 * 60,
                      observer=lambda kind, data: log(f"  [{kind}] {str(data)[:200]}")
                      if kind in ("thought", "call", "finish") else None)
     prefs = config.load_profile().get("preferences", {})

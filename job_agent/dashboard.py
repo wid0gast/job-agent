@@ -63,34 +63,6 @@ pre{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;max-height:520px;o
 """
 
 
-# Hosted only: the class platform refuses plain form posts as cross-origin but
-# accepts the same request sent by a script, so forms are sent with fetch().
-FORMS_JS = """
-document.addEventListener("submit", async (event) => {
-  const form = event.target;
-  if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
-  event.preventDefault();
-  const data = new FormData(form);
-  if (event.submitter && event.submitter.name) data.append(event.submitter.name, event.submitter.value);
-  const buttons = form.querySelectorAll("button");
-  buttons.forEach((b) => { b.disabled = true; });
-  document.body.style.cursor = "progress";
-  try {
-    const response = await fetch(form.action, { method: "POST", body: data, credentials: "same-origin" });
-    if (!response.ok) throw new Error(response.status + " " + (await response.text()).slice(0, 300));
-    location.href = response.url;
-  } catch (error) {
-    buttons.forEach((b) => { b.disabled = false; });
-    document.body.style.cursor = "";
-    const note = document.createElement("div");
-    note.className = "flash bad";
-    note.textContent = "Could not send that: " + error.message;
-    document.querySelector("main").prepend(note);
-  }
-});
-"""
-
-
 def esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
@@ -101,6 +73,13 @@ class Dashboard:
         self.tracker = Tracker(DB_PATH)
         self.token = secrets.token_urlsafe(24)
         self.worker: subprocess.Popen | None = None
+        from .llm import client
+
+        llm = client(settings)
+        self.llm_missing = llm is None  # Shown as a banner: how to connect Claude.
+        self.connection = ("Claude not connected" if llm is None else
+                           f"Claude via {'Claude Code (your plan)' if type(llm).__name__ == 'ClaudeCode' else 'API key'}"
+                           + (f", {llm.model}" if llm.model else ""))
 
     def ensure_worker(self) -> None:
         if self.worker and self.worker.poll() is None:
@@ -119,7 +98,6 @@ class Dashboard:
                 self.worker.kill()
 
 
-SCRIPT = '<script src="/forms.js" defer></script>'
 
 
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False) -> bytes:
@@ -130,76 +108,27 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     auto = '<meta http-equiv="refresh" content="4">' if refresh else ""
     banner = ('<div class="flash warn">Auto-submit is on.</div>'
               if app.settings.submit_mode == "auto" else "")
-    if config.HOSTED:
-        banner += hosted_banner(active)
+    banner += start_here(app, active)
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
             f"content='width=device-width,initial-scale=1'>{auto}<title>Job Agent</title>"
-            f"<link rel=stylesheet href=/style.css>{SCRIPT if config.HOSTED else ''}</head><body><header><b>Job Agent</b>{nav}</header>"
+            f"<link rel=stylesheet href=/style.css></head><body><header><b>Job Agent</b>{nav}</header>"
             f"<main>{banner}{note}{body}</main></body></html>").encode()
 
 
-def hosted_banner(active: str) -> str:
-    """Class app store: the session is temporary, so say when it ends and offer the download."""
-    import os
-    from datetime import datetime
+def start_here(app: Dashboard, active: str) -> str:
+    """First-run guidance: connect Claude, then upload a resume and describe the jobs you want."""
+    from .llm import NOT_SET_UP
 
     parts = []
-    if os.environ.get("JOB_AGENT_MODEL_ERROR"):
-        parts.append(f'<div class="flash bad">Could not connect to the class models: '
-                     f'{esc(os.environ["JOB_AGENT_MODEL_ERROR"])}</div>')
-    ends = os.environ.get("JOB_AGENT_SESSION_ENDS", "")
-    try:
-        minutes = int((datetime.fromisoformat(ends.replace("Z", "+00:00")).timestamp()
-                       - datetime.now().timestamp()) // 60)
-        left = f"This session ends in about {max(0, minutes)} minutes and forgets everything. "
-    except ValueError:
-        left = "This session is temporary and forgets everything when it ends. "
-    parts.append(f'<div class="flash">{left}<a href="/export.zip">Download everything</a> '
-                 '(resumes, applications, answers, passwords) before then.</div>')
+    if app.llm_missing:
+        parts.append(f'<div class="flash bad">{esc(NOT_SET_UP)}</div>')
     if not (config.PROFILE_DIR / "resume.md").exists() and active not in ("/resumes",):
         parts.append('<div class="flash warn">Start here: <a href="/resumes">upload your resume PDF(s)</a>, '
                      'accept the merged master resume, then describe the jobs you want on '
                      '<a href="/search">Search</a>. Optional: import your job sheet on '
                      '<a href="/applications">Applications</a>.</div>')
     return "".join(parts)
-
-
-def page_passwords() -> str:
-    """Hosted: site accounts made this session; there's no keychain to keep them in."""
-    if not config.HOSTED or not config.PASSWORDS_FILE.exists():
-        return ""
-    stored = json.loads(config.PASSWORDS_FILE.read_text())
-    rows = "".join(f"<tr><td>{esc(k.split('|')[0].split(':', 1)[-1])}</td><td>{esc(k.split('|')[-1])}</td>"
-                   f"<td><code>{esc(v)}</code></td></tr>" for k, v in stored.items())
-    return (f'<div class=card><h2>Accounts created this session</h2><p class=muted>Save these: the session '
-            f'forgets them.</p><table><tr><th>Site</th><th>Email</th><th>Password</th></tr>{rows}</table></div>')
-
-
-def export_zip() -> bytes:
-    """Everything the session made, minus caches."""
-    import io
-    import zipfile
-
-    import sqlite3
-
-    buffer = io.BytesIO()
-    skip = {"browser-profile", "worker.lock", "cache"}  # cache: raw job lists, fetched again on refresh.
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for folder in (config.PROFILE_DIR, config.DATA_DIR):
-            for path in folder.rglob("*"):
-                if (path.is_file() and not skip & set(path.relative_to(config.HOME).parts)
-                        and not path.name.startswith("applications.db")):
-                    archive.write(path, path.relative_to(config.HOME))
-        # One consistent copy of the database, even while the worker is writing to it.
-        live, copy = sqlite3.connect(DB_PATH), sqlite3.connect(":memory:")
-        try:
-            live.backup(copy)
-            archive.writestr("data/applications.db", copy.serialize())
-        finally:
-            live.close()
-            copy.close()
-    return buffer.getvalue()
 
 
 def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
@@ -230,11 +159,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     for task in tasks:
         reply = ""
         if task["status"] == "waiting":
-            from .worker import LIVE_SCREENSHOT
-
-            shot = (f' <a href="/file?path={quote(str(LIVE_SCREENSHOT))}" target=_blank>See the page</a>'
-                    if config.HOSTED and LIVE_SCREENSHOT.exists() else "")
-            reply = (f'<div class="card" style="margin:8px 0 0"><b>{esc(task["question"])}</b>{shot}'
+            reply = (f'<div class="card" style="margin:8px 0 0"><b>{esc(task["question"])}</b>'
                      + form(app, "/reply", "Send", {"task_id": task["id"]}, True,
                             '<input type=text name=answer autofocus style="max-width:260px;margin-right:8px">')
                      + "</div>")
@@ -245,7 +170,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
                 job += f'<span class=kind>{esc(task["arg"][:90])}</span>'
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(task["kind"])}{job}</td>'
                     f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
-                    f'<td class="muted">{esc((task["result"] or "")[:2000 if task["kind"] == "warmup" else 160])}</td></tr>')
+                    f'<td class="muted">{esc((task["result"] or "")[:160])}</td></tr>')
     body = f"""
     <h1>Today</h1>
     <div class="stats">{stats}</div>
@@ -253,7 +178,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       {form(app, "/refresh", "Refresh job lists", primary=True)}
       {form(app, "/prepare-top", "Prepare top matches", extra='<input type=number name=count value=3 min=1 max=20 style="width:70px;margin-right:6px">')}
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
-      · model {esc(app.settings.model or "not set")}</span>
+      · {esc(app.connection)}</span>
     </div></div>
     <div class="card"><h2>Give the agent a goal</h2>
     <form method=post action="/plan"><input type=hidden name=token value="{app.token}">
@@ -642,7 +567,7 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
     <input type=text name=status_column placeholder="status column (optional)" style="width:200px">
     <button class=primary>Import</button></form>
     <p style="margin-top:12px"><a class=button href="/applications.csv">Export as CSV</a></p></div>"""
-    return layout(app, "/applications", body + page_passwords(), flash)
+    return layout(app, "/applications", body, flash)
 
 
 def application_block(app: Dashboard, job: dict) -> str:
@@ -726,18 +651,16 @@ def handler_for(app: Dashboard):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            if not config.HOSTED:  # The class portal may show the app in a frame.
-                self.send_header("X-Frame-Options", "DENY")
-                self.send_header("Content-Security-Policy",
-                                 "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
             for key, value in (headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 
         def host_ok(self) -> bool:
-            # Hosted, the platform fronts the app and the session token guards changes.
-            return config.HOSTED or self.headers.get("Host", "") in allowed_hosts
+            return self.headers.get("Host", "") in allowed_hosts
 
         def do_GET(self):
             url = urlsplit(self.path)
@@ -747,11 +670,6 @@ def handler_for(app: Dashboard):
                 return self.send(b"Forbidden", 403, "text/plain")
             if url.path == "/style.css":
                 return self.send(CSS.encode(), ctype="text/css; charset=utf-8")
-            if url.path == "/forms.js":
-                return self.send(FORMS_JS.encode(), ctype="text/javascript; charset=utf-8")
-            if url.path == "/export.zip" and config.HOSTED:
-                return self.send(export_zip(), ctype="application/zip",
-                                 headers={"Content-Disposition": 'attachment; filename="job-agent-session.zip"'})
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
             flash = query.get("msg", "")
             parts = url.path.strip("/").split("/")
@@ -793,8 +711,7 @@ def handler_for(app: Dashboard):
 
         def do_POST(self):
             sent_origin = self.headers.get("Origin")
-            if not self.host_ok() or (not config.HOSTED and sent_origin
-                                      and sent_origin not in (origin, f"http://localhost:{app.port}")):
+            if not self.host_ok() or (sent_origin and sent_origin not in (origin, f"http://localhost:{app.port}")):
                 return self.send(b"Forbidden", 403, "text/plain")
             size = int(self.headers.get("Content-Length", 0))
             if size > 30 * 1024 * 1024:
@@ -887,7 +804,7 @@ def handler_for(app: Dashboard):
                 for job in tracker.with_status("filtered_out"):
                     if (job["reason"] or "").startswith("Fit ") and (job["fit_score"] or 0) >= threshold:
                         tracker.update(job["id"], status="found", reason="Back: above your new threshold.")
-                if not tracker.with_status(*ORDER):  # Nothing fetched yet (every hosted visit starts empty).
+                if not tracker.with_status(*ORDER):  # Nothing fetched yet.
                     app.ensure_worker()
                     tracker.add_task("refresh")
                     return ("Saved. No jobs yet, so the job lists are being refreshed with these filters; "
@@ -912,8 +829,7 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 for job_id in ids:
                     tracker.add_task("submit", job_id)
-                where = "this page" if config.HOSTED else "the Chrome window and this page"
-                return f"Submitting {len(ids)}. Watch {where}.", "/"
+                return f"Submitting {len(ids)}. Watch the Chrome window and this page.", "/"
             if path == "/edit":
                 value = fields.get("value", [""])
                 value = value if len(value) > 1 else value[0]

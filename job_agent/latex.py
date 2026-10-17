@@ -13,7 +13,6 @@ in any order. Text may use **bold**, *italic* and [label](url).
 Compiled with Tectonic (brew install tectonic).
 """
 
-import os
 import re
 import shutil
 import subprocess
@@ -189,13 +188,8 @@ def compile_pdf(tex: str, output: Path) -> int:
     with tempfile.TemporaryDirectory() as work:
         source = Path(work) / "resume.tex"
         source.write_text(tex, encoding="utf-8")
-        command, env = ["tectonic", "-X", "compile", "--outdir", work, str(source)], None
-        if config.HOSTED:  # Packages come through the app's local mirror (see netrelay).
-            from . import netrelay
-
-            command += ["--bundle", netrelay.bundle_url()]
-            env = {k: v for k, v in os.environ.items() if k.lower() not in ("http_proxy", "https_proxy")}
-        run = subprocess.run(command, capture_output=True, text=True, timeout=300, env=env)
+        command = ["tectonic", "-X", "compile", "--outdir", work, str(source)]
+        run = subprocess.run(command, capture_output=True, text=True, timeout=300)
         if run.returncode != 0:
             errors = [l for l in run.stderr.splitlines() if l.startswith("error")]
             raise RuntimeError("LaTeX failed: " + " | ".join(errors[:3] or run.stderr.splitlines()[-6:]))

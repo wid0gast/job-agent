@@ -14,13 +14,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import config
+from .llm import NOT_SET_UP
 from .tracker import Tracker
 
 DB_PATH = config.DATA_DIR / "applications.db"
 BROWSER_PROFILE = config.DATA_DIR / "browser-profile"
 LOCK_PATH = config.DATA_DIR / "worker.lock"
 ANSWER_TIMEOUT = 15 * 60
-LIVE_SCREENSHOT = config.DATA_DIR / "applications" / "live-page.png"
 
 
 class Busy(RuntimeError):
@@ -59,7 +59,7 @@ class Context:
         self.llm = client(settings)
         self.ask = None  # Set per task: how a step asks you something.
         if require_model and self.llm is None:
-            raise SystemExit("Set OPENROUTER_API_KEY and OPENROUTER_MODEL in .env.")
+            raise SystemExit(NOT_SET_UP)
         self.http = http()
         self.playwright = sync_playwright().start()
         self.headless = Headless(self.playwright, settings.browser_channel)
@@ -73,25 +73,8 @@ class Context:
 
         if self._browser is None:
             self._browser = Browser(self.profile_dir, self.settings.browser_channel,
-                                    headless=self.headless_window or config.HOSTED, playwright=self.playwright)
+                                    headless=self.headless_window, playwright=self.playwright)
         return self._browser
-
-    def release_browsers(self) -> None:
-        try:
-            if self._browser:
-                self._browser.context.close()
-            self.headless.close()
-        except Exception:  # noqa: BLE001 - a crashed browser is already gone.
-            pass
-        from .browser import Headless
-
-        for shared in Headless._shared.values():
-            try:
-                shared.close()
-            except Exception:  # noqa: BLE001
-                pass
-        Headless._shared.clear()
-        self._browser = None
 
     def close(self) -> None:
         try:
@@ -109,11 +92,6 @@ def run_task(task: dict, ctx: Context, log) -> str:
     tracker = ctx.tracker
 
     def ask(question: str) -> str:
-        if config.HOSTED and ctx._browser is not None:  # No window to look at: show the page instead.
-            try:
-                ctx._browser.page.screenshot(path=str(LIVE_SCREENSHOT), full_page=True)
-            except Exception:  # noqa: BLE001 - the question still goes through.
-                pass
         tracker.set_task(task["id"], status="waiting", question=question, answer=None)
         log(f"  waiting for you: {question}")
         deadline = time.time() + ANSWER_TIMEOUT
@@ -131,12 +109,8 @@ def run_task(task: dict, ctx: Context, log) -> str:
         from . import planner
 
         if ctx.llm is None:
-            raise ValueError("The planner needs a model: add an OpenRouter key and model in .env.")
+            raise ValueError(NOT_SET_UP)
         return planner.run(task["arg"] or "", ctx, ask, log, task["id"])
-    if task["kind"] == "warmup":
-        from . import hosted
-
-        return hosted.warm_up(ctx, log)
     if task["kind"] == "refresh":
         counts = sources.refresh(tracker, config.load_profile(), boards=True, log=log)
         from . import matching
@@ -147,7 +121,7 @@ def run_task(task: dict, ctx: Context, log) -> str:
         from . import profile_sync
 
         if ctx.llm is None:
-            raise ValueError("Add an OpenRouter key and model in .env to read your resume.")
+            raise ValueError(NOT_SET_UP)
         notes = profile_sync.sync(ctx.llm, log)
         return "Profile updated from your resume. " + " ".join(notes)
     if task["kind"] == "merge_resumes":
@@ -155,7 +129,7 @@ def run_task(task: dict, ctx: Context, log) -> str:
         return f"Proposed master resume ready for review ({len(proposal['kept'])} line(s) kept from older versions)."
     if task["kind"] == "import_resume":
         if ctx.llm is None:
-            raise ValueError("Add an OpenRouter key and model in .env to read resumes.")
+            raise ValueError(NOT_SET_UP)
         details = resumes.parse(ctx.llm, Path(task["arg"]), log)
         return f"Read {details['source']} (content through {details['latest_date']})."
     if task["kind"] == "score_matches":
@@ -173,7 +147,7 @@ def score_matches(ctx: Context, log) -> str:
     from . import matching
 
     if ctx.llm is None:
-        raise ValueError("Add an OpenRouter key and model in .env to rank jobs.")
+        raise ValueError(NOT_SET_UP)
     result = matching.score(ctx.llm, ctx.tracker, log=log)
     return (f"Ranked {result['scored']} job(s) with the model; {result['remaining']} not yet "
             "(they keep their keyword score).")
@@ -230,8 +204,6 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
                     log(traceback.format_exc())
                     tracker.set_task(task["id"], status="failed",
                                      result=f"{type(error).__name__}: {error}"[:2000])
-                if config.HOSTED:  # Memory is tight: don't keep a browser open between tasks.
-                    ctx.release_browsers()
                 idle_since = time.time()
         finally:
             stop.set()

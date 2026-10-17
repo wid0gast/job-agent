@@ -20,7 +20,7 @@ ROOT = config.ROOT
 
 
 class ScriptedModel:
-    """Stands in for OpenRouter.json and records what each step was sent."""
+    """Stands in for the model's json() and records what each step was sent."""
 
     model = "scripted/model"
 
@@ -77,7 +77,7 @@ def env(site, tmp_path, monkeypatch):
     monkeypatch.setattr(greenhouse, "BOARDS", f"{site}/gh")
     monkeypatch.setattr(demo_greenhouse, "FORM_EXTRA_REQUIRED", False)
     demo_greenhouse.SUBMISSIONS.clear()
-    settings = replace(config.Settings.from_env(require_model=False), api_key="", model="",
+    settings = replace(config.Settings.from_env(require_model=False), backend="off",
                        browser_channel="chromium", cover_letter="required")
     return settings, Tracker(tmp_path / "data" / "t.db")
 

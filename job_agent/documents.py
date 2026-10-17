@@ -41,7 +41,7 @@ def _norm(text: str) -> str:
 
 
 def to_html(body_markdown: str, title: str) -> str:
-    import markdown  # Local import: the hosted build only needs the fact check.
+    import markdown
 
     body = markdown.markdown(body_markdown, extensions=["sane_lists"])
     return (

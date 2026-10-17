@@ -29,10 +29,7 @@ FIELD_WORDS = {"ai_ml_data": ("ai", "machine learning", "data")}
 def http():
     import httpx
 
-    # Hosted, the class proxy cuts a tunnel after 16 MiB or 90 s in total, however many requests
-    # reuse it, so each request gets its own connection there.
-    limits = httpx.Limits(max_keepalive_connections=0) if config.HOSTED else httpx.Limits()
-    return httpx.Client(timeout=30, follow_redirects=True, limits=limits,
+    return httpx.Client(timeout=30, follow_redirects=True,
                         headers={"User-Agent": "job-agent (personal job search)"})
 
 
@@ -202,9 +199,8 @@ def refresh(tracker, profile: dict, boards: bool = False, log=print) -> dict:
                     return ats, row, [], error
 
             todo = [(ats, row) for ats in BOARD_FEEDS for row in companies.boards(ats)]
-            # Polite parallelism: a few boards at a time, each a single request. Hosted, the
-            # class proxy admits four connections per visit, and model calls need one too.
-            with ThreadPoolExecutor(max_workers=3 if config.HOSTED else 8) as pool:
+            # Polite parallelism: a few boards at a time, each a single request.
+            with ThreadPoolExecutor(max_workers=8) as pool:
                 for ats, row, board_jobs, error in pool.map(read, todo):
                     if error:
                         log(f"  {ats} board {row['board']}: {error}")

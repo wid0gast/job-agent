@@ -47,6 +47,7 @@ def test_whole_flow_in_the_dashboard(env, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(dashboard, "DB_PATH", db_path)
     monkeypatch.setattr(dashboard.Dashboard, "ensure_worker", lambda self: None)
     app = dashboard.Dashboard(replace(settings), 0)
+    app.llm_missing = False  # The worker below runs a scripted model.
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
     server.RequestHandlerClass = dashboard.handler_for(app)

@@ -41,7 +41,7 @@ EXISTS = re.compile(r"already (exists|in use|registered)|account with this email
 
 
 class Passwords:
-    """Site passwords: the macOS Keychain locally, the session's files when hosted (tests swap in a dict)."""
+    """Site passwords: the macOS Keychain (tests swap in a dict)."""
 
     def get(self, site: str, email: str) -> str | None:
         return config.get_password(f"{KEYCHAIN}:{site}", email)

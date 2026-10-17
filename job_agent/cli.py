@@ -23,7 +23,8 @@ def cmd_setup(_args) -> None:
         "  1. Edit profile/profile.yaml and replace profile/resume.md with your\n"
         "     full master resume (everything true you might ever include).\n"
         "     Optional: add profile/writing-sample.md so cover letters sound like you.\n"
-        "  2. Put your OpenRouter key and model in .env.\n"
+        "  2. Connect Claude: install Claude Code and sign in (uses your Claude plan),\n"
+        "     or put ANTHROPIC_API_KEY in .env.\n"
         "  3. uv run job-agent dashboard   (refresh, prepare, approve, submit)"
     )
 
@@ -73,12 +74,13 @@ def cmd_prepare(args) -> None:
 
 def cmd_resumes(args) -> None:
     from . import resumes
-    from .llm import OpenRouter
+    from .llm import NOT_SET_UP, client
 
     def model():
-        settings = config.Settings.from_env()
-        return OpenRouter(settings.api_key, settings.model, settings.spend_cap_usd,
-                          settings.data_collection)
+        llm = client(config.Settings.from_env())
+        if llm is None:
+            raise SystemExit(NOT_SET_UP)
+        return llm
 
     if args.action == "import":
         if not args.pdfs:

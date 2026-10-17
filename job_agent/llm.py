@@ -1,270 +1,269 @@
-"""Model clients (OpenRouter locally, the class broker when hosted): tool-calling turns
-for agents and JSON answers for pipeline steps.
+"""Model clients: Claude through your Claude Code login, or through an Anthropic API key.
 
-Every response's `usage.cost` is added up so a run stops at the spending cap.
-Free models are rate limited (about 20 requests a minute), so 429s are retried.
+Both give the app the same two calls: `json` (an answer matching a JSON Schema, for
+pipeline steps) and `complete` (one agent turn with tools, for harness.AgentRun, in the
+OpenAI-style message format the harness keeps).
+
+- ClaudeCode runs the Claude Code CLI in headless mode (`claude -p`), signed in as you,
+  so it uses your Claude plan (Pro or Max) with no API key. Each request is a fresh,
+  unsaved session with Claude Code's own tools turned off.
+- AnthropicAPI uses the Anthropic SDK with an API key (ANTHROPIC_API_KEY) or an
+  `ant auth login` profile, billed per token, with the spending cap enforced here.
 """
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import threading
-import time
+import uuid
 
-REQUEST_LIMIT_SECONDS = 90  # The class proxy's deadline for one broker request (LIMITS.requestMs).
+DEFAULT_API_MODEL = "claude-opus-5-5"
+# Per million tokens (input, output), for the spending cap. Cache reads cost a tenth of input.
+PRICES = {"claude-fable-5-1": (10, 50), "claude-opus-5-5": (4, 20), "claude-opus-5": (5, 25),
+          "claude-sonnet-5-5": (2, 10), "claude-haiku-5-5": (0.1, 0.5)}
 
 
 class SpendCapReached(RuntimeError):
     pass
 
 
-class OpenRouter:
-    URL = "https://openrouter.ai/api/v1/chat/completions"
-    # Reasoning models can spend the whole budget thinking, and some ignore
-    # "effort"; a token cap on thinking is honored, leaving room to answer.
-    REASONING = {"max_tokens": 1024}
+class Model:
+    """What every client shares: call counting and the JSON-answer contract."""
 
-    def __init__(self, api_key: str, model: str, spend_cap_usd: float = 1.0,
-                 data_collection: str = "deny"):
-        import httpx  # Local import: the hosted build uses the stdlib broker client.
+    model = ""
+    spend_cap_usd = float("inf")
 
-        self.api_key, self.model = api_key, model
-        self.spend_cap_usd, self.data_collection = spend_cap_usd, data_collection
+    def __init__(self):
         self.spent_usd = 0.0
         self.calls = 0
         self._counting = threading.Lock()  # Match scoring calls the model from two threads.
-        self._json_format = 0  # Index into _post_json's formats that this model accepts.
-        self.client = httpx.Client(timeout=httpx.Timeout(180, connect=15))
 
-    def post(self, payload: dict) -> dict:
+    def count(self, cost_usd: float) -> None:
+        with self._counting:
+            self.calls += 1
+            self.spent_usd += cost_usd
+
+    def check_budget(self) -> None:
         if self.spent_usd >= self.spend_cap_usd:
             raise SpendCapReached(
                 f"Spending cap of ${self.spend_cap_usd:.2f} reached (spent ${self.spent_usd:.4f}).")
-        # "a,b,c" in OPENROUTER_MODEL: OpenRouter tries them in order (free models
-        # are often rate-limited upstream).
-        models = [m.strip() for m in self.model.split(",") if m.strip()]
-        payload = {
-            **({"models": models} if len(models) > 1 else {"model": models[0]}),
-            "max_tokens": 4096,
-            "provider": {"require_parameters": True, "data_collection": self.data_collection},
-            **payload,
-        }
-        import httpx
-
-        for attempt in range(5):
-            try:
-                response = self.client.post(
-                    self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload)
-            except httpx.TransportError:  # A dropped connection: try again, a few times.
-                if attempt == 4:
-                    raise
-                time.sleep(5 * (attempt + 1))
-                continue
-            if response.status_code in (429, 502, 503) and attempt < 4:
-                wait = float(response.headers.get("retry-after") or 0) or 8 * (attempt + 1)
-                time.sleep(min(wait, 60))
-                continue
-            break
-        if response.status_code != 200:
-            raise RuntimeError(f"OpenRouter HTTP {response.status_code}: {response.text[:300]}")
-        body = response.json()
-        if "error" in body:
-            raise RuntimeError(f"OpenRouter error: {body['error']}")
-        self.count(body)
-        return body
-
-    def count(self, body: dict) -> None:
-        with self._counting:
-            self.calls += 1
-            self.spent_usd += float((body.get("usage") or {}).get("cost") or 0)
-
-    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
-        """One agent turn with tool declarations (used by harness.AgentRun)."""
-        body = self.post({"messages": messages, "tools": tools})
-        choice = body["choices"][0]
-        if choice.get("finish_reason") not in ("stop", "tool_calls", "end_turn"):
-            raise RuntimeError(f"Incomplete response: {choice.get('finish_reason')}")
-        return choice["message"]
 
     def json(self, system: str, user: str, schema: dict, name: str = "answer") -> dict:
-        """A JSON object matching `schema`, retried once if the model gets it wrong.
-
-        Asks for strict structured output; models that don't support it still
-        get the schema in the prompt, and the reply is checked here either way.
-        """
-        messages = [
-            {"role": "system", "content": f"{system}\n\nReply with only a JSON object "
-             f"matching this JSON Schema:\n{json.dumps(schema)}"},
-            {"role": "user", "content": user},
-        ]
+        """A JSON object matching `schema`, asked again once if the reply doesn't fit."""
         error = ""
-        for _ in range(2):
-            body = self._post_json(messages, schema, name)
-            choice = body["choices"][0]
-            text = choice["message"].get("content") or ""
-            if not text and choice.get("finish_reason") == "length":
-                raise RuntimeError("The model ran out of output tokens before answering "
-                                   f"({body.get('model')}). Try another model.")
+        for attempt in range(2):
+            prompt = user if not attempt else (
+                f"{user}\n\nYour previous reply was not valid ({error}). Reply with the corrected JSON object.")
             try:
-                value = parse_json(text)
+                value = self._json(system, prompt, schema, name)
                 check(value, schema)
                 return value
             except ValueError as problem:
                 error = str(problem)
-                messages += [{"role": "assistant", "content": text},
-                             {"role": "user", "content": f"That was not valid: {error}. "
-                              "Reply again with only the corrected JSON object."}]
         raise ValueError(f"Model did not return valid JSON: {error}")
 
-    def _post_json(self, messages: list[dict], schema: dict, name: str) -> dict:
-        """Strict schema if the model's providers support it, then plain JSON mode, then none."""
-        formats = [{"type": "json_schema",
-                    "json_schema": {"name": name, "strict": True, "schema": schema}},
-                   {"type": "json_object"}, None]
-        for index in range(self._json_format, len(formats)):
-            payload = {"messages": messages, "max_tokens": 16000}
-            if self.REASONING:
-                payload["reasoning"] = self.REASONING
-            if formats[index]:
-                payload["response_format"] = formats[index]
-            try:
-                body = self.post(payload)
-            except RuntimeError as failure:
-                # 400/404: no provider for this model accepts that response_format.
-                if index + 1 < len(formats) and re.search(r"HTTP (400|404)", str(failure)):
-                    continue
-                raise
-            self._json_format = index  # Remember what worked for the rest of the run.
-            return body
-        raise RuntimeError("unreachable")
+    def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
+        raise NotImplementedError
+
+    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+        raise NotImplementedError
 
 
-class Broker(OpenRouter):
-    """The class app store's model broker. Same chat API, but one model per visit (no
-    fallback list), its own reasoning settings, and a budget it enforces itself."""
+# ----- Claude Code (your Claude plan) -------------------------------------------
 
-    REASONING = None
+class ClaudeCode(Model):
+    # Agent turns: the reply is a short thought plus the tool calls to make.
+    TURN_PROMPT = """
 
-    def __init__(self, model: str, spend_cap_usd: float = 0.5, data_collection: str = "deny"):
-        import os
+You are working through tools. Reply with a JSON object: "thought" (a sentence or two on
+what you're doing, shown to the user) and "tool_calls" (the calls to make now, each a tool
+"name" and its "arguments" object, in order). Call only the tools listed below, with
+arguments that match their schemas. When the work is done, call the finishing tool.
 
-        import httpx
+Tools:
+"""
 
-        super().__init__("", model, spend_cap_usd, data_collection)
-        # The broker is a class service, reached directly rather than through the web proxy.
-        self.client = httpx.Client(timeout=httpx.Timeout(180, connect=15), trust_env=False)
-        self.URL = os.environ["WORKSHOP_BROKER_URL"].rstrip("/") + "/v1/llm/chat/completions"
-        self.token = os.environ["WORKSHOP_RUN_TOKEN"]
-        self.profile_id = os.environ.get("WORKSHOP_PROFILE_ID", "")
+    def __init__(self, model: str = ""):
+        super().__init__()
+        self.model = model  # Empty: Claude Code's default model for your plan.
+        self.executable = shutil.which("claude")
+        if not self.executable:
+            raise RuntimeError("Claude Code isn't installed: see https://code.claude.com/docs/en/setup")
+        # A quiet folder, so no project's CLAUDE.md or settings shape the answers.
+        from . import config
 
-    stream = True  # Long answers arrive piece by piece, so the connection never sits idle.
+        self.workdir = config.DATA_DIR / "claude-code"
+        self.workdir.mkdir(parents=True, exist_ok=True)
 
-    def post(self, payload: dict) -> dict:
-        import uuid
+    def run(self, system: str, prompt: str, schema: dict) -> dict:
+        command = [self.executable, "-p", "--output-format", "json", "--tools", "",
+                   "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
+                   "--system-prompt", system, "--json-schema", json.dumps(schema)]
+        if self.model:
+            command += ["--model", self.model]
+        # An API key in the environment would take precedence over your Claude login.
+        env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        try:
+            done = subprocess.run(command, input=prompt, capture_output=True, text=True,
+                                  timeout=600, cwd=self.workdir, env=env)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Claude Code took more than 10 minutes to answer.") from None
+        try:
+            reply = json.loads(done.stdout)
+        except json.JSONDecodeError:
+            detail = (done.stderr or done.stdout).strip()[-400:]
+            raise RuntimeError(f"Claude Code failed (exit {done.returncode}): {detail}") from None
+        # Your plan pays, so this is a notional cost: shown, never capped.
+        self.count(float(reply.get("total_cost_usd") or 0))
+        if reply.get("is_error") or reply.get("subtype") != "success":
+            message = str(reply.get("result") or reply.get("subtype"))[:400]
+            if re.search(r"log ?in|auth|credential", message, re.I):
+                message += " (Run `claude` in a terminal and sign in with your Claude account.)"
+            raise RuntimeError(f"Claude Code: {message}")
+        if "structured_output" not in reply:
+            return parse_json(str(reply.get("result") or ""))
+        return reply["structured_output"]
 
-        import httpx
+    def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
+        return self.run(system, user, schema)
 
-        if self.spent_usd >= self.spend_cap_usd:
-            raise SpendCapReached(f"This visit's model budget (${self.spend_cap_usd:.2f}) is used up.")
-        payload = {"model": self.model.split(",")[0].strip(), "max_tokens": 4096,
-                   "provider": {"data_collection": self.data_collection}, **payload}
-        for attempt in range(4):
-            headers = {"Authorization": f"Bearer {self.token}", "X-Workshop-Contract-Version": "workshop.app.v1",
-                       "X-Workshop-Operation-ID": str(uuid.uuid4()), "X-Workshop-Expected-Profile": self.profile_id,
-                       "X-Workshop-Attempt-Limit": "1"}
-            started = time.time()
-            try:
-                if self.stream:
-                    body = self._streamed(payload, headers)
-                    if body is None:  # The broker refused a streamed request: use plain ones.
-                        Broker.stream = False
-                        continue
-                    if body == "busy" and attempt < 3:
-                        time.sleep(5 * (attempt + 1))
-                        continue
-                    if body == "busy":
-                        raise RuntimeError("The model service stayed busy; try again shortly.")
-                else:
-                    response = self.client.post(self.URL, headers=headers, json=payload)
-                    if response.status_code in (429, 502, 503) and attempt < 3:
-                        time.sleep(5 * (attempt + 1))
-                        continue
-                    if response.status_code != 200:
-                        raise RuntimeError(f"Model broker HTTP {response.status_code}: {response.text[:300]}")
-                    body = response.json()
-            except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ReadTimeout) as error:
-                # The class proxy ends any request at 90 s; a retry would be cut (and charged) again.
-                at_limit = time.time() - started >= REQUEST_LIMIT_SECONDS - 5
-                if attempt < 3 and not at_limit:
-                    continue
-                raise RuntimeError(f"The model service dropped the request after {time.time() - started:.0f}s "
-                                   f"({type(error).__name__}, {'streamed' if self.stream else 'plain'})"
-                                   + (": longer than the class platform's 90-second limit per request."
-                                      if at_limit else ".")) from None
-            if "error" in body:
-                raise RuntimeError(f"Model broker error: {body['error']}")
-            self.count(body)
-            return body
-        raise RuntimeError("The model service kept refusing the request.")
+    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+        names = [t["function"]["name"] for t in tools]
+        schema = {"type": "object", "additionalProperties": False, "required": ["thought", "tool_calls"],
+                  "properties": {
+                      "thought": {"type": "string"},
+                      "tool_calls": {"type": "array", "items": {
+                          "type": "object", "required": ["name", "arguments"], "additionalProperties": False,
+                          "properties": {"name": {"type": "string", "enum": names},
+                                         "arguments": {"type": "object"}}}}}}
+        system = messages[0]["content"] + self.TURN_PROMPT + "\n".join(
+            json.dumps({"name": t["function"]["name"], "description": t["function"]["description"],
+                        "arguments": t["function"]["parameters"]}, ensure_ascii=False) for t in tools)
+        reply = self.run(system, transcript(messages[1:]), schema)
+        return {"content": reply.get("thought") or None,
+                "tool_calls": [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                                "function": {"name": c["name"],
+                                             "arguments": json.dumps(c.get("arguments") or {})}}
+                               for c in reply.get("tool_calls") or []]}
 
-    def _streamed(self, payload: dict, headers: dict) -> dict | str | None:
-        """One streamed chat completion, reassembled into the usual response shape."""
-        import json as _json
 
-        import httpx
+def transcript(messages: list[dict]) -> str:
+    """The conversation so far, written out for a fresh headless session."""
+    parts = []
+    for m in messages:
+        if m["role"] == "user":
+            parts.append(f"## User\n{m['content']}")
+        elif m["role"] == "assistant":
+            calls = "\n".join(f"- {c['function']['name']}({c['function']['arguments']})  [{c['id']}]"
+                              for c in m.get("tool_calls") or [])
+            parts.append(f"## You\n{m.get('content') or ''}\n{calls}".strip())
+        elif m["role"] == "tool":
+            parts.append(f"## Result of {m.get('name')} [{m['tool_call_id']}]\n{m['content']}")
+    parts.append("## Next\nDecide your next tool calls.")
+    return "\n\n".join(parts)
 
-        with self.client.stream("POST", self.URL, headers=headers, json={**payload, "stream": True}) as response:
-            if response.status_code != 200:
-                text = response.read().decode(errors="replace")
-                if response.status_code == 400 and "INVALID_REQUEST" in text:
-                    return None
-                if response.status_code in (429, 502, 503):
-                    return "busy"
-                raise RuntimeError(f"Model broker HTTP {response.status_code}: {text[:300]}")
-            content, calls, finish, usage, model, done = [], {}, None, {}, None, False
-            for line in response.iter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    done = True
-                    break
-                chunk = _json.loads(data)
-                if "error" in chunk:
-                    return {"error": chunk["error"]}
-                usage, model = chunk.get("usage") or usage, chunk.get("model") or model
-                for choice in chunk.get("choices") or []:
-                    delta = choice.get("delta") or {}
-                    if delta.get("content"):
-                        content.append(delta["content"])
-                    for call in delta.get("tool_calls") or []:
-                        slot = calls.setdefault(call.get("index", 0), {
-                            "id": None, "type": "function", "function": {"name": "", "arguments": ""}})
-                        slot["id"] = call.get("id") or slot["id"]
-                        function = call.get("function") or {}
-                        slot["function"]["name"] += function.get("name") or ""
-                        slot["function"]["arguments"] += function.get("arguments") or ""
-                    finish = choice.get("finish_reason") or finish
-            if not done and finish is None:  # Cut off mid-answer: never use a partial reply.
-                raise httpx.RemoteProtocolError("The stream ended before the answer was complete.")
-        message = {"role": "assistant", "content": "".join(content) or None}
-        if calls:
-            message["tool_calls"] = [calls[i] for i in sorted(calls)]
-        return {"model": model, "choices": [{"message": message, "finish_reason": finish}], "usage": usage}
+
+# ----- Anthropic API (API key) --------------------------------------------------
+
+class AnthropicAPI(Model):
+    # Agent runs keep Claude's thinking blocks and let the API clear old tool results
+    # (server-side context editing) rather than edit the history, which would invalidate them.
+    prunes_context = True
+    AGENT_BETAS = ["context-management-2025-06-27", "thinking-binding-controls-2026-08-01"]
+    THINKING = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+
+    def __init__(self, model: str = "", spend_cap_usd: float = 1.0):
+        super().__init__()
+        import anthropic
+
+        self.model = model or DEFAULT_API_MODEL
+        self.spend_cap_usd = spend_cap_usd
+        self.client = anthropic.Anthropic(max_retries=4)
+
+    def cost(self, usage) -> float:
+        price_in, price_out = PRICES.get(self.model, PRICES[DEFAULT_API_MODEL])
+        fresh = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0) * 1.25
+        cached = (getattr(usage, "cache_read_input_tokens", 0) or 0) * 0.1
+        return ((fresh + cached) * price_in + (usage.output_tokens or 0) * price_out) / 1e6
+
+    def finished(self, response) -> None:
+        self.count(self.cost(response.usage))
+        if response.stop_reason == "refusal":
+            raise RuntimeError("Claude declined this request.")
+        if response.stop_reason == "max_tokens":
+            raise RuntimeError("Claude's answer was cut off at the output limit.")
+
+    def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
+        self.check_budget()
+        response = self.client.beta.messages.create(
+            model=self.model, max_tokens=16000, system=system,
+            messages=[{"role": "user", "content": user}],
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+            # If a safety check declines, the API retries on a suitable model itself.
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+        self.finished(response)
+        return parse_json(next((b.text for b in response.content if b.type == "text"), ""))
+
+    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+        self.check_budget()
+        response = self.client.beta.messages.create(
+            model=self.model, max_tokens=16000, system=messages[0]["content"],
+            messages=to_anthropic(messages[1:]), thinking=self.THINKING, betas=self.AGENT_BETAS,
+            context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
+            tools=[{"name": t["function"]["name"], "description": t["function"]["description"],
+                    "input_schema": t["function"]["parameters"]} for t in tools])
+        self.finished(response)
+        text = "".join(b.text for b in response.content if b.type == "text").strip()
+        return {"content": text or None,
+                "tool_calls": [{"id": b.id, "type": "function",
+                                "function": {"name": b.name, "arguments": json.dumps(b.input)}}
+                               for b in response.content if b.type == "tool_use"],
+                # Replayed exactly as received, thinking blocks included.
+                "provider_content": [b.model_dump(exclude_none=True) for b in response.content]}
+
+
+def to_anthropic(messages: list[dict]) -> list[dict]:
+    """The harness's messages as Messages API turns; consecutive tool results share one user turn."""
+    out: list[dict] = []
+    for m in messages:
+        if m["role"] == "assistant":
+            out.append({"role": "assistant", "content": m["provider_content"]})
+        elif m["role"] == "tool":
+            block = {"type": "tool_result", "tool_use_id": m["tool_call_id"], "content": m["content"]}
+            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list):
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
+        else:
+            out.append({"role": "user", "content": [{"type": "text", "text": m["content"]}]})
+    return out
+
+
+def has_api_credentials() -> bool:
+    """An API key, or a profile from `ant auth login` (which the SDK reads by itself)."""
+    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+                or os.environ.get("ANTHROPIC_PROFILE") or os.path.isdir(os.path.expanduser("~/.config/anthropic")))
 
 
 def client(settings):
-    """The model for this run: the class broker when hosted, else OpenRouter (None if unset)."""
-    from . import config
+    """The model for this run, or None if none is set up.
 
-    if config.HOSTED:
-        import os
-
-        if not (settings.model and os.environ.get("WORKSHOP_BROKER_URL")):
-            return None  # No class models this visit; the dashboard says why.
-        return Broker(settings.model, settings.spend_cap_usd, settings.data_collection)
-    if settings.api_key and settings.model:
-        return OpenRouter(settings.api_key, settings.model, settings.spend_cap_usd, settings.data_collection)
+    auto: Claude Code when it's installed (your plan, no key), else the Anthropic API
+    when credentials are present."""
+    backend = settings.backend
+    if backend == "off":
+        return None
+    if backend == "claude-code" or (backend == "auto" and shutil.which("claude")):
+        return ClaudeCode(settings.model)
+    if backend == "anthropic" or (backend == "auto" and has_api_credentials()):
+        return AnthropicAPI(settings.model, settings.spend_cap_usd)
     return None
+
+
+NOT_SET_UP = ("No Claude connection: install Claude Code and sign in with your Claude account "
+              "(https://code.claude.com/docs/en/setup), or set ANTHROPIC_API_KEY in .env.")
 
 
 def parse_json(text: str):

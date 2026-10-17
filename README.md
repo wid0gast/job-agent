@@ -6,12 +6,13 @@ submits it, with you approving each submit. It tracks every job so it never
 applies twice.
 
 It runs on your laptop in a visible Chrome window. You can watch it work and
-step in at any time.
+step in at any time. It uses Claude, either through your own Claude Code
+sign-in (your Pro or Max plan, no API key) or an Anthropic API key.
 
 ### Setup (once)
 
-Requires [uv](https://docs.astral.sh/uv/), Google Chrome, and for resumes in
-your LaTeX style, [Tectonic](https://tectonic-typesetting.github.io/)
+Requires [uv](https://docs.astral.sh/uv/), Google Chrome, a way to reach
+Claude (below), and for resumes in your LaTeX style, [Tectonic](https://tectonic-typesetting.github.io/)
 (`brew install tectonic`; without it resumes fall back to a plain HTML style).
 
 **Resume style.** Tailored resumes and cover letters are typeset with LaTeX.
@@ -40,14 +41,37 @@ Then:
    `profile/resume.md` yourself. The agent cuts and reorders it per job but
    never adds facts. Optional: `profile/writing-sample.md` (a few paragraphs you
    wrote) so cover letters sound like you.
-3. Put your OpenRouter key and a model ID in `.env`. Free models work for
-   testing (for example `google/gemma-4-31b-it:free`), within their daily
-   request limits.
+3. Connect Claude (see **Connecting Claude** below). If Claude Code is
+   installed and signed in, there's nothing to do.
 4. Optional: `profile/story-bank.md` (your real examples) and
    `profile/writing-sample.md` help with essay questions.
 
 `profile/`, `data/` and `.env` are gitignored and stay on your machine.
-Profile and resume content is sent to your chosen model while applying.
+Profile and resume content is sent to Claude while applying.
+
+### Connecting Claude
+
+`MODEL_BACKEND=auto` (the default) uses the first of these that's available:
+
+1. **Claude Code, with your own sign-in.** Install
+   [Claude Code](https://code.claude.com/docs/en/setup), run `claude` once and
+   sign in with your Claude account. Job Agent then runs it in headless mode
+   (`claude -p`) for each model request: a fresh, unsaved session with Claude
+   Code's own tools turned off. Usage counts against your Claude plan, like
+   using Claude Code yourself, and nothing is billed per token. An
+   `ANTHROPIC_API_KEY` in the environment is hidden from it so your sign-in is
+   what's used. `CLAUDE_MODEL` (e.g. `opus` or `sonnet`) picks the model;
+   empty means Claude Code's default for your plan.
+2. **An Anthropic API key.** Put `ANTHROPIC_API_KEY=` in `.env`, or sign in
+   with Anthropic's `ant auth login`. Billed per token by Anthropic, with
+   `SPEND_CAP_USD` enforced per run. `CLAUDE_MODEL` defaults to
+   `claude-opus-5-5`.
+
+Set `MODEL_BACKEND=claude-code` or `anthropic` to force one. This is a
+personal tool: each person runs it on their own computer with their own
+Claude account or key. Anthropic doesn't allow third-party products to offer
+claude.ai sign-in or plan rate limits to their users without approval, so
+don't host Job Agent for other people on your plan.
 
 ### Everyday use: the dashboard
 
@@ -62,10 +86,15 @@ uv run job-agent dashboard        # http://127.0.0.1:8770
    and the Greenhouse, Lever and Ashby boards of companies seen there. Hard filters from
    `preferences` in your profile run in code; the Jobs page shows why each
    filtered job is out.
-   **Ranked jobs** lists them by score: the quick *match* score (title,
-   company and location against your description, ~60 jobs per model
-   request) until a job is prepared, then its *fit* score from the full
-   posting. Jobs below your threshold are greyed.
+   **Ranked jobs** lists them by score. Every job first gets a free, instant
+   *keyword* score (its title against your role titles and description;
+   words you rule out, like "not marketing", count against it). "Rank the
+   top 120 with the model" then gives the best keyword matches a *match*
+   score (title, company and location against your description, ~60 jobs per
+   request, two requests at a time); click again for the next 120. Once a
+   job is prepared it has a *fit* score from the full posting. Model scores
+   rank above keyword-only ones, and jobs below your threshold are greyed.
+   Ranking runs alongside other tasks, so you can prepare while it works.
 2. **Prepare** (per job, or "Prepare top matches", which takes the best-ranked) reads the posting and the
    application form without signing in or clicking anything, scores fit,
    tailors your resume, and drafts every answer, recording where each came
@@ -146,8 +175,10 @@ emailed code).
 | `BROWSER_CHANNEL` | `chrome` | `chromium` uses Playwright's browser (run `uv run playwright install chromium`). |
 | `COMPANY_CAP`, `COMPANY_WINDOW_DAYS` | `3`, `30` | Default per-company limit (rolling). Known limits are in `company-rules.yaml`. |
 | `FIT_THRESHOLD` | `60` | Jobs scoring below this aren't prepared. |
-| `SPEND_CAP_USD` | `1.00` | A run stops once model spending reaches this. |
-| `OPENROUTER_DATA_COLLECTION` | `deny` | Skip providers that keep your data. Some free models need `allow`. |
+| `MODEL_BACKEND` | `auto` | `claude-code` (your Claude sign-in), `anthropic` (API key), `auto` (the first available), or `off`. |
+| `CLAUDE_MODEL` | (empty) | Model name or alias. Empty: Claude Code's default, or `claude-opus-5-5` with an API key. |
+| `ANTHROPIC_API_KEY` | (empty) | For the `anthropic` backend (or use `ant auth login`). |
+| `SPEND_CAP_USD` | `1.00` | With an API key, a run stops once spending reaches this. Claude Code usage comes from your plan. |
 | `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
 | `RESEARCH` | `auto` | Research the company for letters and "why us" answers, or `off`. |
 | `BRAVE_API_KEY` | (empty) | Search for research. Without it, a free search is tried (best effort). |
@@ -190,7 +221,7 @@ emailed code).
 | `job_agent/profile_sync.py` | Profile facts from the master resume, work authorization rules |
 | `job_agent/history.py` | Application record: import a job sheet, export, outcome stats |
 | `job_agent/resumes.py` | Resume PDFs → Markdown → merged master, with truth checks |
-| `job_agent/llm.py` | Model clients (OpenRouter, the class broker): JSON replies, retries, spending cap |
+| `job_agent/llm.py` | Claude clients (Claude Code headless, Anthropic API): JSON replies, agent turns, spending cap |
 | `job_agent/matching.py` | Ranks jobs against the description on the Search page |
 | `job_agent/latex.py` | Resumes in your LaTeX template, fitted to one or two pages |
 | `job_agent/ats.py` | Which application system a URL belongs to, and its job ID |
@@ -203,25 +234,14 @@ emailed code).
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |
 | `job_agent/documents.py` | Resume/cover letter PDFs and the invented-number check |
 | `job_agent/demo_site.py`, `demo_greenhouse.py`, `demo_lever.py`, `demo_ashby.py`, `demo_workday.py` | The fake job board and system copies for testing |
-| `job_agent/hosted.py`, `netrelay.py` | The class app store version (below) |
 
 Full step-by-step logs of each run are in `data/logs/`.
 
 ### Class app store version
 
-`python -m job_agent.hosted` runs this same app on the class platform:
-everything lives in the session's workspace, models come from the class
-broker, Chromium is unpacked at build time (`scripts/hosted_build.py`), and
-`netrelay.py` carries the browser's and LaTeX's traffic through the platform
-proxy. Sessions keep nothing, so the dashboard offers a download of
-everything. Build the upload (no personal data goes in):
-
-```sh
-uv run python scripts/package_app.py --output ../job-agent-app.zip
-```
-
-`appstore/` holds its manifest, README and dependency lock;
-`appstore/bin/tectonic` is the Linux Tectonic 0.17.0 binary (not in git).
+The workshop's class app store version (sandboxed Chromium behind the
+platform's proxy, class model broker, 30-minute sessions) lives on the
+[`class-platform`](../../tree/class-platform) branch.
 
 ### Tests
 

@@ -7,9 +7,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-# On the class app store the app folder is read-only; hosted.py points this at the session's workspace.
 HOME = Path(os.environ.get("JOB_AGENT_HOME") or ROOT)
-HOSTED = bool(os.environ.get("JOB_AGENT_HOSTED"))
 PROFILE_DIR = HOME / "profile"
 PROFILE_EXAMPLE_DIR = ROOT / "profile.example"
 DATA_DIR = HOME / "data"
@@ -27,37 +25,35 @@ def load_env_file(path: Path = ROOT / ".env") -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+BACKENDS = ("auto", "claude-code", "anthropic", "off")
+
+
 @dataclass(frozen=True)
 class Settings:
-    api_key: str
-    model: str
+    backend: str                     # auto | claude-code | anthropic | off (see llm.client)
+    model: str                       # Empty: the backend's default
     submit_mode: str
     daily_submit_limit: int
     browser_channel: str
     company_cap: int = 3
     company_window_days: int = 30
     fit_threshold: int = 60
-    spend_cap_usd: float = 1.0
-    data_collection: str = "deny"
+    spend_cap_usd: float = 1.0       # Anthropic API backend only; Claude Code uses your plan
     cover_letter: str = "required"   # required | always | never
     research: str = "auto"           # auto (for letters and "why us" answers) | off
 
     @classmethod
     def from_env(cls, require_model: bool = True) -> "Settings":
         load_env_file()
-        key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-        model = os.environ.get("OPENROUTER_MODEL", "").strip()
-        if require_model and (not key or not model):
-            raise SystemExit(
-                "Set OPENROUTER_API_KEY and OPENROUTER_MODEL in job-agent/.env "
-                "(copy .env.example)."
-            )
+        backend = os.environ.get("MODEL_BACKEND", "auto").strip().lower()
+        if backend not in BACKENDS:
+            raise SystemExit(f"MODEL_BACKEND must be one of {', '.join(BACKENDS)}.")
         mode = os.environ.get("SUBMIT_MODE", "review").strip().lower()
         if mode not in ("review", "auto"):
             raise SystemExit("SUBMIT_MODE must be review or auto.")
         return cls(
-            api_key=key,
-            model=model,
+            backend=backend,
+            model=os.environ.get("CLAUDE_MODEL", "").strip(),
             submit_mode=mode,
             daily_submit_limit=int(os.environ.get("DAILY_SUBMIT_LIMIT", "15")),
             browser_channel=os.environ.get("BROWSER_CHANNEL", "chrome").strip(),
@@ -65,7 +61,6 @@ class Settings:
             company_window_days=int(os.environ.get("COMPANY_WINDOW_DAYS", "30")),
             fit_threshold=int(os.environ.get("FIT_THRESHOLD", "60")),
             spend_cap_usd=float(os.environ.get("SPEND_CAP_USD", "1.00")),
-            data_collection=os.environ.get("OPENROUTER_DATA_COLLECTION", "deny").strip(),
             cover_letter=os.environ.get("COVER_LETTER", "required").strip(),
             research=os.environ.get("RESEARCH", "auto").strip().lower(),
         )
@@ -134,33 +129,16 @@ def read_optional(name: str) -> str | None:
 
 
 # ----- site passwords ---------------------------------------------------------
-# Locally they live in the macOS Keychain. A hosted session has no keychain and
-# forgets everything when it ends, so they go in a file that the dashboard shows
-# and the session download includes.
-
-PASSWORDS_FILE = DATA_DIR / "site-passwords.json"
+# Passwords for accounts the agent creates on job sites live in the macOS Keychain.
 
 
 def get_password(service: str, email: str) -> str | None:
-    if not HOSTED:
-        import keyring
+    import keyring
 
-        return keyring.get_password(service, email)
-    import json
-
-    stored = json.loads(PASSWORDS_FILE.read_text()) if PASSWORDS_FILE.exists() else {}
-    return stored.get(f"{service}|{email}")
+    return keyring.get_password(service, email)
 
 
 def set_password(service: str, email: str, password: str) -> None:
-    if not HOSTED:
-        import keyring
+    import keyring
 
-        keyring.set_password(service, email, password)
-        return
-    import json
-
-    stored = json.loads(PASSWORDS_FILE.read_text()) if PASSWORDS_FILE.exists() else {}
-    stored[f"{service}|{email}"] = password
-    PASSWORDS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PASSWORDS_FILE.write_text(json.dumps(stored, indent=1))
+    keyring.set_password(service, email, password)

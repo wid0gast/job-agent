@@ -3,7 +3,7 @@
 Keyword scores are free and instant: every found job's title (and list category)
 against your role titles and description. Match scores ask the model about the
 title, company and location, about 60 jobs per call, but only for the keyword
-shortlist: a hosted visit allows 20 model calls, two at a time. Fit scores
+shortlist, so a long list costs a couple of calls rather than dozens. Fit scores
 (prepare) read the whole posting, one call per job. A job's scores are redone
 when your description or background changes.
 """
@@ -20,7 +20,7 @@ from .prompts import MATCH_PROMPT
 
 BATCH = 60
 SHORTLIST = 120  # Jobs the model scores per run: two calls.
-PARALLEL = 2  # The class broker runs two model calls per visit at once.
+PARALLEL = 2  # Model calls at once: quicker, and gentle on plan rate limits.
 STOPWORDS = set("""a an and or the of for in on at to with without by from as is are be i im i'm me my we our
 you your it its this that these those any all some more most less very also just not no nor but
 role roles job jobs position positions work working team teams company companies opportunity

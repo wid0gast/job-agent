@@ -95,7 +95,7 @@ def local_midnight_utc() -> str:
 
 
 def locked(method):
-    """The hosted app and dashboard read the tracker from server threads."""
+    """The dashboard's server threads and the scoring lane share one connection."""
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
