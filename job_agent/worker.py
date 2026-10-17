@@ -7,6 +7,7 @@ reply from the dashboard.
 """
 
 import fcntl
+import os
 import threading
 import time
 import traceback
@@ -183,8 +184,12 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
         side = threading.Thread(target=lane, args=(ctx, log, stop), daemon=True)
         side.start()
         idle_since = time.time()
+        parent = os.getppid()
         try:
             while True:
+                if os.getppid() != parent:  # The dashboard that started this worker is gone.
+                    log("The dashboard stopped; the worker stops too.")
+                    return
                 task = tracker.claim_task(exclude=OWN_LANE)
                 if task is None:
                     busy = any(t["kind"] in OWN_LANE and t["status"] in ("queued", "running")

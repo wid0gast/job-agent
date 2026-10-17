@@ -206,8 +206,9 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
              r"(been )?(employed|worked) (by|at|for) .{1,60}(in the )?past",
              standard.get("previously_worked_here")),
             (r"earliest start|available to start|start date", standard.get("earliest_start")),
-            (r"graduat", f"{month} {year}" if month else None),
-            (r"\bgpa\b", education.get("gpa")),
+            # GPA first: "Undergraduate GPA" must not read as a graduation date.
+            (r"\bgpa\b|grade point average", education.get("gpa")),
+            (r"\bgraduat", f"{month} {year}" if month else None),
             (r"gender", eeo.get("gender")),
             (r"race|ethnic", eeo.get("race_ethnicity")),
             (r"hispanic|latin", eeo.get("hispanic_latino")),

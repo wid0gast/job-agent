@@ -92,6 +92,9 @@ box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover{filter:brightness
 input[type=text],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
 padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);
 transition:border-color .15s,box-shadow .15s}
+input[type=file]{font:inherit;color:var(--muted)}
+input[type=file]::file-selector-button{font:inherit;font-weight:600;margin-right:12px;padding:8px 14px;border-radius:10px;
+border:1px dashed color-mix(in srgb,var(--accent) 50%,var(--line));background:var(--accent-soft);color:var(--accent);cursor:pointer}
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}textarea{min-height:90px}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -530,16 +533,17 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     problems = packets.missing(packet)
     checks = packet["checks"]
     warn = []
-    if problems:
-        warn.append("Needs your answer: " + "; ".join(esc(a["label"]) for a in problems))
+    needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
+             f'<ul style="margin:6px 0 0;padding-left:20px">'
+             + "".join(f"<li>{esc(a['label'])}</li>" for a in problems) + "</ul></div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
     if checks.get("resume_pages", 1) > 1:
         warn.append(f"The resume is {checks['resume_pages']} pages.")
     if checks.get("invented_numbers"):
         warn.append(f"Tailoring invented {esc(checks['invented_numbers'])}; your resume was used unchanged.")
     warn += [esc(n) for n in packet.get("form_notes", [])]
-    for flag in fit.get("flags", []):
-        warn.append("Posting flag: " + esc(flag))
+    noticed = ('<div class="card"><h2>What Claude noticed in the posting</h2><ul style="margin:0;padding-left:20px">'
+               + "".join(f"<li>{esc(flag)}</li>" for flag in fit["flags"]) + "</ul></div>") if fit.get("flags") else ""
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
     rows = "".join(
@@ -584,8 +588,9 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
             buttons.append(form(app, "/resolve", label, {"job_id": job_id, "outcome": outcome}))
     t = packet["tailoring"]
     body = f"""{head}
-    {"".join(f'<div class="flash bad">{w}</div>' for w in warn)}
+    {"".join(f'<div class="flash bad">{w}</div>' for w in warn)}{needs}
     <div class="row" style="margin-bottom:16px">{" ".join(buttons)} {docs}</div>
+    {noticed}
     {proof}
     {application_block(app, job)}
     <div class=card><h2>Fit {fit["score"]}</h2><p>{esc(fit["summary"])}</p>
@@ -606,7 +611,7 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
             flags.append(f"words not in the PDF: {', '.join(checks['unknown_words'][:12])}")
         rows.append(
             f'<tr><td><a target=_blank href="/file?path={esc(resumes.folder() / v["source"])}">{esc(v["source"])}</a>'
-            f'<div class=muted>{esc(v.get("notes") or "")}</div>'
+            f'<div class="muted src">{esc(re.sub(r"[*`]+", "", v.get("notes") or ""))}</div>'
             f'{"".join(f"<div class=warn>{esc(f)}</div>" for f in flags)}</td>'
             f'<td>{esc(v["latest_date"] or "unknown")}</td>'
             f'<td>{form(app, "/resumes/remove", "Remove", {"stem": v["stem"]})}</td></tr>')
@@ -664,7 +669,7 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
     {review}
     {facts}
     <div class=card><h2>Current master resume</h2>
-    {f"<pre>{esc(master)}</pre>" if master else '<p class=muted>Still the example from setup. Upload your resumes above.</p>'}</div>"""
+    {f"<pre>{esc(master)}</pre>" if master else '<p class=muted>None yet. Upload your resume above and accept the proposal.</p>'}</div>"""
     running = any(t["status"] in ("queued", "running") and t["kind"] in ("import_resume", "merge_resumes")
                   for t in app.tracker.tasks(10))
     return layout(app, "/resumes", body, flash, refresh=running)

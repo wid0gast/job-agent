@@ -76,3 +76,19 @@ def test_only_visa_sponsorship_questions_get_sponsorship_answers():
     assert answer("Will you now or in the future require visa sponsorship?") == "Yes"
     assert answer("Do you require sponsorship, or will you require sponsorship in the future?") == "Yes"
     assert answer("Will you require immigration sponsorship to begin working?") == "No"
+
+
+def test_gpa_and_graduation_questions_get_their_own_answers():
+    from job_agent import answers
+
+    profile = {"education": [{"school": "NYU", "degree": "B.S.", "graduation": "May 2027", "gpa": "3.7"}]}
+
+    def answer(label):
+        got = answers.from_profile({"key": "q", "label": label, "kind": "text", "options": [],
+                                    "section": "main"}, profile, {})
+        return got[0] if got else None
+
+    assert answer("Undergraduate GPA") == "3.7"
+    assert answer("Cumulative grade point average") == "3.7"
+    assert answer("What is your expected graduation date?") == "May 2027"
+    assert answer("When do you graduate?") == "May 2027"
