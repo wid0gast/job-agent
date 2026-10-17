@@ -421,10 +421,16 @@ class Tracker:
         return cursor.lastrowid
 
     @locked
-    def claim_task(self) -> dict | None:
-        row = self.db.execute(
-            "SELECT * FROM tasks WHERE status = 'queued' ORDER BY id LIMIT 1"
-        ).fetchone()
+    def claim_task(self, kinds: tuple[str, ...] = (), exclude: tuple[str, ...] = ()) -> dict | None:
+        """The oldest queued task, optionally only of `kinds` or of none of `exclude`."""
+        where, args = "status = 'queued'", []
+        if kinds:
+            where += f" AND kind IN ({','.join('?' * len(kinds))})"
+            args += kinds
+        if exclude:
+            where += f" AND kind NOT IN ({','.join('?' * len(exclude))})"
+            args += exclude
+        row = self.db.execute(f"SELECT * FROM tasks WHERE {where} ORDER BY id LIMIT 1", args).fetchone()
         if not row:
             return None
         cursor = self.db.execute(

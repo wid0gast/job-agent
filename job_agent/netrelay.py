@@ -1,46 +1,31 @@
-"""Local proxy for the hosted browser.
+"""Local proxy for everything the hosted app fetches from the web.
 
-The class platform's outbound proxy needs a login (which Chromium can't send to it)
-and hangs up on Chromium's TLS handshake, while Python's handshake gets through.
-So the browser talks to this relay, the relay re-opens each HTTPS connection from
-Python (verifying the real site's certificate), and passes the plain bytes between
-them. The browser↔relay hop uses a throwaway loopback certificate, which is why the
-browser is launched with certificate errors ignored.
+The class platform's outbound proxy (services/worker/src/proxy/server.ts) needs a
+Basic login, but its 407 reply carries no Proxy-Authenticate challenge, so Chromium
+never sends the credentials. The relay opens each tunnel on the platform proxy with
+the login added. The TLS inside the tunnel is the client's own, end to end with the
+site: the relay never decrypts it.
+
+The proxy admits four connections per visit, model calls included. start() points
+HTTP(S)_PROXY at the relay, so the browser, the job feeds and the LaTeX mirror all
+share its MAX_TUNNELS slots; it closes idle connections when a new request needs a
+slot, and waits and retries when the proxy still answers 429.
 """
 
 import base64
 import os
 import socket
-import ssl
 import threading
-from pathlib import Path
+import time
 from urllib.parse import unquote, urlsplit
 
-
-
-def loopback_certificate() -> tuple[str, str]:
-    """A throwaway self-signed certificate for the browser-to-relay hop, made fresh per process."""
-    import datetime
-    import tempfile
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.x509.oid import NameOID
-
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "job-agent-relay")])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=7)).sign(key, hashes.SHA256()))
-    folder = Path(tempfile.mkdtemp(prefix="relay-"))
-    cert_path, key_path = folder / "cert", folder / "key"
-    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                           serialization.NoEncryption()))
-    key_path.chmod(0o600)
-    return str(cert_path), str(key_path)
+MAX_TUNNELS = 3  # Of the proxy's four per visit; one is left for model calls.
+WAIT_SECONDS = 60
+RETRIES = 8  # On 429 from the proxy, waiting 0.5, 1, 2, 4, 4... seconds.
+# The proxy ends a tunnel 90 s after it opens or once it has carried 16 MiB, busy or not.
+# Browser keep-alive tunnels are retired between requests well before either, so a
+# request never starts on one that is about to be cut.
+RETIRE_SECONDS, RETIRE_BYTES = 60, 12 * 2**20
 
 
 def upstream_proxy() -> dict | None:
@@ -62,14 +47,33 @@ def read_head(sock) -> bytes:
     return head
 
 
-def copy(src, dst) -> None:
-    try:
-        while data := src.recv(65536):
-            dst.sendall(data)
-    except OSError:
-        pass
-    finally:
-        for s in (src, dst):
+class Tunnel:
+    def __init__(self, client):
+        self.client, self.site, self.last = client, None, time.monotonic()
+        self.started, self.received = self.last, 0
+        self.closing = False
+        self.reclaimable = False  # Browser keep-alive connections; the app's requests wait for their reply.
+
+    def copy(self, src, dst) -> None:
+        try:
+            while data := src.recv(65536):
+                self.last = time.monotonic()
+                if src is self.site:
+                    self.received += len(data)
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        for s in (self.client, self.site):
+            if s is None:
+                continue
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 s.close()
             except OSError:
@@ -81,91 +85,200 @@ class Relay(threading.Thread):
 
     def __init__(self):
         super().__init__(daemon=True)
-        self.server = socket.create_server(("127.0.0.1", 0))
-        self.port = self.server.getsockname()[1]
+        # One port for the browser, one for the app's own requests; both share the slots.
+        self.browser_server = socket.create_server(("127.0.0.1", 0))
+        self.app_server = socket.create_server(("127.0.0.1", 0))
         self.up = upstream_proxy()
         self.errors: list[str] = []
-        self.serve_tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        self.serve_tls.load_cert_chain(*loopback_certificate())
-        self.serve_tls.set_alpn_protocols(["http/1.1"])
-        self.site_tls = ssl.create_default_context()
-        self.site_tls.set_alpn_protocols(["http/1.1"])
-        # Classic key exchange only: keeps the handshake small (~500 bytes, vs ~1.5 KB with post-quantum keys).
-        self.site_tls.set_ecdh_curve("X25519")
-        self.fallback_tls = ssl.create_default_context()  # For the rare site that refuses X25519-only.
-        self.fallback_tls.set_alpn_protocols(["http/1.1"])
+        self.open: list[Tunnel] = []
+        self.slots = threading.Condition()
 
     @property
-    def url(self) -> str:
-        return f"http://127.0.0.1:{self.port}"
+    def browser_url(self) -> str:
+        return f"http://127.0.0.1:{self.browser_server.getsockname()[1]}"
+
+    @property
+    def app_url(self) -> str:
+        return f"http://127.0.0.1:{self.app_server.getsockname()[1]}"
+
+    def note(self, error: str) -> None:
+        if len(self.errors) < 50:
+            self.errors.append(error[:200])
+            try:
+                with open(error_log(), "a", encoding="utf-8") as log:
+                    log.write(error[:200].replace("\n", " ") + "\n")
+            except OSError:
+                pass
 
     def run(self) -> None:
+        threading.Thread(target=self.serve, args=(self.app_server, False), daemon=True).start()
+        threading.Thread(target=self.retire, daemon=True).start()
+        self.serve(self.browser_server, True)
+
+    def retire(self) -> None:
         while True:
-            client, _ = self.server.accept()
-            threading.Thread(target=self.handle, args=(client,), daemon=True).start()
+            time.sleep(1)
+            now = time.monotonic()
+            with self.slots:
+                for t in self.open:
+                    if (t.reclaimable and t.site is not None and not t.closing and now - t.last > 1
+                            and (now - t.started > RETIRE_SECONDS or t.received > RETIRE_BYTES)):
+                        t.closing = True
+                        t.close()
 
-    def open_tunnel(self, target: str):
-        host, _, port = target.rpartition(":")
+    def serve(self, server, reclaimable: bool) -> None:
+        while True:
+            client, _ = server.accept()
+            threading.Thread(target=self.handle, args=(client, reclaimable), daemon=True).start()
+
+    def acquire(self, client, reclaimable: bool) -> Tunnel | None:
+        """Claim a tunnel slot; an idle keep-alive connection gives way to a waiting request."""
+        deadline = time.monotonic() + WAIT_SECONDS
+        with self.slots:
+            while len(self.open) >= MAX_TUNNELS:
+                now = time.monotonic()
+                idle = [t for t in self.open if t.reclaimable and t.site is not None and not t.closing
+                        and now - t.last > 1]
+                if idle:
+                    oldest = min(idle, key=lambda t: t.last)
+                    oldest.closing = True
+                    oldest.close()  # Its handler frees the slot; the browser reconnects if it needs to.
+                if now > deadline:
+                    return None
+                self.slots.wait(0.25)
+            tunnel = Tunnel(client)
+            tunnel.reclaimable = reclaimable
+            self.open.append(tunnel)
+            return tunnel
+
+    def release(self, tunnel: Tunnel) -> None:
+        with self.slots:
+            if tunnel in self.open:
+                self.open.remove(tunnel)
+            self.slots.notify()
+
+    def connect_upstream(self, head: bytes):
+        """Open this request on the platform proxy (or straight out, on a laptop) with the login added.
+
+        Returns the upstream socket and the bytes the client gets first."""
+        method, target = head.split(b" ", 2)[:2]
         if not self.up:
-            return socket.create_connection((host, int(port)), timeout=30)
-        sock = socket.create_connection((self.up["host"], self.up["port"]), timeout=30)
-        auth = f"Proxy-Authorization: {self.up['auth']}\r\n" if self.up["auth"] else ""
-        sock.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{auth}\r\n".encode())
-        reply = read_head(sock)
-        if b" 200 " not in reply.split(b"\r\n", 1)[0]:
-            sock.close()
-            raise OSError(f"proxy refused {target}: {reply.split(b'\r\n', 1)[0].decode(errors='replace')[:80]}")
-        return sock
+            if method == b"CONNECT":
+                host, _, port = target.decode().rpartition(":")
+                return socket.create_connection((host, int(port)), timeout=30), ESTABLISHED
+            u = urlsplit(target.decode())
+            site = socket.create_connection((u.hostname, u.port or 80), timeout=30)
+            site.sendall(head.replace(target, (u.path or "/").encode() + (b"?" + u.query.encode() if u.query else b""), 1))
+            return site, b""
+        if method == b"CONNECT":
+            # One exact authority, Host equal to it and no early payload, as the platform requires.
+            auth = f"Proxy-Authorization: {self.up['auth']}\r\n" if self.up["auth"] else ""
+            head = f"CONNECT {target.decode()} HTTP/1.1\r\nHost: {target.decode()}\r\n{auth}\r\n".encode()
+        elif self.up["auth"]:
+            head = head.replace(b"\r\n", f"\r\nProxy-Authorization: {self.up['auth']}\r\n".encode(), 1)
+        for attempt in range(RETRIES):
+            site = socket.create_connection((self.up["host"], self.up["port"]), timeout=30)
+            site.sendall(head)
+            if method == b"CONNECT":
+                reply = read_head(site)
+                status = reply.split(b"\r\n", 1)[0]
+                if b" 200 " in status + b" ":
+                    return site, ESTABLISHED
+            else:
+                # The proxy refuses before reading a body, so a 429 shows up at once; anything
+                # else (or nothing yet) stays unread for the client.
+                site.settimeout(1)
+                try:
+                    status = site.recv(16, socket.MSG_PEEK)
+                except TimeoutError:
+                    status = b""
+                if b" 429" not in status:
+                    return site, b""
+                reply = read_head(site)
+            site.close()
+            if b" 429" not in status or attempt == RETRIES - 1:
+                raise ConnectionRefusedError(reply.decode(errors="replace")[:300])
+            time.sleep(min(0.5 * 2**attempt, 4))  # The platform marks this retryable.
+        raise AssertionError("unreachable")
 
-    def handle(self, client) -> None:
+    def handle(self, client, reclaimable: bool) -> None:
+        tunnel = None
         try:
             head = read_head(client)
+            if not head:
+                client.close()
+                return
             method, target = head.split(b" ", 2)[:2]
-            if method == b"CONNECT":
-                target = target.decode()
-                host = target.rpartition(":")[0]
-                try:
-                    site = self.site_tls.wrap_socket(self.open_tunnel(target), server_hostname=host)
-                except ssl.SSLError:
-                    site = self.fallback_tls.wrap_socket(self.open_tunnel(target), server_hostname=host)
-                client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-                browser = self.serve_tls.wrap_socket(client, server_side=True)
-                site.settimeout(None)
-            else:  # Plain http://: hand the request to the platform proxy with the login added.
-                if self.up:
-                    site = socket.create_connection((self.up["host"], self.up["port"]), timeout=30)
-                    if self.up["auth"]:
-                        head = head.replace(b"\r\n", f"\r\nProxy-Authorization: {self.up['auth']}\r\n".encode(), 1)
-                else:
-                    u = urlsplit(target.decode())
-                    site = socket.create_connection((u.hostname, u.port or 80), timeout=30)
-                    head = head.replace(target, (u.path or "/").encode() + (b"?" + u.query.encode() if u.query else b""), 1)
-                site.settimeout(None)
-                site.sendall(head)
-                browser = client
-            threading.Thread(target=copy, args=(browser, site), daemon=True).start()
-            copy(site, browser)
+            if method == b"CONNECT" and not target.endswith((b":443", b":80")):
+                # The platform proxy only tunnels to ports 80 and 443 (Chromium's push service uses 5228).
+                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                client.close()
+                return
+            tunnel = self.acquire(client, reclaimable)
+            if tunnel is None:
+                self.note(f"no free connection for {target.decode(errors='replace')}")
+                client.sendall(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                client.close()
+                return
+            try:
+                site, first = self.connect_upstream(head)
+            except ConnectionRefusedError as refused:
+                reply = str(refused).split("\r\n", 1)[0] or "HTTP/1.1 502 Bad Gateway"
+                self.note(f"proxy refused {target.decode(errors='replace')}: {reply}")
+                client.sendall(f"{reply}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
+                client.close()
+                return
+            tunnel.site, tunnel.last = site, time.monotonic()
+            site.settimeout(None)
+            if first:
+                client.sendall(first)
+            threading.Thread(target=tunnel.copy, args=(client, site), daemon=True).start()
+            tunnel.copy(site, client)
         except Exception as error:  # noqa: BLE001
-            if len(self.errors) < 50:
-                self.errors.append(f"{type(error).__name__}: {error}"[:200])
+            self.note(f"{type(error).__name__}: {error}")
             try:
                 client.close()
             except OSError:
                 pass
+        finally:
+            if tunnel:
+                time.sleep(0.2)  # Let the platform proxy count this connection as closed first.
+                self.release(tunnel)
 
 
+ESTABLISHED = b"HTTP/1.1 200 Connection Established\r\n\r\n"
 _relay: Relay | None = None
 
 
-def browser_proxy() -> dict | None:
-    """Playwright `proxy=` setting for the hosted browser; None when no platform proxy is set."""
+def error_log() -> str:
+    return os.path.join(os.environ.get("JOB_AGENT_HOME") or "/tmp", "relay-errors.log")
+
+
+def recent_errors(count: int = 3) -> list[str]:
+    try:
+        with open(error_log(), encoding="utf-8") as log:
+            return log.read().splitlines()[-count:]
+    except OSError:
+        return []
+
+
+def start() -> None:
+    """Hosted: run the relay in this long-lived process and send this process's and its
+    children's web requests through it. The platform proxy's login stays here."""
     global _relay
-    if not upstream_proxy():
-        return None
-    if _relay is None:
-        _relay = Relay()
-        _relay.start()
-    return {"server": _relay.url}
+    if _relay is not None or not upstream_proxy():
+        return
+    _relay = Relay()
+    _relay.start()
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ[name] = _relay.app_url
+    os.environ["JOB_AGENT_RELAY"] = _relay.browser_url
+
+
+def browser_proxy() -> dict | None:
+    """Playwright `proxy=` setting for the hosted browser; None when there is no relay (a laptop)."""
+    url = os.environ.get("JOB_AGENT_RELAY")
+    return {"server": url} if url else None
 
 
 # ----- LaTeX packages --------------------------------------------------------
@@ -185,7 +298,8 @@ class BundleMirror(threading.Thread):
         super().__init__(daemon=True)
         # Python's default TLS: proven through the platform proxy for this server (and it
         # refuses the X25519-only handshake Relay prefers).
-        client = httpx.Client(timeout=httpx.Timeout(120, connect=20))
+        # One connection per request: the class proxy cuts a reused tunnel after 16 MiB or 90 s.
+        client = httpx.Client(timeout=httpx.Timeout(120, connect=20), limits=httpx.Limits(max_keepalive_connections=0))
         resolved: dict[str, str] = {}
         self.errors: list[str] = []
         errors = self.errors

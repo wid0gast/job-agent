@@ -66,7 +66,7 @@ class Planner:
             if coded_only and job["ats"] not in systems.SUPPORTED:
                 continue
             rows.append(job)
-        rows.sort(key=lambda j: (-(matching.ranking_score(j)[0] or -1), -matching._epoch(j["posted_at"])))
+        rows.sort(key=matching.rank_key)
         return {"total": len(rows), "jobs": [brief(j) for j in rows[:max(1, min(limit, 40))]]}
 
     def read_job(self, job_id: int):

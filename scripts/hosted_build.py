@@ -1,33 +1,20 @@
-"""Class app store build step: unpack Chromium from the npm registry (the build may
-only reach package registries) into the app folder, where programs may run, and
-make the bundled Tectonic executable. Writes build-report.json; the dashboard's
-warm-up task reports whether everything works."""
+"""Class app store build step: check the code compiles and make the bundled Tectonic
+executable. Chromium comes with the platform's "browser" runtime profile
+(/usr/bin/chromium, WORKSHOP_BROWSER_EXECUTABLE), so nothing is downloaded here.
+Writes build-report.json; the dashboard's warm-up task reports whether everything works."""
 
-import io
 import json
 import os
 import py_compile
 import shutil
 import subprocess
 import sys
-import tarfile
 import time
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORT = ROOT / "build-report.json"
-CHROMIUM = ROOT / "chromium"
-REGISTRY = "https://registry.npmjs.org"
-PACKAGES = {"chromium": "@sparticuz/chromium"}
 report = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "python": sys.version.split()[0]}
-
-# Brotli is in Node's standard library; Python has no built-in decoder.
-UNBROTLI = r"""
-const fs = require('fs'), zlib = require('zlib'), { pipeline } = require('stream');
-pipeline(fs.createReadStream(process.argv[2]), zlib.createBrotliDecompress(), fs.createWriteStream(process.argv[3]),
-  (err) => { if (err) { console.error(err); process.exit(1); } });
-"""
 
 
 def run(cmd, timeout=600, cwd=None):
@@ -40,74 +27,12 @@ def run(cmd, timeout=600, cwd=None):
         return {"ok": False, "error": f"{type(error).__name__}: {error}"}
 
 
-def tarball(name: str) -> bytes:
-    """The package's .tgz, straight from the registry (or via npm pack)."""
-    errors = []
-    try:
-        with urllib.request.urlopen(f"{REGISTRY}/{name.replace('/', '%2F')}/latest", timeout=60) as r:
-            url = json.load(r)["dist"]["tarball"]
-        with urllib.request.urlopen(url, timeout=600) as r:
-            return r.read()
-    except Exception as error:  # noqa: BLE001
-        errors.append(f"direct: {type(error).__name__}: {error}"[:200])
-    if shutil.which("npm"):
-        work = ROOT / ".npm-pack"
-        work.mkdir(exist_ok=True)
-        result = run(["npm", "pack", name, "--silent"], 600, cwd=str(work))
-        packed = sorted(work.glob("*.tgz"))
-        if result["ok"] and packed:
-            data = packed[-1].read_bytes()
-            shutil.rmtree(work, ignore_errors=True)
-            return data
-        errors.append(f"npm pack: {result}"[:300])
-    else:
-        errors.append("npm not installed")
-    raise RuntimeError(" | ".join(errors))
-
-
-def members(data: bytes, prefix: str):
-    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
-        for member in tar.getmembers():
-            if member.isfile() and member.name.startswith(prefix):
-                yield member.name, tar.extractfile(member).read()
-
-
 try:
     for module in (ROOT / "job_agent").glob("*.py"):
         py_compile.compile(str(module), doraise=True)
     report["compile"] = "ok"
-    report["npm"] = shutil.which("npm") or "not installed"
-    report["node"] = run(["node", "--version"], 30).get("out", "").strip()
-
-    # Chromium: chromium.br is the program; the .tar.br files hold libraries, fonts and graphics.
-    try:
-        start = time.time()
-        data = tarball(PACKAGES["chromium"])
-        report["chromium package MB"] = round(len(data) / 2**20, 1)
-        CHROMIUM.mkdir(exist_ok=True)
-        helper = CHROMIUM / "unbrotli.js"
-        helper.write_text(UNBROTLI)
-        for name, content in members(data, "package/bin/"):
-            packed = CHROMIUM / Path(name).name
-            packed.write_bytes(content)
-            target = CHROMIUM / packed.name.removesuffix(".br")
-            step = run(["node", str(helper), str(packed), str(target)], 600)
-            packed.unlink()
-            if not step["ok"]:
-                report[f"unpack {packed.name}"] = step
-                continue
-            if target.suffix == ".tar":
-                dest = CHROMIUM if "swiftshader" in target.name else CHROMIUM / target.stem
-                dest.mkdir(exist_ok=True)
-                report[f"untar {target.name}"] = run(["tar", "-xf", str(target), "-C", str(dest)], 300)["ok"]
-                target.unlink()
-            else:
-                target.chmod(0o755)
-        helper.unlink()
-        report["chromium"] = {"ok": (CHROMIUM / "chromium").exists(), "seconds": round(time.time() - start, 1),
-                              "files": sorted(p.name for p in CHROMIUM.iterdir())}
-    except Exception as error:  # noqa: BLE001
-        report["chromium"] = {"ok": False, "error": f"{type(error).__name__}: {error}"[:600]}
+    browser = os.environ.get("WORKSHOP_BROWSER_EXECUTABLE") or shutil.which("chromium")
+    report["chromium"] = run([browser, "--version"], 30).get("out", "").strip() if browser else "not in this image"
 
     tectonic = ROOT / "bin" / "tectonic"
     if tectonic.exists():
@@ -115,11 +40,7 @@ try:
     report["tectonic in zip"] = {"present": tectonic.exists(),
                                  "executable": os.access(tectonic, os.X_OK) if tectonic.exists() else False,
                                  "version": run([str(tectonic), "--version"], 30).get("out", "").strip()[:200]}
-
-    usage = shutil.disk_usage(ROOT)
-    report["app folder free MB after"] = usage.free // 2**20
-    report["chromium folder MB"] = round(sum(p.stat().st_size for p in CHROMIUM.rglob("*") if p.is_file()) / 2**20, 1) \
-        if CHROMIUM.exists() else 0
+    report["app folder free MB after"] = shutil.disk_usage(ROOT).free // 2**20
 except Exception as error:  # noqa: BLE001
     report["build error"] = f"{type(error).__name__}: {error}"
 finally:

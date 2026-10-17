@@ -7,7 +7,7 @@
     "languages": [
       "python312"
     ],
-    "profile": "standard",
+    "profile": "browser",
     "build": [
       "python3.12",
       "scripts/hosted_build.py"

@@ -2,9 +2,9 @@
 
 The same app as on a laptop, with the platform's differences handled here:
 the app folder is read-only (everything goes in the session workspace), models
-come from the class broker, the browser is the Chromium unpacked at build time
-and reaches the web through netrelay, and nothing survives the session (the
-dashboard offers a download of everything).
+come from the class broker, the browser is the platform's Chromium (the "browser"
+runtime profile) and reaches the web through netrelay, and nothing survives the
+session (the dashboard offers a download of everything).
 """
 
 import json
@@ -17,32 +17,15 @@ import urllib.request
 from pathlib import Path
 
 APP = Path(__file__).resolve().parent.parent
-CHROMIUM = APP / "chromium"
-EXE = CHROMIUM / "chromium"
 TECTONIC = APP / "bin" / "tectonic"
 TECTONIC_CACHE = APP / "bin" / "tectonic-cache.tgz"
 
-# The flags @sparticuz/chromium recommends for small sandboxed Linux machines.
-COMMON_ARGS = ["--disable-domain-reliability", "--disable-print-preview", "--disk-cache-size=8388608",
-               "--no-pings", "--font-render-hinting=none", "--disable-dev-shm-usage",
-               "--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process",
-               "--disable-setuid-sandbox", "--no-sandbox",
-               "--ignore-certificate-errors"]  # The relay's loopback certificate; sites are verified by the relay.
-SOFTWARE_GL = ["--ignore-gpu-blocklist", "--in-process-gpu", "--use-gl=angle", "--use-angle=swiftshader",
-               "--enable-unsafe-swiftshader"]
-NO_GPU = ["--disable-gpu", "--disable-software-rasterizer"]
-SINGLE = ["--single-process", "--no-zygote"]
-# Tried in order by the warm-up; the first that loads a job board is used for the session.
-# (/dev/shm is tiny in small containers, so every variant avoids it.)
-VARIANTS = {
-    "single, software GL": COMMON_ARGS + SINGLE + SOFTWARE_GL,
-    "single, no GPU": COMMON_ARGS + SINGLE + NO_GPU,
-    "single, no GPU, no JIT": COMMON_ARGS + SINGLE + NO_GPU + ["--js-flags=--jitless"],
-    "multi, no GPU": COMMON_ARGS + NO_GPU + ["--renderer-process-limit=1"],
-    "multi, no GPU, no JIT": COMMON_ARGS + NO_GPU + ["--renderer-process-limit=1", "--js-flags=--jitless"],
-}
-chosen = next(iter(VARIANTS))
-
+# Chromium's own sandbox stays on, as in the platform's browser image.
+CHROMIUM_ARGS = ["--disable-gpu", "--renderer-process-limit=2"]
+# The platform proxy rejects a TLS ClientHello carrying Encrypted Client Hello (extension
+# 0xfe0d, see services/worker/src/proxy/tls-hello.ts), which Chromium sends by default.
+# Only this Local State setting turns it off; the old EncryptedClientHello feature flag no longer does.
+LOCAL_STATE = {"ssl": {"ech_enabled": False}}
 
 # A visitor's starting profile: no personal details. They come from the resume
 # the visitor uploads, and their preferences from the Search page.
@@ -119,43 +102,27 @@ def chromium_options() -> dict:
     """Playwright launch options for the platform's Chromium, through the local relay."""
     from . import netrelay
 
-    options = {"headless": True}
+    options = {"headless": True, "chromium_sandbox": True, "args": CHROMIUM_ARGS}
     proxy = netrelay.browser_proxy()
     if proxy:
         options["proxy"] = proxy
-    if (CHROMIUM / "chromium").exists():
-        libs = [str(d) for d in CHROMIUM.rglob("lib") if d.is_dir()] + [str(CHROMIUM)]
-        options.update(executable_path=str(CHROMIUM / "chromium"), args=VARIANTS[chosen], env={
-            **os.environ, "LD_LIBRARY_PATH": ":".join(libs), "FONTCONFIG_PATH": str(CHROMIUM / "fonts")})
-    else:  # A laptop rehearsal: Playwright's own Chromium.
-        options["args"] = ["--ignore-certificate-errors"]
+    executable = os.environ.get("WORKSHOP_BROWSER_EXECUTABLE")
+    if executable:
+        options["executable_path"] = executable
+    # Otherwise a laptop rehearsal: Playwright's own Chromium.
     return options
 
 
-def dump_dom(name: str) -> tuple[bool, str]:
-    """Run Chromium itself on a job board (no Playwright) and report what it says."""
-    import subprocess
+def launch_chromium(playwright):
+    """The hosted Chromium, started on a fresh profile that carries LOCAL_STATE.
 
-    from . import netrelay
-
-    proxy = netrelay.browser_proxy()
-    libs = [str(d) for d in CHROMIUM.rglob("lib") if d.is_dir()] + [str(CHROMIUM)]
-    env = {**os.environ, "LD_LIBRARY_PATH": ":".join(libs), "FONTCONFIG_PATH": str(CHROMIUM / "fonts")}
-    command = [str(EXE), *VARIANTS[name], "--headless",
-               *([f"--proxy-server={proxy['server']}"] if proxy else []),
-               "--virtual-time-budget=8000", "--dump-dom", "https://job-boards.greenhouse.io/anthropic"]
-    start = time.time()
-    try:
-        run = subprocess.run(command, capture_output=True, text=True, timeout=90, env=env)
-    except subprocess.TimeoutExpired:
-        return False, f"Direct [{name}]: timed out."
-    links = run.stdout.count('/jobs/')
-    noise = ("Fontconfig", "dbus", "DevTools listening", ":INFO:", "CONSOLE")
-    lines = [l for l in run.stderr.splitlines() if l.strip() and not any(n in l for n in noise)]
-    # A crash's last words, or else only real errors.
-    errors = lines if run.returncode else [l for l in lines if "FATAL" in l or "Check failed" in l]
-    return links > 0, (f"Direct [{name}]: exit {run.returncode}, {len(run.stdout) // 1024} KB, {links} job links, "
-                       f"{time.time() - start:.0f}s" + (f", says: {' / '.join(errors[-3:])[:300]}" if errors else "") + ".")
+    Playwright only seeds a profile through a persistent launch; its .browser still makes
+    separate contexts and pages, which share the profile's settings."""
+    profile = Path(os.environ["JOB_AGENT_HOME"]) / "chromium-profile"
+    shutil.rmtree(profile, ignore_errors=True)
+    profile.mkdir(parents=True)
+    (profile / "Local State").write_text(json.dumps(LOCAL_STATE), encoding="utf-8")
+    return playwright.chromium.launch_persistent_context(str(profile), **chromium_options()).browser
 
 
 def free_mb() -> int:
@@ -170,57 +137,35 @@ def free_mb() -> int:
 
 def warm_up(ctx, log) -> str:
     """First task of every session: prove the browser reaches job sites and LaTeX compiles."""
-    from . import config, latex
+    from . import config, latex, netrelay
 
-    global chosen
     notes = [f"Memory free: {free_mb()} MB."]
-    working = None
-    order = list(VARIANTS)
-    if EXE.exists():
-        passing = []
-        for name in VARIANTS:
-            ok, note = dump_dom(name)
-            notes.append(note)
-            if ok:
-                passing.append(name)
-        order = passing + [n for n in VARIANTS if n not in passing]
-    for name in order[:2]:
-        chosen = name
-        start, browser = time.time(), None
-        try:
-            browser = ctx.playwright.chromium.launch(**chromium_options())
-            page = browser.new_page()
-            response = page.goto("https://job-boards.greenhouse.io/anthropic", wait_until="load", timeout=60000)
-            links = page.locator('a[href*="/jobs/"]').count()
-            notes.append(f"Browser [{name}]: HTTP {response.status if response else '?'}, "
-                         f"{len(page.content()) // 1024} KB, {links} job links, {time.time() - start:.0f}s, "
-                         f"memory free {free_mb()} MB.")
-            if links:
-                working = name
-        except Exception as error:  # noqa: BLE001
-            notes.append(f"Browser [{name}] failed: {str(error).splitlines()[0][:120]}")
-        finally:
-            if browser:
-                try:
-                    browser.close()
-                except Exception:  # noqa: BLE001
-                    pass
-        if working:
-            break
-    chosen = working or next(iter(VARIANTS))
-    if not working:
-        from . import netrelay
-
-        relay = netrelay._relay
-        notes.append("Browser can't load job sites." + (f" Relay: {relay.errors[-3:]}" if relay and relay.errors else ""))
+    start, browser = time.time(), None
+    try:
+        browser = launch_chromium(ctx.playwright)
+        page = browser.new_page()
+        response = page.goto("https://job-boards.greenhouse.io/anthropic", wait_until="load", timeout=60000)
+        links = page.locator('a[href*="/jobs/"]').count()
+        notes.append(f"Browser: HTTP {response.status if response else '?'}, {len(page.content()) // 1024} KB, "
+                     f"{links} job links, {time.time() - start:.0f}s, memory free {free_mb()} MB.")
+        if not links:
+            notes.append("Browser can't load job sites.")
+    except Exception as error:  # noqa: BLE001
+        notes.append(f"Browser failed: {str(error).splitlines()[0][:200]}")
+    finally:
+        if browser:
+            try:
+                browser.close()
+            except Exception:  # noqa: BLE001
+                pass
+    if netrelay.recent_errors():
+        notes.append(f"Relay: {netrelay.recent_errors()}")
     start = time.time()
     try:
         tex = latex.preamble(1) + "\n\\begin{document}\n\\section{Warm-up}\nReady.\n\\end{document}\n"
         latex.compile_pdf(tex, config.DATA_DIR / "warm-up.pdf")
         notes.append(f"Resume typesetting OK ({time.time() - start:.0f}s).")
     except Exception as error:  # noqa: BLE001
-        from . import netrelay
-
         mirror = netrelay._mirror
         notes.append(f"Resume typesetting failed: {str(error)[:300]}"
                      + (f" · mirror: {mirror.errors[-2:]}" if mirror and mirror.errors else ""))
@@ -230,6 +175,9 @@ def warm_up(ctx, log) -> str:
 
 def main() -> None:
     prepare_environment()
+    from . import netrelay
+
+    netrelay.start()
     try:
         connect_models()
     except Exception as error:  # noqa: BLE001 - the dashboard still opens and says so.

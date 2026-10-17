@@ -75,7 +75,7 @@ class Headless:
 
                 shared = Headless._shared.get(id(self.playwright))
                 if shared is None or not shared.is_connected():
-                    shared = self.playwright.chromium.launch(**hosted.chromium_options())
+                    shared = hosted.launch_chromium(self.playwright)
                     Headless._shared[id(self.playwright)] = shared
                 self._browser = shared
                 return shared
@@ -142,7 +142,7 @@ class Browser:
         )
         if config.HOSTED:  # Sessions don't persist, so no saved profile: a fresh context each visit.
             self.context = self._printer.browser.new_context(
-                viewport={"width": 1280, "height": 900}, accept_downloads=True, ignore_https_errors=True)
+                viewport={"width": 1280, "height": 900}, accept_downloads=True)
         else:
             try:
                 self.context = self.playwright.chromium.launch_persistent_context(

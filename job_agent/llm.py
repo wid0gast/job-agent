@@ -7,7 +7,10 @@ Free models are rate limited (about 20 requests a minute), so 429s are retried.
 
 import json
 import re
+import threading
 import time
+
+REQUEST_LIMIT_SECONDS = 90  # The class proxy's deadline for one broker request (LIMITS.requestMs).
 
 
 class SpendCapReached(RuntimeError):
@@ -28,6 +31,7 @@ class OpenRouter:
         self.spend_cap_usd, self.data_collection = spend_cap_usd, data_collection
         self.spent_usd = 0.0
         self.calls = 0
+        self._counting = threading.Lock()  # Match scoring calls the model from two threads.
         self._json_format = 0  # Index into _post_json's formats that this model accepts.
         self.client = httpx.Client(timeout=httpx.Timeout(180, connect=15))
 
@@ -65,9 +69,13 @@ class OpenRouter:
         body = response.json()
         if "error" in body:
             raise RuntimeError(f"OpenRouter error: {body['error']}")
-        self.calls += 1
-        self.spent_usd += float((body.get("usage") or {}).get("cost") or 0)
+        self.count(body)
         return body
+
+    def count(self, body: dict) -> None:
+        with self._counting:
+            self.calls += 1
+            self.spent_usd += float((body.get("usage") or {}).get("cost") or 0)
 
     def complete(self, messages: list[dict], tools: list[dict]) -> dict:
         """One agent turn with tool declarations (used by harness.AgentRun)."""
@@ -184,20 +192,25 @@ class Broker(OpenRouter):
                         raise RuntimeError(f"Model broker HTTP {response.status_code}: {response.text[:300]}")
                     body = response.json()
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ReadTimeout) as error:
-                if attempt < 3:
+                # The class proxy ends any request at 90 s; a retry would be cut (and charged) again.
+                at_limit = time.time() - started >= REQUEST_LIMIT_SECONDS - 5
+                if attempt < 3 and not at_limit:
                     continue
                 raise RuntimeError(f"The model service dropped the request after {time.time() - started:.0f}s "
-                                   f"({type(error).__name__}, {'streamed' if self.stream else 'plain'}).") from None
+                                   f"({type(error).__name__}, {'streamed' if self.stream else 'plain'})"
+                                   + (": longer than the class platform's 90-second limit per request."
+                                      if at_limit else ".")) from None
             if "error" in body:
                 raise RuntimeError(f"Model broker error: {body['error']}")
-            self.calls += 1
-            self.spent_usd += float((body.get("usage") or {}).get("cost") or 0)
+            self.count(body)
             return body
         raise RuntimeError("The model service kept refusing the request.")
 
     def _streamed(self, payload: dict, headers: dict) -> dict | str | None:
         """One streamed chat completion, reassembled into the usual response shape."""
         import json as _json
+
+        import httpx
 
         with self.client.stream("POST", self.URL, headers=headers, json={**payload, "stream": True}) as response:
             if response.status_code != 200:
@@ -207,12 +220,13 @@ class Broker(OpenRouter):
                 if response.status_code in (429, 502, 503):
                     return "busy"
                 raise RuntimeError(f"Model broker HTTP {response.status_code}: {text[:300]}")
-            content, calls, finish, usage, model = [], {}, None, {}, None
+            content, calls, finish, usage, model, done = [], {}, None, {}, None, False
             for line in response.iter_lines():
                 if not line.startswith("data:"):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
+                    done = True
                     break
                 chunk = _json.loads(data)
                 if "error" in chunk:
@@ -230,6 +244,8 @@ class Broker(OpenRouter):
                         slot["function"]["name"] += function.get("name") or ""
                         slot["function"]["arguments"] += function.get("arguments") or ""
                     finish = choice.get("finish_reason") or finish
+            if not done and finish is None:  # Cut off mid-answer: never use a partial reply.
+                raise httpx.RemoteProtocolError("The stream ended before the answer was complete.")
         message = {"role": "assistant", "content": "".join(content) or None}
         if calls:
             message["tool_calls"] = [calls[i] for i in sorted(calls)]

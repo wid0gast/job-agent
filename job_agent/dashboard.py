@@ -300,11 +300,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     wanted = ACTIVE if status == "active" else tuple(ORDER) if status == "all" else (status,)
     jobs = app.tracker.with_status(*wanted)
 
-    def rank(job):
-        score, _ = matching.ranking_score(job)
-        return (score is None, -(score or 0), -matching._epoch(job["posted_at"]))
-
-    jobs.sort(key=rank)
+    jobs.sort(key=matching.rank_key)
     unscored = len(matching.stale(app.tracker, profile, config.read_master_resume())) \
         if (profile.get("preferences", {}).get("description") or profile.get("preferences", {}).get("roles")) else None
     rows = []
@@ -317,7 +313,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
             act = form(app, "/requeue", "Back to found", {"job_id": job["id"]})
         else:
             act = f'<a href="/job/{job["id"]}">open</a>'
-        below = score is not None and score < threshold
+        below = score is not None and kind != "keyword" and score < threshold
         badge = (f'<span class=score>{score}</span><span class=kind>{kind}</span>' if score is not None
                  else '<span class=muted>—</span>')
         rows.append(f'<tr class="{"below" if below else ""}"><td>{badge}</td>'
@@ -331,15 +327,19 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     if unscored is None:
         scoring = '<a href="/search">Describe what you\'re looking for</a> to rank jobs.'
     elif unscored:
-        calls = -(-unscored // matching.BATCH)
-        scoring = (form(app, "/score", f"Score {unscored} unranked job(s)", primary=True)
-                   + f' <span class=muted>about {calls} model request(s), ~{matching.BATCH} jobs each</span>')
+        batch = min(unscored, matching.SHORTLIST)
+        calls = -(-batch // matching.BATCH)
+        scoring = (form(app, "/score", f"Rank the top {batch} with the model", primary=True)
+                   + f' <span class=muted>{calls} model request(s), the best keyword matches first; '
+                   f'{unscored} not yet ranked by the model</span>')
     else:
         scoring = '<span class=muted>Every job is ranked against your current description.</span>'
     body = f"""<h1>Ranked jobs</h1>
     <div class=card><div class=row>{scoring}</div>
-    <p class=muted style="margin:10px 0 0">Score = <b>fit</b> (read the whole posting, when prepared) or
-    <b>match</b> (title, company and location against your description). Greyed rows are below your
+    <p class=muted style="margin:10px 0 0">Score = <b>fit</b> (read the whole posting, when prepared),
+    <b>match</b> (the model on title, company and location against your description) or
+    <b>keyword</b> (free and instant: title words against your role titles and description; ranked below
+    model scores). Greyed rows are below your
     threshold of <b>{threshold}</b> (<a href="/search">change</a>); jobs whose fit falls below it aren't prepared.</p></div>
     <div class="row" style="margin-bottom:14px">{tabs}</div>
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>System</th><th>Status</th><th></th></tr>
@@ -852,8 +852,7 @@ def handler_for(app: Dashboard):
             if path == "/prepare-top":
                 count = max(1, min(20, int(one.get("count") or 3)))
                 found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
-                found.sort(key=lambda j: (-(matching.ranking_score(j)[0] or -1),
-                                          -matching._epoch(j["posted_at"])))
+                found.sort(key=matching.rank_key)
                 picks = found[:count]
                 app.ensure_worker()
                 for job in picks:
@@ -883,10 +882,16 @@ def handler_for(app: Dashboard):
                 })
                 before = len(tracker.with_status("found"))
                 sources.apply_filters(tracker, config.load_profile())
+                matching.keyword_rank(tracker, config.load_profile())
                 # A lower threshold brings back jobs whose fit was below the old one.
                 for job in tracker.with_status("filtered_out"):
                     if (job["reason"] or "").startswith("Fit ") and (job["fit_score"] or 0) >= threshold:
                         tracker.update(job["id"], status="found", reason="Back: above your new threshold.")
+                if not tracker.with_status(*ORDER):  # Nothing fetched yet (every hosted visit starts empty).
+                    app.ensure_worker()
+                    tracker.add_task("refresh")
+                    return ("Saved. No jobs yet, so the job lists are being refreshed with these filters; "
+                            "follow it on Today."), "/"
                 after = len(tracker.with_status("found"))
                 return (f"Saved. {after} job(s) pass your filters ({after - before:+d}). "
                         "Rank them on the Ranked jobs page."), "/search"

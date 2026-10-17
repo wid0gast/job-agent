@@ -104,3 +104,72 @@ def test_search_page_saves_and_jobs_page_ranks(tracker, tmp_path, monkeypatch):
         assert "Research roles" in request("GET", "/search")[1]
     finally:
         server.shutdown()
+
+
+def test_saving_search_with_no_jobs_starts_a_refresh(tmp_path, monkeypatch):
+    """A fresh session (every hosted visit) has no jobs yet: Save fetches them instead of reporting 0."""
+    profile = tmp_path / "profile"
+    shutil.copytree(config.ROOT / "profile.example", profile)
+    monkeypatch.setattr(config, "PROFILE_DIR", profile)
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "empty.db")
+    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    monkeypatch.setattr(app, "ensure_worker", lambda: None)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
+        body = urlencode({"token": app.token, "description": "ML internships", "job_types": "internship",
+                          "locations": "any", "fit_threshold": "70"})
+        conn.request("POST", "/search", body, {"Host": f"127.0.0.1:{app.port}",
+                                               "Origin": f"http://127.0.0.1:{app.port}",
+                                               "Content-Type": "application/x-www-form-urlencoded"})
+        response = conn.getresponse()
+        assert response.status == 303 and response.getheader("Location", "").split("?")[0].endswith("/")
+        assert [t["kind"] for t in app.tracker.tasks()] == ["refresh"]
+    finally:
+        server.shutdown()
+
+
+def test_keyword_rank_is_free_and_shortlists_for_the_model(tracker, monkeypatch):
+    """Every job gets a keyword score without the model; the model ranks only the best of them."""
+    config.save_search({"description": "Machine learning research internships", "roles": ["Research Intern"]})
+    assert matching.keyword_rank(tracker, config.load_profile()) == 3
+    by_title = {j["title"]: matching.ranking_score(j) for j in tracker.with_status("found")}
+    assert by_title["Research Intern"][1] == "keyword"
+    assert by_title["Research Intern"][0] > by_title["AI Research Engineer"][0] > by_title["Marketing Analyst"][0]
+    assert matching.keyword_rank(tracker, config.load_profile()) == 0  # Unchanged search: nothing redone.
+    monkeypatch.setattr(matching, "SHORTLIST", 2)
+    model = Ranker()
+    result = matching.score(model, tracker, log=lambda *_: None)
+    assert result == {"scored": 2, "remaining": 1} and model.calls == 1
+    kinds = {j["title"]: matching.ranking_score(j)[1] for j in tracker.with_status("found")}
+    assert kinds == {"Research Intern": "match", "AI Research Engineer": "match", "Marketing Analyst": "keyword"}
+    # A model score always ranks above a keyword-only one.
+    ranked = sorted(tracker.with_status("found"), key=matching.rank_key)
+    assert ranked[-1]["title"] == "Marketing Analyst"
+
+
+def test_scoring_has_its_own_lane(tracker):
+    """Ranking runs beside other tasks: the lane takes only scoring, the main loop everything else."""
+    from job_agent import worker
+
+    config.save_search({"description": "ML research internships"})
+    prepare = tracker.add_task("prepare", 1)
+    scoring = tracker.add_task("score_matches")
+    ctx = type("Ctx", (), {"tracker": tracker, "llm": Ranker()})()
+    stop = threading.Event()
+    side = threading.Thread(target=worker.lane, args=(ctx, lambda *_: None, stop), daemon=True)
+    side.start()
+    try:
+        for _ in range(50):
+            if tracker.task(scoring)["status"] == "done":
+                break
+            threading.Event().wait(0.1)
+    finally:
+        stop.set()
+        side.join(5)
+    assert tracker.task(scoring)["status"] == "done"
+    assert tracker.task(prepare)["status"] == "queued"  # Left for the main loop.
+    assert tracker.claim_task(exclude=worker.OWN_LANE)["id"] == prepare

@@ -7,6 +7,7 @@ reply from the dashboard.
 """
 
 import fcntl
+import threading
 import time
 import traceback
 from contextlib import contextmanager
@@ -138,6 +139,9 @@ def run_task(task: dict, ctx: Context, log) -> str:
         return hosted.warm_up(ctx, log)
     if task["kind"] == "refresh":
         counts = sources.refresh(tracker, config.load_profile(), boards=True, log=log)
+        from . import matching
+
+        matching.keyword_rank(tracker, config.load_profile())  # Free; the model ranks only the best of these.
         return f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known"
     if task["kind"] == "sync_profile":
         from . import profile_sync
@@ -155,12 +159,7 @@ def run_task(task: dict, ctx: Context, log) -> str:
         details = resumes.parse(ctx.llm, Path(task["arg"]), log)
         return f"Read {details['source']} (content through {details['latest_date']})."
     if task["kind"] == "score_matches":
-        from . import matching
-
-        if ctx.llm is None:
-            raise ValueError("Add an OpenRouter key and model in .env to rank jobs.")
-        result = matching.score(ctx.llm, tracker, log=log)
-        return f"Ranked {result['scored']} job(s); {result['remaining']} still unranked."
+        return score_matches(ctx, log)
     if task["kind"] == "draft":
         return prepare.draft_missing(task["job_id"], ctx, log)
     if task["kind"] == "prepare":
@@ -170,6 +169,35 @@ def run_task(task: dict, ctx: Context, log) -> str:
     raise ValueError(f"Unknown task {task['kind']!r}.")
 
 
+def score_matches(ctx: Context, log) -> str:
+    from . import matching
+
+    if ctx.llm is None:
+        raise ValueError("Add an OpenRouter key and model in .env to rank jobs.")
+    result = matching.score(ctx.llm, ctx.tracker, log=log)
+    return (f"Ranked {result['scored']} job(s) with the model; {result['remaining']} not yet "
+            "(they keep their keyword score).")
+
+
+# Tasks with their own lane: they only call the model, so they run alongside the others
+# (a prepare needn't wait for a long ranking), one at a time.
+OWN_LANE = ("score_matches",)
+
+
+def lane(ctx: Context, log, stop: threading.Event) -> None:
+    while not stop.is_set():
+        task = ctx.tracker.claim_task(kinds=OWN_LANE)
+        if task is None:
+            stop.wait(1)
+            continue
+        log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
+        try:
+            ctx.tracker.set_task(task["id"], status="done", result=score_matches(ctx, log)[:2000])
+        except Exception as error:  # noqa: BLE001 - reported on the task, like any other.
+            log(traceback.format_exc())
+            ctx.tracker.set_task(task["id"], status="failed", result=f"{type(error).__name__}: {error}"[:2000])
+
+
 def serve(settings, log=print, idle_exit: float | None = None) -> None:
     """Run queued tasks until stopped (or until idle for `idle_exit` seconds)."""
     with browser_lock():
@@ -177,11 +205,18 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
         for note in tracker.recover():
             log(f"Recovered: {note}")
         ctx = Context(settings, tracker)
+        stop = threading.Event()
+        side = threading.Thread(target=lane, args=(ctx, log, stop), daemon=True)
+        side.start()
         idle_since = time.time()
         try:
             while True:
-                task = tracker.claim_task()
+                task = tracker.claim_task(exclude=OWN_LANE)
                 if task is None:
+                    busy = any(t["kind"] in OWN_LANE and t["status"] in ("queued", "running")
+                               for t in tracker.tasks(10))
+                    if busy:
+                        idle_since = time.time()
                     if idle_exit is not None and time.time() - idle_since > idle_exit:
                         return
                     time.sleep(1)
@@ -199,4 +234,6 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
                     ctx.release_browsers()
                 idle_since = time.time()
         finally:
+            stop.set()
+            side.join(timeout=5)
             ctx.close()

@@ -1,18 +1,36 @@
-"""Match scores: a quick ranking of every found job against what you're looking for.
+"""Ranking jobs against what you're looking for, cheapest first.
 
-Fit scores (prepare) read the whole posting and cost one model call per job;
-a free key allows about 50 calls a day. Match scores rank by title, company
-and location only, about 60 jobs per call, so the whole list can be ranked
-cheaply. A job's score is redone when your description or background changes.
+Keyword scores are free and instant: every found job's title (and list category)
+against your role titles and description. Match scores ask the model about the
+title, company and location, about 60 jobs per call, but only for the keyword
+shortlist: a hosted visit allows 20 model calls, two at a time. Fit scores
+(prepare) read the whole posting, one call per job. A job's scores are redone
+when your description or background changes.
 """
 
 import hashlib
 import json
+import math
+import re
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 from . import config
 from .prompts import MATCH_PROMPT
 
 BATCH = 60
+SHORTLIST = 120  # Jobs the model scores per run: two calls.
+PARALLEL = 2  # The class broker runs two model calls per visit at once.
+STOPWORDS = set("""a an and or the of for in on at to with without by from as is are be i im i'm me my we our
+you your it its this that these those any all some more most less very also just not no nor but
+role roles job jobs position positions work working team teams company companies opportunity
+looking interested interest want would like prefer especially fine too e g eg etc ok kind kinds
+internship internships intern full time fulltime new grad graduate entry level""".split())
+# Spellings job titles use for the same thing.
+ALIASES = {"machine learning": "ml", "artificial intelligence": "ai", "natural language processing": "nlp",
+           "large language models": "llm", "large language model": "llm", "llms": "llm",
+           "computer vision": "cv", "data scientist": "data science", "scientist": "science",
+           "engineering": "engineer", "engineers": "engineer", "researcher": "research"}
 SCHEMA = {
     "type": "object",
     "properties": {"scores": {"type": "array", "items": {
@@ -38,39 +56,105 @@ def stale(tracker, profile: dict, resume: str) -> list[dict]:
             if json.loads(job["details"] or "{}").get("match", {}).get("basis") != current]
 
 
+def terms(text: str) -> list[str]:
+    text = (text or "").lower()
+    for phrase, short in ALIASES.items():
+        text = re.sub(rf"\b{re.escape(phrase)}\b", short, text)
+    return [w for w in re.findall(r"[a-z][a-z0-9+#.]*[a-z0-9+#]|[a-z]", text) if w not in STOPWORDS]
+
+
+NEGATION = re.compile(r"\b(?:not|no|never|except|avoid|excluding|don'?t|without)\b[^.;\n]*", re.I)
+
+
+def keyword_rank(tracker, profile: dict) -> int:
+    """Free first pass: score every found job 0-100 by how well its title fits the roles and
+    description. Words rare among job titles count more, role words triple, and the exact role
+    title a bonus; words the description rules out ("not interested in marketing") count against.
+    100 is the best job in the list. Returns how many scores changed."""
+    prefs = profile.get("preferences", {})
+    description = prefs.get("description", "")
+    unwanted = {t for clause in NEGATION.findall(description) for t in terms(clause)}
+    query = Counter()
+    for role in prefs.get("roles") or []:
+        query.update({t: 3 for t in terms(role)})
+    query.update({t: 1 for t in terms(NEGATION.sub(" ", description)) if t not in query})
+    unwanted -= set(query)
+    jobs = tracker.with_status("found", "prepared", "needs_you")
+    if not query or not jobs:
+        return 0
+    titles = {j["id"]: set(terms(j["title"])) for j in jobs}
+    seen = Counter(t for words in titles.values() for t in words)
+    idf = {t: math.log(1 + len(jobs) / (1 + seen[t])) for t in query}
+    phrases = [r.lower() for r in prefs.get("roles") or [] if r.strip()]
+    bonus = max(idf.values()) * 3
+
+    def raw(job) -> float:
+        words = titles[job["id"]]
+        value = sum(w * idf[t] for t, w in query.items() if t in words)
+        if any(p in (job["title"] or "").lower() for p in phrases):
+            value += bonus  # The exact role title.
+        return value / 2 if words & unwanted else value
+
+    raws = {j["id"]: raw(j) for j in jobs}
+    best = max(raws.values()) or 1
+    current = hashlib.sha1(json.dumps([sorted(query.items()), sorted(unwanted), best]).encode()).hexdigest()[:12]
+    changed = 0
+    for job in jobs:
+        details = json.loads(job["details"] or "{}")
+        value = round(100 * raws[job["id"]] / best)
+        if details.get("keyword") == {"score": value, "basis": current}:
+            continue
+        details["keyword"] = {"score": value, "basis": current}
+        tracker.update(job["id"], details=details)
+        changed += 1
+    return changed
+
+
+def keyword_score(job: dict) -> int:
+    return json.loads(job["details"] or "{}").get("keyword", {}).get("score", 0)
+
+
 def score(llm, tracker, limit: int | None = None, log=print) -> dict:
+    """Model match scores for the best `limit` (default SHORTLIST) keyword matches not yet scored,
+    PARALLEL calls at a time."""
     profile, resume = config.load_profile(), config.read_master_resume()
     prefs = profile.get("preferences", {})
     if not prefs.get("description") and not prefs.get("roles"):
         raise ValueError("Describe what you're looking for on the Search page first.")
+    keyword_rank(tracker, profile)
     todo = stale(tracker, profile, resume)
-    # Jobs the agent can apply to first, newest first, so a small budget goes furthest.
+    # Best keyword matches first; among equals, jobs the agent can apply to, newest first.
     from .systems import SUPPORTED
 
-    todo.sort(key=lambda j: (j["ats"] not in SUPPORTED, -(_epoch(j["posted_at"]))))
-    if limit:
-        todo = todo[:limit]
+    todo.sort(key=lambda j: (-keyword_score(j), j["ats"] not in SUPPORTED, -(_epoch(j["posted_at"]))))
+    todo = todo[:limit or SHORTLIST]
     current = basis(profile, resume)
     wanted = {"looking_for": prefs.get("description", ""), "roles": prefs.get("roles", []),
               "background (resume start)": resume[:2500]}
-    scored = 0
-    for start in range(0, len(todo), BATCH):
-        batch = todo[start:start + BATCH]
+    batches = [todo[start:start + BATCH] for start in range(0, len(todo), BATCH)]
+    log(f"  scoring {len(todo)} job(s) in {len(batches)} model call(s), {PARALLEL} at a time")
+
+    def run(batch):
         jobs = [{"id": j["id"], "title": j["title"], "company": j["company"],
                  "location": (j["location"] or "")[:80], "type": j["job_type"]} for j in batch]
-        log(f"  scoring {len(batch)} job(s) ({start + len(batch)} of {len(todo)})")
         reply = llm.json(MATCH_PROMPT, json.dumps({"candidate": wanted, "jobs": jobs},
                                                   ensure_ascii=False), SCHEMA, "match_scores")
         by_id = {item["id"]: item for item in reply["scores"]}
+        done = 0
         for job in batch:
             item = by_id.get(job["id"])
             if item is None:
                 continue
-            details = json.loads(job["details"] or "{}")
+            details = json.loads(tracker.get(job["id"])["details"] or "{}")
             details["match"] = {"score": max(0, min(100, int(item["score"]))),
                                 "why": item["why"][:120], "basis": current}
             tracker.update(job["id"], details=details)
-            scored += 1
+            done += 1
+        log(f"  scored {done} job(s)")
+        return done
+
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        scored = sum(pool.map(run, batches))
     return {"scored": scored, "remaining": len(stale(tracker, profile, resume))}
 
 
@@ -84,8 +168,19 @@ def _epoch(stamp: str | None) -> float:
 
 
 def ranking_score(job: dict) -> tuple[int | None, str]:
-    """(score, kind): the fit score when prepared, else the match score."""
+    """(score, kind): the fit score when prepared, else the model's match score, else the keyword score."""
     if job.get("fit_score") is not None:
         return job["fit_score"], "fit"
-    match = json.loads(job["details"] or "{}").get("match")
-    return (match["score"], "match") if match else (None, "")
+    details = json.loads(job["details"] or "{}")
+    if details.get("match"):
+        return details["match"]["score"], "match"
+    if details.get("keyword"):
+        return details["keyword"]["score"], "keyword"
+    return None, ""
+
+
+def rank_key(job: dict) -> tuple:
+    """Sort key, best first: model-scored jobs, then keyword-only ones, then the rest; newest breaks ties."""
+    score, kind = ranking_score(job)
+    tier = 0 if kind in ("fit", "match") else 1 if kind == "keyword" else 2
+    return (tier, -(score or 0), -_epoch(job["posted_at"]))
