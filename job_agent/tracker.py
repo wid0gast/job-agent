@@ -76,8 +76,34 @@ def normalize(text: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
 
+# Shorthand people and postings use for the same role.
+ABBREVIATIONS = {
+    "mle": "machine learning engineer", "ml": "machine learning", "ds": "data science",
+    "swe": "software engineer", "sde": "software development engineer", "sre": "site reliability engineer",
+    "pm": "product manager", "apm": "associate product manager", "qa": "quality assurance",
+    "scientist": "science", "scientists": "science", "engineering": "engineer", "engineers": "engineer",
+    "developer": "development", "sr": "senior", "jr": "junior",
+    # An internship is a different job from the full-time role with the same title.
+    "interns": "intern", "internship": "intern", "internships": "intern", "coop": "intern",
+}
+# Words that don't change which role it is: internship wording, seasons, years, degree tags.
+NOISE = set("""summer fall spring winter autumn ms msc ma mba phd bs ba bsc masters master bachelor
+bachelors undergraduate undergrad graduate grad new student students program the a an of and for in at to""".split())
+MATCH_VERSION = "v2"
+
+
+def title_tokens(title: str | None) -> list[str]:
+    """A role's words with shorthand expanded and season, year and degree tags dropped."""
+    words = []
+    for word in re.sub(r"\bco op\b", "coop", normalize(title)).split():
+        words += ABBREVIATIONS.get(word, word).split()
+    return [w for w in words if w not in NOISE and not re.fullmatch(r"(19|20)\d\d|\d{1,2}", w)]
+
+
 def match_key(company: str | None, title: str | None) -> str | None:
-    return f"{normalize(company)}|{normalize(title)}" if company and title else None
+    """Same company (by ID where known) and the same role, however each board words it."""
+    tokens = title_tokens(title)
+    return f"{MATCH_VERSION}:{normalize(company)}|{' '.join(tokens)}" if company and tokens else None
 
 
 def now() -> str:
@@ -165,10 +191,11 @@ class Tracker:
                 self.db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {kind}")
         self.db.execute("CREATE INDEX IF NOT EXISTS jobs_match ON jobs (match_key)")
         self.db.execute("CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status)")
-        for row in self.db.execute(
-                "SELECT id, company, title FROM jobs WHERE match_key IS NULL").fetchall():
+        for row in self.db.execute(  # Keys from an older matching rule are redone.
+                "SELECT id, company, company_id, title FROM jobs WHERE match_key IS NULL "
+                "OR match_key NOT LIKE ?", (f"{MATCH_VERSION}:%",)).fetchall():
             self.db.execute("UPDATE jobs SET match_key = ? WHERE id = ?",
-                            (match_key(row["company"], row["title"]), row["id"]))
+                            (match_key(row["company_id"] or row["company"], row["title"]), row["id"]))
         for old, new in RENAMED.items():
             self.db.execute("UPDATE jobs SET status = ? WHERE status = ?", (new, old))
         self.db.commit()
@@ -176,8 +203,8 @@ class Tracker:
     # ----- jobs --------------------------------------------------------------
 
     @locked
-    def find_duplicate(self, url: str, company: str | None, title: str | None):
-        """Same posting (system job ID or URL), or the same company and title elsewhere.
+    def find_duplicate(self, url: str, company: str | None, title: str | None, company_id: str | None = None):
+        """Same posting (system job ID or URL), or the same company and role on another board.
 
         Two postings on the same system with different job IDs are different
         jobs even when the titles match (one role in several offices).
@@ -186,7 +213,7 @@ class Tracker:
         row = self.db.execute("SELECT * FROM jobs WHERE job_key = ?", (key,)).fetchone()
         if row:
             return dict(row)
-        same = match_key(company, title)
+        same = match_key(company_id or company, title)
         if not same:
             return None
         system = key.split(":", 1)[0] if identify(url).key else None
@@ -211,7 +238,7 @@ class Tracker:
             "title": title, "location": location, "status": "found",
             "ats": posting.ats, "ats_board": posting.board, "ats_job_id": posting.job_id,
             "details": json.dumps(details) if details is not None else None,
-            "match_key": match_key(company, title),
+            "match_key": match_key(extra.get("company_id") or company, title),
             "created_at": now(), "updated_at": now(), **extra,
         }
         self.db.execute(
@@ -220,6 +247,24 @@ class Tracker:
         )
         self.db.commit()
         return True, None
+
+    @locked
+    def likely_applied(self, job: dict) -> dict | None:
+        """An application you already sent at the same company for what looks like this role:
+        one title's words contain the other's ("MLE" and "Machine Learning Engineer Intern")."""
+        mine = set(title_tokens(job.get("title")))
+        if len(mine) < 2:
+            return None
+        company = normalize(job.get("company_id") or job.get("company"))
+        for row in self.db.execute(
+                "SELECT * FROM jobs WHERE id != ? AND (status = 'submitted' OR applied_via IS NOT NULL)",
+                (job["id"],)):
+            if normalize(row["company_id"] or row["company"]) != company:
+                continue
+            theirs = set(title_tokens(row["title"]))
+            if len(theirs) >= 2 and (theirs <= mine or mine <= theirs):
+                return dict(row)
+        return None
 
     @locked
     def get(self, job_id: int) -> dict | None:

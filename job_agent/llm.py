@@ -39,6 +39,7 @@ TASKS = {
     "cover_letter": ("best", "high"),
     "form_answers": ("best", "medium"),        # answers and essays sent to employers
     "explore": ("best", "medium"),             # agent: fills unfamiliar forms on live sites
+    "discover": ("standard", "low"),           # web searches on job sites; code reads what's found
 }
 DEFAULT_TASK = ("standard", "medium")
 # Per million tokens (input, output), for the spending cap. Cache reads cost a tenth of input.
@@ -102,6 +103,11 @@ class Model:
     def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         raise NotImplementedError
 
+    def web_json(self, system: str, user: str, schema: dict, task: str, domains: list[str],
+                 max_searches: int) -> dict:
+        """Like json(), but Claude may run web searches limited to `domains` first."""
+        raise NotImplementedError
+
 
 # ----- Claude Code (your Claude plan) -------------------------------------------
 
@@ -128,9 +134,11 @@ Tools:
         self.workdir = config.DATA_DIR / "claude-code"
         self.workdir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, system: str, prompt: str, schema: dict, task: str) -> dict:
+    def run(self, system: str, prompt: str, schema: dict, task: str, tools: tuple[str, ...] = ()) -> dict:
         model, effort = self.choose(task)
-        command = [self.executable, "-p", "--output-format", "json", "--tools", "",
+        allowed = ",".join(tools)  # Claude Code's own tools: none, except web search for discovery.
+        command = [self.executable, "-p", "--output-format", "json", "--tools", allowed,
+                   *(["--allowedTools", allowed] if tools else []),
                    "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
                    "--system-prompt", system, "--json-schema", json.dumps(schema),
                    "--model", model, "--effort", effort]
@@ -160,6 +168,14 @@ Tools:
 
     def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
         return self.run(system, user, schema, name)
+
+    def web_json(self, system: str, user: str, schema: dict, task: str, domains: list[str],
+                 max_searches: int) -> dict:
+        prompt = (f"{user}\n\nUse the WebSearch tool, at most {max_searches} times, always with "
+                  f"allowed_domains set to {json.dumps(domains)} (site: in the query is ignored).")
+        value = self.run(system, prompt, schema, task, tools=("WebSearch",))
+        check(value, schema)
+        return value
 
     def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         names = [t["function"]["name"] for t in tools]
@@ -217,7 +233,8 @@ class AnthropicAPI(Model):
         price_in, price_out = PRICES.get(model, PRICES[DEFAULT_API_MODEL])
         fresh = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0) * 1.25
         cached = (getattr(usage, "cache_read_input_tokens", 0) or 0) * 0.1
-        return ((fresh + cached) * price_in + (usage.output_tokens or 0) * price_out) / 1e6
+        searches = getattr(getattr(usage, "server_tool_use", None), "web_search_requests", 0) or 0
+        return ((fresh + cached) * price_in + (usage.output_tokens or 0) * price_out) / 1e6 + searches * 0.01
 
     def finished(self, response, model: str) -> None:
         self.count(self.cost(response.usage, model))
@@ -238,6 +255,26 @@ class AnthropicAPI(Model):
                if model in FALLBACK_MODELS else {}))
         self.finished(response, model)
         return parse_json(next((b.text for b in response.content if b.type == "text"), ""))
+
+    def web_json(self, system: str, user: str, schema: dict, task: str, domains: list[str],
+                 max_searches: int) -> dict:
+        self.check_budget()
+        model, effort = self.choose(task)
+        messages = [{"role": "user", "content": user}]
+        for _ in range(4):  # A long run of searches can pause; sending it back continues it.
+            response = self.client.messages.create(
+                model=model, max_tokens=16000, system=system, messages=messages,
+                output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
+                tools=[{"type": "web_search_20260209", "name": "web_search", "allowed_domains": domains,
+                        "max_uses": max_searches}])
+            if response.stop_reason != "pause_turn":
+                break
+            self.count(self.cost(response.usage, model))
+            messages = [*messages, {"role": "assistant", "content": response.content}]
+        self.finished(response, model)
+        value = parse_json(next((b.text for b in reversed(response.content) if b.type == "text"), ""))
+        check(value, schema)
+        return value
 
     def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         self.check_budget()

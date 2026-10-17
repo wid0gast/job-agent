@@ -112,6 +112,12 @@ def run_task(task: dict, ctx: Context, log) -> str:
         if ctx.llm is None:
             raise ValueError(NOT_SET_UP)
         return planner.run(task["arg"] or "", ctx, ask, log, task["id"])
+    if task["kind"] == "discover":
+        from . import discover
+
+        c = discover.run(ctx.llm, tracker, config.load_profile(), log)
+        return (f"{c['postings']} postings found on job sites; {c['new_boards']} new company boards; "
+                f"{c['new']} new jobs, {c['seen']} already known")
     if task["kind"] == "refresh":
         counts = sources.refresh(tracker, config.load_profile(), boards=True, log=log)
         from . import matching

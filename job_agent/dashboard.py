@@ -354,6 +354,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     <div class="stats">{stats}</div>
     <div class="card" style="margin-top:16px"><div class="row">
       {form(app, "/refresh", "Refresh job lists", primary=True)}
+      {form(app, "/discover", "Discover companies")}
       {form(app, "/prepare-top", "Prepare top matches", extra='<input type=number name=count value=3 min=1 max=20 style="width:70px;margin-right:6px">')}
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
       · {esc(app.connection)}</span>
@@ -1009,6 +1010,12 @@ def handler_for(app: Dashboard):
             if path == "/connect/logout":
                 claude_login.logout()
                 return "Signed out of Claude Code on this computer.", "/connect"
+            if path == "/discover":
+                app.ensure_worker()
+                tracker.add_task("discover")
+                return ("Searching job sites (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, "
+                        "BambooHR, Jobvite, JazzHR, iCIMS) for your roles. Companies found are read on every "
+                        "refresh from now on."), "/"
             if path == "/refresh":
                 app.ensure_worker()
                 tracker.add_task("refresh")
@@ -1188,6 +1195,10 @@ def handler_for(app: Dashboard):
 def serve(settings, port: int = 8770, start_worker: bool = True, host: str = "127.0.0.1") -> None:
     config.ensure_profile()
     app = Dashboard(settings, port)
+    try:  # Filters and the already-applied check may have changed since the last run.
+        sources.apply_filters(app.tracker, config.load_profile())
+    except SystemExit:
+        pass  # No profile yet.
     if start_worker:
         app.ensure_worker()
     server = ThreadingHTTPServer((host, port), handler_for(app))

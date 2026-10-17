@@ -109,6 +109,22 @@ uv run job-agent dashboard        # http://127.0.0.1:8770
    tick "Include senior roles". Hard filters from
    `preferences` in your profile run in code; the Jobs page shows why each
    filtered job is out.
+   **Discover companies** (Today) finds companies the lists don't have: Claude
+   runs up to 10 web searches for your role titles and locations, limited to
+   the sites companies hire through (Greenhouse, Lever, Ashby, Workday,
+   SmartRecruiters, Workable, BambooHR, Jobvite, JazzHR, iCIMS). Each company
+   board found joins `companies.csv` and is read on every refresh from then
+   on; Workday postings, which have no board feed, are added directly. One
+   Sonnet request per run; with an API key, web searches cost $10 per 1,000.
+   **One job, once.** A posting is the same job when it has the same system
+   job ID, or the same company and role on another system ("SWE Intern" on
+   Workday and "Software Engineer Intern - Summer 2027" on Greenhouse).
+   Shorthand is expanded and season, year and degree tags are ignored, but an
+   internship and a full-time role stay different jobs. A job that looks like
+   one you already applied to at that company is filtered out with the reason
+   ("Looks like your application to "MLE""); "Back to found" keeps it.
+   Postings for a season that has passed ("Summer 2026") and remote roles
+   outside the US ("Remote Spain", when you chose Remote) are filtered out too.
    **Ranked jobs** lists them by score. Every job first gets a free, instant
    *keyword* score (its title against your role titles and description;
    words you rule out, like "not marketing", count against it). "Rank the

@@ -8,14 +8,13 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
+# Systems whose job IDs are only unique within one company's board.
+PER_BOARD_IDS = {"workday", "bamboohr", "icims"}
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 # Systems recognized by host only; applying to them is not supported yet.
 HOSTS = {
-    "icims.com": "icims",
     "oraclecloud.com": "oracle",
     "successfactors": "successfactors",
-    "smartrecruiters.com": "smartrecruiters",
-    "jobvite.com": "jobvite",
     "taleo.net": "taleo",
     "eightfold.ai": "eightfold",
 }
@@ -24,7 +23,7 @@ HOSTS = {
 @dataclass(frozen=True)
 class Posting:
     ats: str                 # greenhouse, lever, ashby, workday, ... or "other"
-    board: str | None = None  # Greenhouse board token, Lever/Ashby company slug, Workday tenant/site
+    board: str | None = None  # The company's board: Greenhouse token, Lever/Ashby slug, Workday tenant/site...
     job_id: str | None = None
 
     @property
@@ -32,8 +31,8 @@ class Posting:
         """A stable identity for the posting, or None when the URL has no job ID."""
         if not self.job_id:
             return None
-        if self.ats == "workday":
-            return f"workday:{self.board}:{self.job_id}"
+        if self.ats in PER_BOARD_IDS:
+            return f"{self.ats}:{self.board}:{self.job_id}"
         return f"{self.ats}:{self.job_id}"
 
 
@@ -64,6 +63,30 @@ def identify(url: str) -> Posting:
             match = re.search(r"_([A-Za-z0-9-]+)$", path[-1])
             return Posting("workday", f"{tenant}/{site}", match.group(1) if match else None)
         return Posting("workday", tenant)
+    if host.endswith("smartrecruiters.com") and host != "smartrecruiters.com":
+        # jobs.smartrecruiters.com/<Company>/<id>-<title>
+        match = re.match(r"(\d{6,})", path[1]) if len(path) > 1 else None
+        return Posting("smartrecruiters", path[0] if path else None, match.group(1) if match else None)
+    if host.endswith("workable.com") and host != "workable.com":
+        # apply.workable.com/<account>/j/<shortcode>
+        job = path[2] if len(path) > 2 and path[1] == "j" else None
+        return Posting("workable", path[0] if path else None, job)
+    if host.endswith(".bamboohr.com"):
+        # <company>.bamboohr.com/careers/<id>
+        job = path[1] if len(path) > 1 and path[0] == "careers" and path[1].isdigit() else query.get("id")
+        return Posting("bamboohr", host.split(".")[0], job)
+    if host == "jobs.jobvite.com":
+        # jobs.jobvite.com/<company>/job/<id>
+        job = path[2] if len(path) > 2 and path[1] == "job" else None
+        return Posting("jobvite", path[0] if path else None, job)
+    if host.endswith(".applytojob.com"):
+        # <company>.applytojob.com/apply/<id>/<title>  (JazzHR)
+        job = path[1] if len(path) > 1 and path[0] == "apply" else None
+        return Posting("jazzhr", host.split(".")[0], job)
+    if host.endswith(".icims.com"):
+        # careers-<company>.icims.com/jobs/<id>/<title>/job
+        job = path[1] if len(path) > 1 and path[0] == "jobs" and path[1].isdigit() else None
+        return Posting("icims", host.split(".")[0], job)
     for marker, name in HOSTS.items():
         if marker in host:
             return Posting(name)

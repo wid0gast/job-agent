@@ -33,7 +33,23 @@ def place_tokens(place: str) -> set[str]:
     return set(PLACE_ALIASES.get(city, (city,)))
 
 
-REMOTE_ELSEWHERE = re.compile(r"remote\s*(in|-|,|\()\s*(?=\S)(?!usa|us\b|u\.s|united states|america)", re.I)
+# "Remote in Canada", "Remote - EMEA", "Remote Spain": remote, but not from the US.
+REMOTE_ELSEWHERE = re.compile(
+    r"remote\s*(?:in|-|,|\(|:|–)?\s*(?=[a-z])(?!(?:in\s+)?(?:the\s+)?(?:usa|us\b|u\.s|united states|america)|"
+    r"friendly|first|eligible|ok\b|okay|optional|possible|available|only|work|position|role|option)", re.I)
+# A season with a year in the title: "Summer 2026 Intern", "Fall '27 Co-op".
+SEASON = re.compile(r"\b(spring|summer|fall|autumn|winter)\s*'?(\d{2}|20\d\d)\b", re.I)
+SEASON_ENDS = {"spring": (5, 31), "summer": (8, 31), "fall": (12, 31), "autumn": (12, 31), "winter": (3, 31)}
+
+
+def title_season(title: str) -> tuple[str, datetime] | None:
+    """("Summer 2026", the day that season ends) when the title names one."""
+    match = SEASON.search(title or "")
+    if not match:
+        return None
+    season, year = match.group(1).lower(), int(match.group(2)) % 100 + 2000
+    month, day = SEASON_ENDS[season]
+    return f"{season.title()} {year}", datetime(year, month, day, 23, 59, tzinfo=UTC)
 
 
 def location_ok(job_locations: list[str], wanted: list[str]) -> bool:
@@ -85,6 +101,11 @@ def check(job: dict, details: dict, profile: dict) -> str | None:
         return f"Location: {'; '.join(locations)[:120]}."
     terms = prefs.get("terms") or []
     job_terms = [t for t in details.get("terms", []) if t and t != "N/A"]
+    named = title_season(job.get("title"))
+    if named and named[1] < datetime.now(UTC):
+        return f"{named[0]} has passed."
+    if named and not job_terms:
+        job_terms = [named[0]]  # Board postings have no term field; the title says it.
     if terms and job_terms and not set(terms) & set(job_terms):
         return f"Term: {', '.join(job_terms)}."
     if (job.get("job_type") == "full_time" and not prefs.get("include_senior")

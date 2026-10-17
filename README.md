@@ -15,6 +15,8 @@ and applies only after you approve.
 ## What it does
 
 - **Finds** jobs in the fields you pick, from internships to senior roles: the SimplifyJobs internship and new-grad lists (software, data & AI, hardware, quant, product), plus every role on the job boards of the companies on those lists, refreshed in a few minutes.
+- **Discovers** companies you've never heard of. Most jobs, especially at startups, are never posted on LinkedIn, so Claude searches the job sites companies hire through (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, BambooHR, Jobvite, JazzHR and iCIMS) for your roles, and every board it finds is read on each refresh from then on.
+- **Never counts a job twice:** the same role on two boards is one job, and jobs you've already applied to (even when your job sheet says "MLE" and the posting says "Machine Learning Engineer Intern") are set aside, with the reason shown.
 - **Ranks** every job against what you're looking for: free keyword scores for all of them, then Claude scores the best 120.
 - **Prepares** an application: it reads the full posting, checks your fit requirement by requirement, tailors your resume, researches the company, and drafts every answer, each with its source.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.

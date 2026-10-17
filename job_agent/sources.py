@@ -174,7 +174,153 @@ def ashby_board(client, name: str) -> list[dict]:
     return jobs
 
 
-BOARD_FEEDS = {"greenhouse": greenhouse_board, "lever": lever_board, "ashby": ashby_board}
+def lead(site: str, url: str, company: str, title: str, places: list[str], board: str, job_id: str,
+         posted_at: str | None = None, intern: bool = False) -> dict:
+    """One board posting in the shape refresh() takes."""
+    places = [p for p in places if p]
+    return {"site": site, "url": url, "company": company, "title": title.strip(),
+            "location": "; ".join(places), "active": True, "posted_at": posted_at,
+            "job_type": "internship" if intern or guess_job_type(title) == "internship" else "full_time",
+            "details": {"locations": places}, "board": board, "job_id": job_id}
+
+
+def place(*parts) -> str:
+    return ", ".join(p for p in parts if p)
+
+
+def workable_board(client, account: str) -> list[dict]:
+    """apply.workable.com/<account>: Workable's public jobs feed, page by page."""
+    jobs, body = [], {"query": "", "location": [], "department": [], "worktype": [], "remote": []}
+    for _ in range(10):
+        response = client.post(f"https://apply.workable.com/api/v3/accounts/{account}/jobs", json=body)
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        data = response.json()
+        for item in data.get("results", []):
+            if item.get("state", "published") != "published":
+                continue
+            where = item.get("location") or {}
+            places = [place(where.get("city"), where.get("region"), where.get("country"))]
+            if item.get("remote"):
+                places.append("Remote")
+            jobs.append(lead("workable", f"https://apply.workable.com/{account}/j/{item['shortcode']}/", account,
+                             item["title"], places, account, item["shortcode"], item.get("published"),
+                             item.get("type") == "internship"))
+        if not data.get("nextPage"):
+            break
+        body = {**body, "token": data["nextPage"]}
+    return jobs
+
+
+def smartrecruiters_board(client, company: str) -> list[dict]:
+    """jobs.smartrecruiters.com/<Company>: SmartRecruiters' public postings API."""
+    jobs = []
+    for offset in range(0, 1000, 100):
+        response = client.get(f"https://api.smartrecruiters.com/v1/companies/{company}/postings",
+                              params={"limit": 100, "offset": offset})
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        data = response.json()
+        for item in data.get("content", []):
+            where = item.get("location") or {}
+            places = [where.get("fullLocation") or place(where.get("city"), where.get("region"), where.get("country"))]
+            if where.get("remote"):
+                places.append("Remote")
+            kind = ((item.get("typeOfEmployment") or {}).get("label") or "").lower()
+            jobs.append(lead("smartrecruiters", f"https://jobs.smartrecruiters.com/{company}/{item['id']}",
+                             (item.get("company") or {}).get("name") or company, item["name"], places, company,
+                             item["id"], item.get("releasedDate"), "intern" in kind))
+        if offset + 100 >= data.get("totalFound", 0):
+            break
+    return jobs
+
+
+def bamboohr_board(client, company: str) -> list[dict]:
+    """<company>.bamboohr.com/careers: BambooHR's careers list (JSON for real BambooHR customers)."""
+    response = client.get(f"https://{company}.bamboohr.com/careers/list")
+    if response.status_code == 404 or "json" not in response.headers.get("content-type", ""):
+        return []
+    response.raise_for_status()
+    jobs = []
+    for item in response.json().get("result", []):
+        where = item.get("atsLocation") or item.get("location") or {}
+        places = [place(where.get("city"), where.get("state"), where.get("country"))]
+        if item.get("isRemote"):
+            places.append("Remote")
+        title = item.get("jobOpeningName") or ""
+        jobs.append(lead("bamboohr", f"https://{company}.bamboohr.com/careers/{item['id']}", company, title,
+                         places, company, str(item["id"]),
+                         intern="intern" in (item.get("employmentStatusLabel") or "").lower()))
+    return jobs
+
+
+def strip(text: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", text or ""))).strip()
+
+
+def jobvite_board(client, company: str) -> list[dict]:
+    """jobs.jobvite.com/<company>/jobs: the careers page's job table (no public API)."""
+    response = client.get(f"https://jobs.jobvite.com/{company}/jobs")
+    if response.status_code == 404:
+        return []
+    response.raise_for_status()
+    jobs = []
+    for row in re.findall(r"<tr>(.*?)</tr>", response.text, re.S):
+        link = re.search(rf'href="/{re.escape(company)}/job/([A-Za-z0-9]+)"[^>]*>(.*?)</a>', row, re.S)
+        if not link:
+            continue
+        where = re.search(r'jv-job-list-location">(.*?)</td>', row, re.S)
+        jobs.append(lead("jobvite", f"https://jobs.jobvite.com/{company}/job/{link.group(1)}", company,
+                         strip(link.group(2)), [strip(where.group(1)) if where else ""], company, link.group(1)))
+    return jobs
+
+
+def jazzhr_board(client, company: str) -> list[dict]:
+    """<company>.applytojob.com/apply: a JazzHR careers page (no public API)."""
+    response = client.get(f"https://{company}.applytojob.com/apply")
+    if response.status_code == 404:
+        return []
+    response.raise_for_status()
+    jobs = []
+    for block in re.findall(r"list-group-item-heading'>(.*?)</ul>", response.text, re.S):
+        link = re.search(r'href="(https?://[^"]+/apply/([A-Za-z0-9]+)/[^"]*)"[^>]*>(.*?)</a>', block, re.S)
+        if not link:
+            continue
+        where = re.search(r"fa-map-marker'></i>(.*?)</li>", block, re.S)
+        jobs.append(lead("jazzhr", link.group(1), company, strip(link.group(3)),
+                         [strip(where.group(1)) if where else ""], company, link.group(2)))
+    return jobs
+
+
+def icims_board(client, board: str) -> list[dict]:
+    """careers-<company>.icims.com: iCIMS's job search pages (no public API)."""
+    jobs, seen = [], set()
+    for page in range(10):
+        response = client.get(f"https://{board}.icims.com/jobs/search", params={"ss": 1, "in_iframe": 1, "pr": page})
+        if response.status_code == 404:
+            return jobs
+        response.raise_for_status()
+        found = 0
+        for block in re.split(r'class="row"', response.text):
+            link = re.search(r'href="(https://[^"]+/jobs/(\d+)/[^"]+)"[^>]*title="\d+ - ([^"]+)"', block)
+            if not link or link.group(2) in seen:
+                continue
+            seen.add(link.group(2))
+            found += 1
+            where = re.search(r"Job Locations</span>\s*<span[^>]*>(.*?)</span>", block, re.S)
+            jobs.append(lead("icims", link.group(1).replace("?in_iframe=1", ""), board.removeprefix("careers-"),
+                             html.unescape(link.group(3)), [strip(where.group(1)) if where else ""], board,
+                             link.group(2)))
+        if not found:
+            break
+    return jobs
+
+
+BOARD_FEEDS = {"greenhouse": greenhouse_board, "lever": lever_board, "ashby": ashby_board,
+               "workable": workable_board, "smartrecruiters": smartrecruiters_board, "bamboohr": bamboohr_board,
+               "jobvite": jobvite_board, "jazzhr": jazzhr_board, "icims": icims_board}
 
 
 def guess_job_type(title: str) -> str:
@@ -205,37 +351,34 @@ def matches_field(title: str, fields: list[str]) -> bool:
     return any(re.search(rf"\b({FIELDS[f][2]})\b", title or "", re.I) for f in fields if f in FIELDS)
 
 
-def refresh(tracker, profile: dict, boards: bool = False, log=print) -> dict:
-    """Pull the lists into the tracker. New jobs are 'found'; closed ones drop out."""
-    fields = chosen_fields(profile)
-    companies = Companies()
-    counts = {"new": 0, "closed": 0, "seen": 0, "boards": 0}
-    with http() as client:
-        jobs = simplify_jobs(client, [f for f in fields if f in FIELDS])
-        log(f"Simplify lists: {len(jobs)} postings ({', '.join(FIELDS[f][0] if f in FIELDS else 'other roles' for f in fields)})")
-        if boards:
-            # Company names from the lists are better than board slugs.
-            names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}
-            def read(ats_row):
-                ats, row = ats_row
-                try:
-                    return ats, row, BOARD_FEEDS[ats](client, row["board"]), None
-                except Exception as error:  # noqa: BLE001 - one bad board shouldn't stop a refresh.
-                    return ats, row, [], error
+def read_boards(client, todo: list[tuple[str, dict]], fields: list[str], counts: dict, log=print,
+                names: dict | None = None) -> list[dict]:
+    """Every posting on these (ats, company row) boards that's in your fields."""
+    def read(ats_row):
+        ats, row = ats_row
+        try:
+            return ats, row, BOARD_FEEDS[ats](client, row["board"]), None
+        except Exception as error:  # noqa: BLE001 - one bad board shouldn't stop a refresh.
+            return ats, row, [], error
 
-            todo = [(ats, row) for ats in BOARD_FEEDS for row in companies.boards(ats)]
-            # Polite parallelism: a few boards at a time, each a single request.
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                for ats, row, board_jobs, error in pool.map(read, todo):
-                    if error:
-                        log(f"  {ats} board {row['board']}: {error}")
-                        continue
-                    for job in board_jobs:
-                        if matches_field(job["title"], fields):
-                            job["company"] = names.get((ats, row["board"]), row["name"])
-                            jobs.append(job)
-                    counts["boards"] += 1
-            log(f"Company boards read: {counts['boards']}")
+    jobs = []
+    # Polite parallelism: a few boards at a time, each a single request.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for ats, row, board_jobs, error in pool.map(read, todo):
+            if error:
+                log(f"  {ats} board {row['board']}: {error}")
+                continue
+            for job in board_jobs:
+                if matches_field(job["title"], fields):
+                    # Company names from the lists (or the company list) are better than board slugs.
+                    job["company"] = (names or {}).get((ats, row["board"]), row["name"])
+                    jobs.append(job)
+            counts["boards"] += 1
+    return jobs
+
+
+def ingest(tracker, companies, jobs: list[dict], fields: list[str], counts: dict) -> None:
+    """Add new postings as found; close ones the lists show as closed; skip ones already known."""
     # A URL can appear twice (reposted, or on both lists); any active copy keeps it open.
     live = {job_key(j["url"]) for j in jobs if j["active"]}
     for job in jobs:
@@ -254,26 +397,62 @@ def refresh(tracker, profile: dict, boards: bool = False, log=print) -> dict:
         company_id = companies.record(job["company"], ats=posting.ats if board else "",
                                       board=board or "", source=job["site"],
                                       tags=",".join(fields))
-        if tracker.find_duplicate(job["url"], job["company"], job["title"]):
+        if tracker.find_duplicate(job["url"], job["company"], job["title"], company_id):
             counts["seen"] += 1
             continue
         tracker.add_lead(job.pop("url"), job.pop("site"), job.pop("company"), job.pop("title"),
                          job.pop("location"), company_id=company_id,
                          ats_board=board, **job)
         counts["new"] += 1
+
+
+def refresh(tracker, profile: dict, boards: bool = False, log=print) -> dict:
+    """Pull the lists into the tracker. New jobs are 'found'; closed ones drop out."""
+    fields = chosen_fields(profile)
+    companies = Companies()
+    counts = {"new": 0, "closed": 0, "seen": 0, "boards": 0}
+    with http() as client:
+        jobs = simplify_jobs(client, [f for f in fields if f in FIELDS])
+        log(f"Simplify lists: {len(jobs)} postings ({', '.join(FIELDS[f][0] if f in FIELDS else 'other roles' for f in fields)})")
+        if boards:
+            names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}
+            todo = [(ats, row) for ats in BOARD_FEEDS for row in companies.boards(ats)]
+            jobs += read_boards(client, todo, fields, counts, log, names)
+            log(f"Company boards read: {counts['boards']}")
+    ingest(tracker, companies, jobs, fields, counts)
     companies.save()
     reassign(tracker)  # Aliases may have changed: keep caps counting by one company ID.
     counts["filtered"] = apply_filters(tracker, profile)
     return counts
 
 
+APPLIED = "Looks like your application"  # The reason given when a job matches one you sent.
+
+
+def applied_reason(tracker, job: dict) -> str | None:
+    """'Looks like your application to "MLE" (2026-09-12)': the same role at the same company."""
+    if job.get("reason") == "Requeued by you.":
+        return None  # You said it's a different job.
+    sent = tracker.likely_applied(job)
+    if not sent:
+        return None
+    when = (sent.get("submitted_at") or "")[:10]
+    return f'{APPLIED} to "{sent["title"]}"' + (f" ({when})" if when else "") + "."
+
+
 def apply_filters(tracker, profile: dict) -> int:
-    """Re-run the hard filters on unscored jobs, so profile changes take effect."""
+    """Re-run the hard filters on unscored jobs, so profile changes take effect, and set aside
+    jobs that look like ones you've already applied to."""
     moved = 0
     for job in tracker.with_status("found", "filtered_out"):
-        if job["fit_score"] is not None:
-            continue  # Filtered by fit or caps, not by these rules.
-        reason = filters.check(job, json.loads(job["details"] or "{}"), profile)
+        if job["fit_score"] is not None:  # Filtered by fit or caps, not by these rules...
+            reason = applied_reason(tracker, job) if job["status"] == "found" else None
+            if reason:  # ...but an application you already sent counts whatever the score.
+                tracker.update(job["id"], status="filtered_out", reason=reason)
+                moved += 1
+            continue
+        reason = (filters.check(job, json.loads(job["details"] or "{}"), profile)
+                  or applied_reason(tracker, job))
         if reason and job["status"] == "found":
             tracker.update(job["id"], status="filtered_out", reason=reason)
             moved += 1

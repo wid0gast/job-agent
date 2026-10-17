@@ -81,6 +81,11 @@ class Companies:
             self.dirty = True
         return company_id
 
+    def by_board(self, ats: str, board: str) -> str | None:
+        """The company already known to own this job board, if any."""
+        return next((cid for cid, r in self.rows.items()
+                     if r.get("ats") == ats and (r.get("board") or "").lower() == board.lower()), None)
+
     def boards(self, ats: str) -> list[dict]:
         return [r for r in self.rows.values() if r.get("ats") == ats and r.get("board")]
 

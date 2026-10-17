@@ -116,7 +116,7 @@ def import_sheet(path: Path, tracker: Tracker, status: str | None = None) -> dic
             f"{header[i]}: {cell(row, i)}" for i in extras if cell(row, i)]))
         if cell(row, mine) and outcome == "applied" and not re.search(r"appl|submit", cell(row, mine), re.I):
             note = "; ".join(filter(None, [note, f"Status in sheet: {cell(row, mine)}"]))
-        job = tracker.by_key(job_key(url)) or tracker.find_duplicate(url, name, title)
+        job = tracker.by_key(job_key(url)) or tracker.find_duplicate(url, name, title, registry.resolve(name))
         if job is None:
             tracker.add_lead(url, "imported", name, title, "", company_id=registry.resolve(name))
             job = tracker.by_key(job_key(url))
