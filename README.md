@@ -14,7 +14,7 @@ and applies only after you approve.
 
 ## What it does
 
-- **Finds** internships and full-time roles in data science, ML and AI: the SimplifyJobs lists plus about 950 company job boards, refreshed in about 3 minutes.
+- **Finds** internships and new-grad roles in your field: the SimplifyJobs lists (software, data & AI, hardware, quant and product) plus the job boards of the companies on them, refreshed in a few minutes.
 - **Ranks** every job against what you're looking for: free keyword scores for all of them, then Claude scores the best 120.
 - **Prepares** an application: it reads the full posting, checks your fit requirement by requirement, tailors your resume, researches the company, and drafts every answer, each with its source.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.
@@ -80,6 +80,7 @@ uv run job-agent dashboard     # opens on http://127.0.0.1:8770
 ```
 
 The dashboard walks you through the rest: connect Claude, upload your resume, describe the jobs you want.
+To choose your fields, set `fields` in `profile/profile.yaml`: any of `software`, `ai_ml_data`, `hardware`, `quant` and `product`.
 No resume handy? Try [`examples/jane-doe-resume.pdf`](examples/jane-doe-resume.pdf), a made-up candidate.
 
 For resumes in your own LaTeX style, also install [Tectonic](https://tectonic-typesetting.github.io/) (`brew install tectonic`).

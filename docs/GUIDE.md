@@ -95,7 +95,9 @@ uv run job-agent dashboard        # http://127.0.0.1:8770
 0. **Search**: describe in your own words what you're looking for, set the
    filters (internship/full-time, locations, seasons, posting age,
    exclusions) and the fit threshold. Saved to `profile/search.yaml`.
-1. **Refresh** pulls Simplify's internship and new-grad lists (AI/ML/Data)
+1. **Refresh** pulls Simplify's internship and new-grad lists for your
+   fields (`fields` in `profile/profile.yaml`: `software`, `ai_ml_data`,
+   `hardware`, `quant`, `product`; the example starts with `ai_ml_data`)
    and the Greenhouse, Lever and Ashby boards of companies seen there. Hard filters from
    `preferences` in your profile run in code; the Jobs page shows why each
    filtered job is out.
