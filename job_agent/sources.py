@@ -1,5 +1,10 @@
 """The master job list: Simplify's GitHub lists plus company boards.
 
+You pick the fields on the Search page (FIELDS). Simplify's lists (internships and
+new-grad roles) are filtered by their category; company boards list every role at
+those companies, at every level, so their titles are matched instead, and "other"
+keeps roles outside these fields (sales, operations, finance...).
+
 Simplify publishes its lists as JSON (.github/scripts/listings.json), so no
 table parsing. Downloads use ETags, so an unchanged list costs one request.
 """
@@ -22,8 +27,30 @@ LISTS = {
 }
 GREENHOUSE_API = "https://boards-api.greenhouse.io/v1/boards"
 CACHE = config.DATA_DIR / "cache"
+# Field -> (label, words in Simplify's category, words in a board job's title).
 # Simplify's category names have varied between list versions.
-FIELD_WORDS = {"ai_ml_data": ("ai", "machine learning", "data")}
+FIELDS = {
+    "software": ("Software", ("software",),
+                 r"software|engineer(ing)?|developer|swe|sde|back-?end|front-?end|full[- ]?stack|devops|"
+                 r"site reliability|sre|platform|infrastructure|mobile|ios|android|security|cloud|web"),
+    "ai_ml_data": ("Data & AI", ("ai", "machine learning", "data"),
+                   r"machine learning|ml|ai|artificial intelligence|data|deep learning|nlp|computer vision|"
+                   r"research scientist|applied scientist|llm|analytics"),
+    "hardware": ("Hardware", ("hardware",),
+                 r"hardware|electrical|embedded|firmware|asic|fpga|rf|mechanical|robotics|silicon|chip|"
+                 r"circuit|semiconductor|manufacturing"),
+    "quant": ("Quant", ("quant", "quantitative"), r"quant|quantitative|trader|trading"),
+    "product": ("Product", ("product",), r"product|program manager|ux|ui designer|design"),
+}
+OTHER = "other"  # Board roles in none of the fields above.
+ALL_FIELDS = [*FIELDS, OTHER]
+FIELD_WORDS = {key: words for key, (_, words, _) in FIELDS.items()}
+
+
+def chosen_fields(profile: dict) -> list[str]:
+    """The fields on the Search page; none chosen means every field and role."""
+    fields = [f for f in (profile.get("preferences", {}).get("fields") or []) if f in ALL_FIELDS]
+    return fields or ALL_FIELDS
 
 
 def http():
@@ -172,22 +199,20 @@ def board_of(job: dict) -> str | None:
 
 
 def matches_field(title: str, fields: list[str]) -> bool:
-    """Board feeds have no category, so match AI/ML/data roles by title."""
-    if "ai_ml_data" not in fields:
+    """Board feeds have no category, so a job's title decides its field."""
+    if OTHER in fields:
         return True
-    return bool(re.search(
-        r"\b(machine learning|ml|ai|artificial intelligence|data|deep learning|nlp|"
-        r"computer vision|research scientist|applied scientist|llm|analytics)\b", title, re.I))
+    return any(re.search(rf"\b({FIELDS[f][2]})\b", title or "", re.I) for f in fields if f in FIELDS)
 
 
 def refresh(tracker, profile: dict, boards: bool = False, log=print) -> dict:
     """Pull the lists into the tracker. New jobs are 'found'; closed ones drop out."""
-    fields = profile.get("preferences", {}).get("fields") or ["ai_ml_data"]
+    fields = chosen_fields(profile)
     companies = Companies()
     counts = {"new": 0, "closed": 0, "seen": 0, "boards": 0}
     with http() as client:
-        jobs = simplify_jobs(client, fields)
-        log(f"Simplify lists: {len(jobs)} {'/'.join(fields)} postings")
+        jobs = simplify_jobs(client, [f for f in fields if f in FIELDS])
+        log(f"Simplify lists: {len(jobs)} postings ({', '.join(FIELDS[f][0] if f in FIELDS else 'other roles' for f in fields)})")
         if boards:
             # Company names from the lists are better than board slugs.
             names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}

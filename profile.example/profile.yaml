@@ -7,20 +7,23 @@
 # This folder (profile/) is gitignored and stays on your machine, but its
 # contents are sent to Claude while applying.
 
+# The Search page sets most preferences (what you want, fields, filters); values
+# saved there win over these.
 preferences:
-  roles: ["Machine Learning Intern", "Data Science Intern", "AI Research Intern"]
+  roles: []                        # Role titles you want, e.g. ["Backend Engineer"].
   # Hard filters (applied in code before any model call). Leave a list empty for no filter.
-  fields: [ai_ml_data]             # Simplify categories to pull.
+  fields: []                       # software, ai_ml_data, hardware, quant, product, other. Empty: all.
   job_types: [internship, full_time]
-  terms: ["Summer 2027"]           # Internship seasons; full-time roles have none.
-  locations: ["New York, NY", "Remote"]   # Or [any].
+  include_senior: false            # true: keep senior, staff, principal and manager roles.
+  terms: []                        # Internship seasons, e.g. ["Summer 2027"]; full-time roles have none.
+  locations: [any]                 # Or e.g. ["New York, NY", "Remote"].
   max_posting_age_days: 45
   exclude_title_words: []
-  start_date: June 2027
+  start_date: ""                   # When you can start, e.g. June 2027.
   willing_to_relocate: true
   salary_expectation: ""           # Leave blank to have the agent ask or skip.
   exclude_companies: []
-  notes: Prefer early-stage startups and AI teams.
+  notes: ""
 
 # Voluntary demographic questions. Remove a line to always decline that one.
 # Unlisted demographic questions are declined automatically.

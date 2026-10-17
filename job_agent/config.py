@@ -102,8 +102,8 @@ def load_profile() -> dict:
     return profile
 
 
-SEARCH_KEYS = ("description", "roles", "job_types", "locations", "terms", "max_posting_age_days",
-               "exclude_companies", "exclude_title_words", "fit_threshold", "resume_pages")
+SEARCH_KEYS = ("description", "roles", "fields", "job_types", "include_senior", "locations", "terms",
+               "max_posting_age_days", "exclude_companies", "exclude_title_words", "fit_threshold", "resume_pages")
 
 
 def load_search() -> dict:
@@ -140,6 +140,31 @@ def load_answers() -> dict:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+# Profile files you can edit on the Profile page, and how each is checked.
+EDITABLE = {"profile.yaml": "yaml", "answers.yaml": "yaml", "story-bank.md": "text", "writing-sample.md": "text"}
+
+
+def save_profile_file(name: str, content: str) -> None:
+    """Save one profile file from the dashboard; YAML must parse into a mapping first."""
+    if name not in EDITABLE:
+        raise ValueError(f"{name} can't be edited here.")
+    text = content.replace("\r\n", "\n").rstrip() + "\n"
+    if EDITABLE[name] == "yaml":
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as error:
+            mark = getattr(error, "problem_mark", None)
+            where = f" (line {mark.line + 1})" if mark else ""
+            raise ValueError(f"{name} wasn't saved: it isn't valid YAML{where}. "
+                             f"{getattr(error, 'problem', '') or error}") from None
+        if data is not None and not isinstance(data, dict):
+            raise ValueError(f"{name} wasn't saved: it must be a set of key: value lines.")
+        if name == "profile.yaml" and not isinstance((data or {}).get("preferences", {}), dict):
+            raise ValueError("profile.yaml wasn't saved: preferences must be a set of key: value lines.")
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    (PROFILE_DIR / name).write_text(text, encoding="utf-8")
 
 
 def read_optional(name: str) -> str | None:

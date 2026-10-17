@@ -424,6 +424,25 @@ def accept() -> Path | None:
     return backup
 
 
+def save_master(markdown: str) -> Path | None:
+    """Your own edit of the master resume. Returns where the previous master was saved."""
+    text = markdown.replace("\r\n", "\n").strip()
+    if not text:
+        raise ValueError("The resume is empty; nothing was saved.")
+    master = config.PROFILE_DIR / "resume.md"
+    backup = None
+    if master.exists():
+        if master.read_text(encoding="utf-8").strip() == text:
+            raise ValueError("No changes to save.")
+        history = config.PROFILE_DIR / "resume-history"
+        history.mkdir(exist_ok=True)
+        backup = history / f"resume-{datetime.now():%Y%m%d-%H%M%S}.md"
+        shutil.copy(master, backup)
+    master.parent.mkdir(parents=True, exist_ok=True)
+    master.write_text(text + "\n", encoding="utf-8")
+    return backup
+
+
 def discard() -> None:
     for path in proposal_paths():
         path.unlink(missing_ok=True)

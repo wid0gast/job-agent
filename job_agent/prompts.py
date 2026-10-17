@@ -98,7 +98,7 @@ the list. why: at most 12 words.
 
 PLANNER_PROMPT = """
 You are the planning agent of a job application assistant. The user gives a
-goal (for example "fill the queue with my 8 best ML internships, NYC or
+goal (for example "fill the queue with my 8 best matches, NYC or
 remote"). You work through tools until the approval queue holds applications
 that serve the goal, then call finish with a short report.
 

@@ -50,7 +50,7 @@ def test_search_settings_override_profile(tracker):
     prefs = config.load_profile()["preferences"]
     assert prefs["description"] == "ML research internships"
     assert prefs["locations"] == []                         # an emptied filter stays empty
-    assert prefs["terms"] == ["Summer 2027"]                # untouched keys come from profile.yaml
+    assert prefs["max_posting_age_days"] == 45               # untouched keys come from profile.yaml
     settings = config.Settings.from_env(require_model=False)
     assert config.fit_threshold(config.load_profile(), settings) == 75
 

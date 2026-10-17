@@ -205,7 +205,7 @@ class Dashboard:
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False) -> bytes:
     links = [("/", "Today"), ("/search", "Search"), ("/jobs", "Ranked jobs"),
              ("/queue", "Approval queue"), ("/applications", "Applications"),
-             ("/resumes", "Resumes"), ("/activity", "Activity")]
+             ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity")]
     nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
@@ -360,7 +360,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     </div></div>
     <div class="card"><h2>Give the agent a goal</h2>
     <form method=post action="/plan"><input type=hidden name=token value="{app.token}">
-    <textarea name=goal rows=2 required placeholder="Fill the queue with my 8 best ML internships, NYC or remote. One per company."></textarea>
+    <textarea name=goal rows=2 required placeholder="Fill the queue with my 8 best matches, NYC or remote. One per company."></textarea>
     <div class=row style="margin-top:8px"><button class=primary>Start the agent</button>
     <span class=muted>It finds, ranks, prepares and reviews applications, and asks you if it needs to. You still approve every one.</span></div></form></div>
     <div class="card"><h2>Tasks</h2><table><tr><th>#</th><th>Task</th><th>Status</th><th>Result</th></tr>
@@ -464,16 +464,28 @@ def page_search(app: Dashboard, flash: str) -> bytes:
     checks = "".join(f'<label class=row style="gap:6px"><input type=checkbox name=job_types value="{t}"'
                      f'{" checked" if t in types else ""}> {label}</label>'
                      for t, label in (("internship", "Internships"), ("full_time", "Full-time")))
+    checks += (f'<label class=row style="gap:6px"><input type=checkbox name=include_senior value=1'
+               f'{" checked" if prefs.get("include_senior") else ""}> Include senior roles '
+               f'<span class=muted>(senior, staff, principal, manager, director)</span></label>')
+    chosen = sources.chosen_fields({"preferences": prefs})
+    field_boxes = "".join(
+        f'<label class=row style="gap:6px"><input type=checkbox name=fields value="{key}"'
+        f'{" checked" if key in chosen else ""}> {label}</label>'
+        for key, label in [*((k, v[0]) for k, v in sources.FIELDS.items()),
+                           (sources.OTHER, "Other roles <span class=muted>(sales, operations, finance…)</span>")])
     body = f"""<h1>Search</h1>
     <form method=post action="/search"><input type=hidden name=token value="{app.token}">
     <div class=card><h2>What are you looking for?</h2>
     <p class=muted>In your own words: roles, fields, kinds of teams or companies, anything that makes a job
     right or wrong for you. Used to rank jobs and to judge fit when preparing.</p>
-    <textarea name=description style="min-height:130px" placeholder="e.g. ML research or applied ML internships, especially NLP and LLM evaluation. Data science roles are fine too. Prefer AI-first startups and research labs; not interested in pure analytics or marketing roles.">{esc(prefs.get("description", ""))}</textarea>
+    <textarea name=description style="min-height:130px" placeholder="e.g. Backend or full-stack engineering roles at product-focused startups, mostly Python or Go. Data engineering is fine too. Not interested in consulting or sales roles.">{esc(prefs.get("description", ""))}</textarea>
     <p style="margin:12px 0 4px"><b>Role titles</b> <span class=muted>(comma-separated)</span></p>
     <input type=text name=roles value="{listed('roles')}"></div>
 
     <div class=card><h2>Filters</h2><p class=muted>Applied in code before any model call; filtered jobs show the reason.</p>
+    <p style="margin:0 0 4px"><b>Fields</b> <span class=muted>(the job lists to pull; changing them refreshes the lists)</span></p>
+    <div class=row style="gap:18px;margin-bottom:12px">{field_boxes}</div>
+    <p style="margin:0 0 4px"><b>Job types</b></p>
     <div class=row style="gap:18px">{checks}</div>
     <p style="margin:12px 0 4px"><b>Locations</b> <span class=muted>(one per line; "Remote" means remote in the US; "any" for no filter)</span></p>
     <textarea name=locations style="min-height:70px">{listed('locations', chr(10))}</textarea>
@@ -676,10 +688,6 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
         <div class=row style="margin-top:8px"><button>Save edits</button>
         <span class=muted>The truth checks run again on your edits.</span></div></form></details></div>"""
     master = resumes.current_master()
-    derived = config.PROFILE_DIR / "resume-profile.yaml"
-    facts = (f'<div class=card><h2>Profile from your resume</h2><p class=muted>Used to answer '
-             f'application questions. Updated each time you accept a master resume.</p>'
-             f'<pre>{esc(derived.read_text(encoding="utf-8"))}</pre></div>') if derived.exists() else ""
     body = f"""<h1>Resumes</h1>
     <div class=card><h2>Add resumes</h2>
     <p class=muted>Upload one or more resume PDFs. Each is read and turned into Markdown with its
@@ -695,12 +703,65 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
     {"".join(rows) or '<tr><td colspan=3 class=muted>None yet.</td></tr>'}</table>
     {'<div class=row style="margin-top:12px">' + form(app, "/resumes/merge", "Merge again") + '</div>' if versions else ''}</div>
     {review}
-    {facts}
-    <div class=card><h2>Current master resume</h2>
-    {f"<pre>{esc(master)}</pre>" if master else '<p class=muted>None yet. Upload your resume above and accept the proposal.</p>'}</div>"""
+    <div class=card><h2>Your master resume</h2>
+    <p class=muted>{"Everything true you might ever include; each application gets a tailored cut of it. "
+                    "Edit it any time: the previous version goes to profile/resume-history/, and your "
+                    '<a href="/profile">profile</a> facts are updated from it.' if master else
+                    "None yet. Upload your resume above and accept the proposal, or write it here in Markdown "
+                    "(# Name, ## Sections, ### Roles, - bullets)."}</p>
+    <form method=post action="/resumes/master"><input type=hidden name=token value="{app.token}">
+    <textarea name=markdown style="min-height:520px;font:12.5px/1.55 ui-monospace,monospace"
+    placeholder="# Your Name&#10;City · email · phone · links&#10;&#10;## Experience&#10;### Role — Company&#10;- What you did and its result">{esc(master or "")}</textarea>
+    <div class=row style="margin-top:10px"><button class=primary>Save master resume</button></div></form></div>"""
     running = any(t["status"] in ("queued", "running") and t["kind"] in ("import_resume", "merge_resumes")
                   for t in app.tracker.tasks(10))
     return layout(app, "/resumes", body, flash, refresh=running)
+
+
+def shown(path) -> str:
+    """A path as you'd recognise it: relative to the app's folder when it's inside it."""
+    return str(path.relative_to(config.HOME)) if path.is_relative_to(config.HOME) else path.name
+
+
+PROFILE_SECTIONS = [
+    ("profile.yaml", "Profile settings",
+     "Preferences, standard answers (start date, how you heard about the job, salary), work authorization and "
+     "voluntary demographic answers. Anything here also overrides a fact from your resume, e.g. "
+     "<code>contact: {phone: \"+1 555 0100\"}</code>. The Search page's settings win over these preferences."),
+    ("answers.yaml", "Saved answers",
+     "Answers you ticked \"remember\" on, reused for the same question on later applications."),
+    ("story-bank.md", "Story bank",
+     "Real examples from your work, for essay questions (\"Tell us about a time…\"). Only these are used."),
+    ("writing-sample.md", "Writing sample",
+     "A few paragraphs you wrote, so cover letters sound like you."),
+]
+
+
+def page_profile(app: Dashboard, flash: str) -> bytes:
+    """Everything about you, editable any time; facts from the resume shown as the base."""
+    derived = config.PROFILE_DIR / "resume-profile.yaml"
+    facts = (f'<div class=card><h2>From your resume</h2><p class=muted>Your name, contact details, links, education '
+             f'and work authorization, read from your <a href="/resumes">master resume</a> each time it changes. '
+             f'To change one, edit the resume, or override it in Profile settings below.</p>'
+             f'<pre>{esc(derived.read_text(encoding="utf-8"))}</pre></div>') if derived.exists() else (
+        '<div class=card><h2>From your resume</h2><p class=muted>Nothing yet: add your '
+        '<a href="/resumes">master resume</a> and your details are read from it.</p></div>')
+    cards = []
+    for name, title, help_text in PROFILE_SECTIONS:
+        text = config.read_optional(name) or ""
+        mono = config.EDITABLE[name] == "yaml"
+        cards.append(
+            f'<div class=card><h2>{title} <span class=muted style="font-weight:500">profile/{name}</span></h2>'
+            f'<p class=muted>{help_text}</p><form method=post action="/profile/save">'
+            f'<input type=hidden name=token value="{app.token}"><input type=hidden name=file value="{name}">'
+            f'<textarea name=content style="min-height:{360 if mono else 200}px;'
+            f'{"font:12.5px/1.55 ui-monospace,monospace" if mono else ""}">{esc(text)}</textarea>'
+            f'<div class=row style="margin-top:10px"><button class=primary>Save</button></div></form></div>')
+    body = f"""<h1>Profile</h1>
+    <p class=muted style="margin-top:-8px">Stays on your computer; sent to Claude only to tailor resumes and answer
+    application questions.</p>
+    {facts}{"".join(cards)}"""
+    return layout(app, "/profile", body, flash)
 
 
 OUTCOME_NAMES = {"applied": "applied, no answer yet", "oa": "online assessment", "interview": "interview",
@@ -865,6 +926,8 @@ def handler_for(app: Dashboard):
                 return self.send(page_activity(app))
             if url.path == "/search":
                 return self.send(page_search(app, flash))
+            if url.path == "/profile":
+                return self.send(page_profile(app, flash))
             if url.path == "/connect":
                 return self.send(page_connect(app, flash))
             if url.path == "/resumes":
@@ -980,10 +1043,14 @@ def handler_for(app: Dashboard):
 
                 threshold = int(one.get("fit_threshold") or app.settings.fit_threshold)
                 age = one.get("max_posting_age_days", "").strip()
+                fields_before = sources.chosen_fields(config.load_profile())
                 config.save_search({
                     "description": one.get("description", "").strip(),
                     "roles": words("roles"),
+                    # Every field ticked is the same as none: no field filter.
+                    "fields": [] if set(fields.get("fields", [])) >= set(sources.ALL_FIELDS) else fields.get("fields", []),
                     "job_types": fields.get("job_types", []),
+                    "include_senior": "include_senior" in fields,
                     "locations": [l.strip() for l in one.get("locations", "").splitlines() if l.strip()],
                     "terms": words("terms"),
                     "max_posting_age_days": int(age) if age.isdigit() else None,
@@ -999,6 +1066,11 @@ def handler_for(app: Dashboard):
                 for job in tracker.with_status("filtered_out"):
                     if (job["reason"] or "").startswith("Fit ") and (job["fit_score"] or 0) >= threshold:
                         tracker.update(job["id"], status="found", reason="Back: above your new threshold.")
+                if sources.chosen_fields(config.load_profile()) != fields_before:
+                    app.ensure_worker()
+                    tracker.add_task("refresh")
+                    return ("Saved. Your fields changed, so the job lists are being refreshed; "
+                            "follow it on Today."), "/"
                 if not tracker.with_status(*ORDER):  # Nothing fetched yet.
                     app.ensure_worker()
                     tracker.add_task("refresh")
@@ -1081,10 +1153,27 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 tracker.add_task("sync_profile")
                 return ("Saved as your master resume; updating your profile from it."
-                        + (f" The previous one is in {backup.relative_to(config.HOME)}." if backup else "")), "/resumes"
+                        + (f" The previous one is in {shown(backup)}." if backup else "")), "/resumes"
             if path == "/resumes/edit":
                 resumes.edit_proposal(one.get("markdown", ""))
                 return "Saved your edits to the proposal.", "/resumes"
+            if path == "/resumes/master":
+                backup = resumes.save_master(one.get("markdown", ""))
+                message = "Saved your master resume."
+                if backup:
+                    message += f" The previous one is in {shown(backup)}."
+                if not app.llm_missing:
+                    app.ensure_worker()
+                    tracker.add_task("sync_profile")
+                    message += " Updating your profile facts from it."
+                return message, "/resumes"
+            if path == "/profile/save":
+                name = one.get("file", "")
+                config.save_profile_file(name, one.get("content", ""))
+                if name == "profile.yaml":  # Preferences may have changed what passes the filters.
+                    sources.apply_filters(tracker, config.load_profile())
+                    matching.keyword_rank(tracker, config.load_profile())
+                return f"Saved {name}.", "/profile"
             if path == "/resumes/discard":
                 resumes.discard()
                 return "Discarded the proposal.", "/resumes"

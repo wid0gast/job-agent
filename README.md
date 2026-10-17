@@ -14,7 +14,7 @@ and applies only after you approve.
 
 ## What it does
 
-- **Finds** internships and new-grad roles in your field: the SimplifyJobs lists (software, data & AI, hardware, quant and product) plus the job boards of the companies on them, refreshed in a few minutes.
+- **Finds** jobs in the fields you pick, from internships to senior roles: the SimplifyJobs internship and new-grad lists (software, data & AI, hardware, quant, product), plus every role on the job boards of the companies on those lists, refreshed in a few minutes.
 - **Ranks** every job against what you're looking for: free keyword scores for all of them, then Claude scores the best 120.
 - **Prepares** an application: it reads the full posting, checks your fit requirement by requirement, tailors your resume, researches the company, and drafts every answer, each with its source.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.
@@ -33,7 +33,7 @@ It never invents experience or numbers, ignores instructions hidden in job pages
 </td>
 <td width="50%" valign="top">
 
-**2. Add your resume.** Upload PDFs; Claude merges them into one master resume, and you review every line before it's saved.
+**2. Add your resume.** Upload PDFs; Claude merges them into one master resume, and you review every line before it's saved. Edit it, and your profile, any time.
 
 <img src="docs/screenshots/resume.png" alt="Reviewing the proposed master resume">
 </td>
@@ -41,7 +41,7 @@ It never invents experience or numbers, ignores instructions hidden in job pages
 <tr>
 <td valign="top">
 
-**3. Say what you want.** In your own words, plus filters for job type, location, season and posting age.
+**3. Say what you want.** In your own words, plus fields, job type, seniority, location, season and posting age.
 
 <img src="docs/screenshots/search.png" alt="Search page">
 </td>
@@ -80,7 +80,6 @@ uv run job-agent dashboard     # opens on http://127.0.0.1:8770
 ```
 
 The dashboard walks you through the rest: connect Claude, upload your resume, describe the jobs you want.
-To choose your fields, set `fields` in `profile/profile.yaml`: any of `software`, `ai_ml_data`, `hardware`, `quant` and `product`.
 No resume handy? Try [`examples/jane-doe-resume.pdf`](examples/jane-doe-resume.pdf), a made-up candidate.
 
 For resumes in your own LaTeX style, also install [Tectonic](https://tectonic-typesetting.github.io/) (`brew install tectonic`).

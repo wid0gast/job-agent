@@ -32,17 +32,22 @@ uv run job-agent setup
 
 Then:
 
-1. Edit the job preferences in `profile/profile.yaml`. Your name, contact
-   details, links, education and work authorization are read from your master
-   resume (step 2) into `profile/resume-profile.yaml`; you don't type them.
+1. Describe the jobs you want on the dashboard's **Search** page: in your own
+   words, plus fields, job types, seniority and other filters. Your name,
+   contact details, links, education and work authorization are read from your
+   master resume (step 2) into `profile/resume-profile.yaml`; you don't type
+   them. The **Profile** page lets you edit everything else (preferences,
+   standard answers, saved answers, story bank, writing sample) at any time.
 2. Build your **master resume** (everything true you might ever include) in
    one of two ways. Either upload your resume PDFs on the dashboard's
    Resumes page (or `uv run job-agent resumes import a.pdf b.pdf`): each is
    read, then all are merged, newest winning where they disagree, and you
-   review the result before it replaces `profile/resume.md`. Or write
-   `profile/resume.md` yourself. The agent cuts and reorders it per job but
-   never adds facts. Optional: `profile/writing-sample.md` (a few paragraphs you
-   wrote) so cover letters sound like you.
+   review the result before it replaces `profile/resume.md`. Or write it
+   yourself in the editor on the Resumes page, which also lets you change it
+   any time (the previous version goes to `profile/resume-history/`, and your
+   profile facts are re-read from it). The agent cuts and reorders it per job
+   but never adds facts. Optional: a writing sample on the Profile page, so
+   cover letters sound like you.
 3. Connect Claude (see **Connecting Claude** below). If Claude Code is
    installed and signed in, there's nothing to do; otherwise use the
    dashboard's **Connect Claude** page (the status chip, top right).
@@ -95,10 +100,13 @@ uv run job-agent dashboard        # http://127.0.0.1:8770
 0. **Search**: describe in your own words what you're looking for, set the
    filters (internship/full-time, locations, seasons, posting age,
    exclusions) and the fit threshold. Saved to `profile/search.yaml`.
-1. **Refresh** pulls Simplify's internship and new-grad lists for your
-   fields (`fields` in `profile/profile.yaml`: `software`, `ai_ml_data`,
-   `hardware`, `quant`, `product`; the example starts with `ai_ml_data`)
-   and the Greenhouse, Lever and Ashby boards of companies seen there. Hard filters from
+1. **Refresh** pulls Simplify's internship and new-grad lists for the fields
+   you tick on Search (Software, Data & AI, Hardware, Quant, Product; all by
+   default) and the Greenhouse, Lever and Ashby boards of companies seen
+   there. Boards list every role at every level, so their jobs are matched to
+   your fields by title; "Other roles" keeps the rest (sales, operations,
+   finance...). Senior, staff and manager roles are filtered out unless you
+   tick "Include senior roles". Hard filters from
    `preferences` in your profile run in code; the Jobs page shows why each
    filtered job is out.
    **Ranked jobs** lists them by score. Every job first gets a free, instant

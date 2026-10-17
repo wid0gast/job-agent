@@ -68,6 +68,15 @@ def check(job: dict, details: dict, profile: dict) -> str | None:
     excluded = {c.lower() for c in prefs.get("exclude_companies", [])}
     if (job.get("company") or "").lower() in excluded:
         return "Excluded company."
+    from . import sources  # (sources imports this module)
+
+    fields = sources.chosen_fields(profile)
+    if set(fields) != set(sources.ALL_FIELDS):
+        category = details.get("category")
+        inside = (sources.in_fields(category, [f for f in fields if f in sources.FIELDS]) if category
+                  else sources.matches_field(job.get("title") or "", fields))
+        if not inside:
+            return f"Not in your fields{f' ({category})' if category else ''}."
     job_types = prefs.get("job_types") or ["internship", "full_time"]
     if job.get("job_type") and job["job_type"] not in job_types:
         return f"Job type {job['job_type']} not wanted."
@@ -78,8 +87,9 @@ def check(job: dict, details: dict, profile: dict) -> str | None:
     job_terms = [t for t in details.get("terms", []) if t and t != "N/A"]
     if terms and job_terms and not set(terms) & set(job_terms):
         return f"Term: {', '.join(job_terms)}."
-    if job.get("job_type") == "full_time" and SENIOR.search(job.get("title") or ""):
-        return "Senior role."
+    if (job.get("job_type") == "full_time" and not prefs.get("include_senior")
+            and SENIOR.search(job.get("title") or "")):
+        return "Senior role (include senior roles on the Search page)."
     for word in prefs.get("exclude_title_words", []):
         if re.search(rf"\b{re.escape(word)}\b", job.get("title") or "", re.I):
             return f"Title contains {word!r}."
