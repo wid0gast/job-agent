@@ -47,7 +47,7 @@ def test_claude_code_answers_json_with_your_login(fake_claude):
     reply, calls = fake_claude
     reply(structured_output={"score": 87}, result='{"score":87}')
     model = llm.ClaudeCode()
-    assert model.json("Rate job titles.", "ML Intern", SCHEMA) == {"score": 87}
+    assert model.json("Rate job titles.", "ML Intern", SCHEMA, "match_scores") == {"score": 87}
     call = calls()[0]
     assert call["stdin"] == "ML Intern"
     assert call["api_key"] is None  # Your Claude login is used, not an API key in the environment.
@@ -57,6 +57,9 @@ def test_claude_code_answers_json_with_your_login(fake_claude):
     assert "--no-session-persistence" in argv
     assert argv[argv.index("--system-prompt") + 1] == "Rate job titles."
     assert json.loads(argv[argv.index("--json-schema") + 1]) == SCHEMA
+    # Bulk title ranking goes to Haiku at low effort, named by full ID (the alias is an older model).
+    assert argv[argv.index("--model") + 1] == "claude-haiku-5-5"
+    assert argv[argv.index("--effort") + 1] == "low"
     assert model.calls == 1
 
 
@@ -115,7 +118,7 @@ def test_choosing_a_backend(tmp_path, monkeypatch):
     assert llm.client(replace(settings, backend="off")) is None
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     model = llm.client(settings)
-    assert isinstance(model, llm.AnthropicAPI) and model.model == llm.DEFAULT_API_MODEL
+    assert isinstance(model, llm.AnthropicAPI) and model.choose("fit") == ("claude-opus-5-5", "medium")
 
 
 class Block:
@@ -141,11 +144,13 @@ def test_anthropic_api_keeps_thinking_and_counts_cost(monkeypatch):
     monkeypatch.setattr(model.client.beta.messages, "create", create)
     tools = [{"type": "function", "function": {"name": "finish", "description": "End.",
                                                "parameters": {"type": "object"}}}]
-    message = model.complete([{"role": "system", "content": "S"}, {"role": "user", "content": "Go."}], tools)
+    message = model.complete([{"role": "system", "content": "S"}, {"role": "user", "content": "Go."}], tools,
+                             task="explore")
     assert message["tool_calls"][0]["function"] == {"name": "finish", "arguments": '{"report": "done"}'}
     assert message["provider_content"][0] == {"type": "thinking", "thinking": "", "signature": "sig"}
     request = sent[0]
     assert request["model"] == "claude-opus-5-5" and request["system"] == "S"
+    assert request["output_config"] == {"effort": "medium"}
     assert request["thinking"]["block_binding"] == {"prefix_mismatch_behavior": "drop_block"}
     assert request["context_management"] == {"edits": [{"type": "clear_tool_uses_20250919"}]}
     assert request["tools"][0]["input_schema"] == {"type": "object"}
@@ -153,3 +158,25 @@ def test_anthropic_api_keeps_thinking_and_counts_cost(monkeypatch):
     model.spent_usd = 2.0
     with pytest.raises(llm.SpendCapReached):
         model.complete([{"role": "system", "content": "S"}, {"role": "user", "content": "Go."}], tools)
+
+
+def test_each_task_gets_a_fitting_model():
+    model = llm.Model()
+    assert model.choose("match_scores") == ("claude-haiku-5-5", "low")
+    assert model.choose("resume_facts") == ("claude-sonnet-5-5", "low")
+    assert model.choose("research") == ("claude-sonnet-5-5", "medium")
+    assert model.choose("fit") == ("claude-opus-5-5", "medium")
+    assert model.choose("tailored_resume") == ("claude-opus-5-5", "high")
+    assert model.choose("form_answers") == ("claude-opus-5-5", "medium")
+    assert model.choose("something new") == ("claude-sonnet-5-5", "medium")
+    assert set(model.plan()) == set(llm.TASKS)
+    # CLAUDE_MODEL forces one model everywhere (effort still follows the task); a tier can be swapped.
+    assert llm.Model("claude-opus-5-5").choose("match_scores") == ("claude-opus-5-5", "low")
+    swapped = llm.Model(tiers={"light": "claude-sonnet-5-5", "best": ""})
+    assert swapped.choose("match_scores")[0] == "claude-sonnet-5-5"
+    assert swapped.choose("fit")[0] == "claude-opus-5-5"  # An empty override keeps the default.
+
+
+def test_settings_read_tier_overrides(monkeypatch):
+    monkeypatch.setenv("CLAUDE_MODEL_LIGHT", "claude-sonnet-5-5")
+    assert config.Settings.from_env().tier_models["light"] == "claude-sonnet-5-5"

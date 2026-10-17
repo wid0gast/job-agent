@@ -70,7 +70,7 @@ def explore(ctx, job: dict, description: str, document, log, facts=lambda: []) -
                         getattr(ctx, "ask", None) or (lambda question: ""), facts)
     profile = config.load_profile()
     agent = AgentRun(ctx.llm, EXPLORE_PROMPT, explorer.tools(), trace_path(trace_name(job["id"])),
-                     max_steps=70, max_seconds=15 * 60,
+                     task="explore", max_steps=70, max_seconds=15 * 60,
                      observer=lambda kind, data: log(f"    [{kind}] {str(data)[:160]}")
                      if kind in ("call", "finish") else None)
     report = agent.run(json.dumps({

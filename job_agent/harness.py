@@ -41,10 +41,11 @@ def schema(properties: dict | None = None, required: list[str] | None = None) ->
 
 @dataclass
 class AgentRun:
-    llm: object  # Anything with complete(messages, tools) -> assistant message.
+    llm: object  # Anything with complete(messages, tools, task) -> assistant message.
     system_prompt: str
     tools: list[Tool]
     trace_path: Path
+    task: str = "agent"  # Picks the model and effort (llm.TASKS).
     max_steps: int = 40
     max_seconds: float = 20 * 60
     keep_snapshots: int = 2
@@ -73,7 +74,7 @@ class AgentRun:
                 return self.end(f"Stopped at the time limit ({self.max_seconds / 60:.0f} minutes).")
             if not getattr(self.llm, "prunes_context", False):  # Else the API clears old results itself.
                 self.prune_snapshots()
-            message = self.llm.complete(self.messages, declarations)
+            message = self.llm.complete(self.messages, declarations, task=self.task)
             # provider_content: the model's reply as sent, replayed unchanged (thinking blocks included).
             message = {k: message[k] for k in ("content", "tool_calls", "provider_content") if message.get(k)}
             message["role"] = "assistant"

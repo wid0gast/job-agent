@@ -9,7 +9,7 @@ class ScriptedModel:
     def __init__(self, replies):
         self.replies, self.seen = list(replies), []
 
-    def complete(self, messages, tools):
+    def complete(self, messages, tools, task="agent"):
         self.seen.append(json.loads(json.dumps(messages)))
         return self.replies.pop(0)
 

@@ -154,7 +154,8 @@ class Dashboard:
 
         llm = client(settings)
         self.backend = None if llm is None else type(llm).__name__  # ClaudeCode or AnthropicAPI
-        self.model = llm.model if llm else ""
+        self.model = llm.model if llm else ""  # Set only when CLAUDE_MODEL forces one model.
+        self.plan = llm.plan() if llm else {}  # Task -> (model, effort)
         self._missing: bool | None = None  # Tests set llm_missing directly.
 
     @property
@@ -173,7 +174,7 @@ class Dashboard:
     @property
     def connection(self) -> str:
         if self.backend == "AnthropicAPI":
-            return f"Anthropic API · {self.model}"
+            return "Anthropic API" + (f" · {self.model}" if self.model else "")
         if self.backend == "ClaudeCode":
             info = claude_login.status()
             if not info["loggedIn"]:
@@ -246,14 +247,40 @@ def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
 # ----- pages ----------------------------------------------------------------
 
 
+TASK_LABELS = {
+    "match_scores": "Ranking job titles", "resume_markdown": "Reading resume PDFs",
+    "resume_facts": "Profile facts from your resume", "research": "Company research (agent)",
+    "planner": "Planner (agent)", "fit": "Fit check on the full posting", "tailored_resume": "Tailored resume",
+    "cover_letter": "Cover letter", "form_answers": "Application answers and essays",
+    "explore": "Filling unfamiliar forms (agent)",
+}
+MODEL_NAMES = {"claude-haiku-5-5": "Haiku 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5"}
+
+
+def models_card(app: Dashboard) -> str:
+    """Which model and effort each task uses: lighter models for bulk work, Opus for what employers see."""
+    if not app.plan:
+        return ""
+    rows = "".join(f"<tr><td>{TASK_LABELS.get(task, task)}</td><td><b>{esc(MODEL_NAMES.get(model, model))}</b></td>"
+                   f"<td class=muted>{effort}</td></tr>"
+                   for task, (model, effort) in sorted(app.plan.items(), key=lambda kv: (kv[1][0], kv[0])))
+    how = ("<code>CLAUDE_MODEL</code> is set, so every task uses it." if app.model else
+           "Bulk work goes to lighter models; what decides whether you apply, and what employers read, gets Opus. "
+           "Change a tier with <code>CLAUDE_MODEL_LIGHT</code>, <code>_STANDARD</code> or <code>_BEST</code> in "
+           "<code>.env</code>, or use one model everywhere with <code>CLAUDE_MODEL</code>.")
+    return (f'<div class=card><h2>Which model does what</h2><p class=muted>{how}</p>'
+            f'<table><tr><th>Task</th><th>Model</th><th>Effort</th></tr>{rows}</table></div>')
+
+
 def page_connect(app: Dashboard, flash: str) -> bytes:
     """Connect Claude: your Claude Code sign-in (your plan), or an API key."""
     if app.backend == "AnthropicAPI":
         body = f"""<h1>Connect Claude</h1>
     <div class=card><h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Connected with an
-    Anthropic API key</h2><p class=muted>Model <code>{esc(app.model)}</code>, billed per token by Anthropic, with a
+    Anthropic API key</h2><p class=muted>Billed per token by Anthropic, with a
     spending cap of ${app.settings.spend_cap_usd:.2f} per run (<code>SPEND_CAP_USD</code>). To use your Claude plan
-    instead, set <code>MODEL_BACKEND=claude-code</code> in <code>.env</code> and restart.</p></div>"""
+    instead, set <code>MODEL_BACKEND=claude-code</code> in <code>.env</code> and restart.</p></div>
+    {models_card(app)}"""
         return layout(app, "/connect", body, flash)
     info = claude_login.status(fresh=True)
     login = claude_login.current()
@@ -286,6 +313,7 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
                  + f'</li>{step2}</ol>')
     body = f"""<h1>Connect Claude</h1>
     <div class=card>{state}</div>
+    {models_card(app)}
     <div class=card><h2>Prefer an API key?</h2><p class=muted style="margin:0">Put
     <code>MODEL_BACKEND=anthropic</code> and <code>ANTHROPIC_API_KEY=…</code> in <code>.env</code> (or sign in with
     Anthropic's <code>ant auth login</code>) and restart. Billed per token, with <code>SPEND_CAP_USD</code> per run.

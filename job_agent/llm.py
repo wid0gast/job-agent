@@ -9,6 +9,11 @@ OpenAI-style message format the harness keeps).
   unsaved session with Claude Code's own tools turned off.
 - AnthropicAPI uses the Anthropic SDK with an API key (ANTHROPIC_API_KEY) or an
   `ant auth login` profile, billed per token, with the spending cap enforced here.
+
+Each task gets a model and effort that fit it (TASKS): Haiku for bulk title ranking,
+Sonnet for reading and extraction, Opus for what employers see and what decides whether
+you apply. CLAUDE_MODEL forces one model everywhere; CLAUDE_MODEL_LIGHT, _STANDARD and
+_BEST swap a tier.
 """
 
 import json
@@ -20,6 +25,22 @@ import threading
 import uuid
 
 DEFAULT_API_MODEL = "claude-opus-5-5"
+# Full IDs: Claude Code's short names (haiku, sonnet) still point at older models.
+TIERS = {"light": "claude-haiku-5-5", "standard": "claude-sonnet-5-5", "best": "claude-opus-5-5"}
+# Task (the JSON schema name, or the agent) -> (tier, effort).
+TASKS = {
+    "match_scores": ("light", "low"),          # ~60 job titles per call; the fit check reads postings later
+    "resume_markdown": ("standard", "low"),    # a PDF's text to Markdown, wording kept
+    "resume_facts": ("standard", "low"),       # contact, education, work authorization: used in every form
+    "research": ("standard", "medium"),        # agent: reads company pages, keeps quoted facts
+    "planner": ("standard", "medium"),         # agent: runs the pipeline; the writing is done by Opus steps
+    "fit": ("best", "medium"),                 # decides whether you apply at all
+    "tailored_resume": ("best", "high"),       # what recruiters read; must not invent
+    "cover_letter": ("best", "high"),
+    "form_answers": ("best", "medium"),        # answers and essays sent to employers
+    "explore": ("best", "medium"),             # agent: fills unfamiliar forms on live sites
+}
+DEFAULT_TASK = ("standard", "medium")
 # Per million tokens (input, output), for the spending cap. Cache reads cost a tenth of input.
 PRICES = {"claude-fable-5-1": (10, 50), "claude-opus-5-5": (4, 20), "claude-opus-5": (5, 25),
           "claude-sonnet-5-5": (2, 10), "claude-haiku-5-5": (0.1, 0.5)}
@@ -30,15 +51,26 @@ class SpendCapReached(RuntimeError):
 
 
 class Model:
-    """What every client shares: call counting and the JSON-answer contract."""
+    """What every client shares: model choice per task, call counting and the JSON contract."""
 
-    model = ""
+    model = ""  # Set: this one model for every task (CLAUDE_MODEL).
     spend_cap_usd = float("inf")
 
-    def __init__(self):
+    def __init__(self, model: str = "", tiers: dict | None = None):
+        self.model = model
+        self.tiers = {**TIERS, **{k: v for k, v in (tiers or {}).items() if v}}
         self.spent_usd = 0.0
         self.calls = 0
         self._counting = threading.Lock()  # Match scoring calls the model from two threads.
+
+    def choose(self, task: str) -> tuple[str, str]:
+        """(model, effort) for a task."""
+        tier, effort = TASKS.get(task, DEFAULT_TASK)
+        return self.model or self.tiers[tier], effort
+
+    def plan(self) -> dict[str, tuple[str, str]]:
+        """Every task's (model, effort), for the dashboard."""
+        return {task: self.choose(task) for task in TASKS}
 
     def count(self, cost_usd: float) -> None:
         with self._counting:
@@ -67,7 +99,7 @@ class Model:
     def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
         raise NotImplementedError
 
-    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+    def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         raise NotImplementedError
 
 
@@ -85,9 +117,8 @@ arguments that match their schemas. When the work is done, call the finishing to
 Tools:
 """
 
-    def __init__(self, model: str = ""):
-        super().__init__()
-        self.model = model  # Empty: Claude Code's default model for your plan.
+    def __init__(self, model: str = "", tiers: dict | None = None):
+        super().__init__(model, tiers)
         self.executable = shutil.which("claude")
         if not self.executable:
             raise RuntimeError("Claude Code isn't installed: see https://code.claude.com/docs/en/setup")
@@ -97,12 +128,12 @@ Tools:
         self.workdir = config.DATA_DIR / "claude-code"
         self.workdir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, system: str, prompt: str, schema: dict) -> dict:
+    def run(self, system: str, prompt: str, schema: dict, task: str) -> dict:
+        model, effort = self.choose(task)
         command = [self.executable, "-p", "--output-format", "json", "--tools", "",
                    "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands",
-                   "--system-prompt", system, "--json-schema", json.dumps(schema)]
-        if self.model:
-            command += ["--model", self.model]
+                   "--system-prompt", system, "--json-schema", json.dumps(schema),
+                   "--model", model, "--effort", effort]
         # An API key in the environment would take precedence over your Claude login.
         env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
         try:
@@ -117,6 +148,7 @@ Tools:
             raise RuntimeError(f"Claude Code failed (exit {done.returncode}): {detail}") from None
         # Your plan pays, so this is a notional cost: shown, never capped.
         self.count(float(reply.get("total_cost_usd") or 0))
+        self.last_models = list(reply.get("modelUsage") or {})  # Which models answered (for checks).
         if reply.get("is_error") or reply.get("subtype") != "success":
             message = str(reply.get("result") or reply.get("subtype"))[:400]
             if re.search(r"log ?in|auth|credential", message, re.I):
@@ -127,9 +159,9 @@ Tools:
         return reply["structured_output"]
 
     def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
-        return self.run(system, user, schema)
+        return self.run(system, user, schema, name)
 
-    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+    def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         names = [t["function"]["name"] for t in tools]
         schema = {"type": "object", "additionalProperties": False, "required": ["thought", "tool_calls"],
                   "properties": {
@@ -141,7 +173,7 @@ Tools:
         system = messages[0]["content"] + self.TURN_PROMPT + "\n".join(
             json.dumps({"name": t["function"]["name"], "description": t["function"]["description"],
                         "arguments": t["function"]["parameters"]}, ensure_ascii=False) for t in tools)
-        reply = self.run(system, transcript(messages[1:]), schema)
+        reply = self.run(system, transcript(messages[1:]), schema, task)
         return {"content": reply.get("thought") or None,
                 "tool_calls": [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
                                 "function": {"name": c["name"],
@@ -174,22 +206,21 @@ class AnthropicAPI(Model):
     AGENT_BETAS = ["context-management-2025-06-27", "thinking-binding-controls-2026-08-01"]
     THINKING = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
 
-    def __init__(self, model: str = "", spend_cap_usd: float = 1.0):
-        super().__init__()
+    def __init__(self, model: str = "", spend_cap_usd: float = 1.0, tiers: dict | None = None):
+        super().__init__(model, tiers)
         import anthropic
 
-        self.model = model or DEFAULT_API_MODEL
         self.spend_cap_usd = spend_cap_usd
         self.client = anthropic.Anthropic(max_retries=4)
 
-    def cost(self, usage) -> float:
-        price_in, price_out = PRICES.get(self.model, PRICES[DEFAULT_API_MODEL])
+    def cost(self, usage, model: str) -> float:
+        price_in, price_out = PRICES.get(model, PRICES[DEFAULT_API_MODEL])
         fresh = (usage.input_tokens or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0) * 1.25
         cached = (getattr(usage, "cache_read_input_tokens", 0) or 0) * 0.1
         return ((fresh + cached) * price_in + (usage.output_tokens or 0) * price_out) / 1e6
 
-    def finished(self, response) -> None:
-        self.count(self.cost(response.usage))
+    def finished(self, response, model: str) -> None:
+        self.count(self.cost(response.usage, model))
         if response.stop_reason == "refusal":
             raise RuntimeError("Claude declined this request.")
         if response.stop_reason == "max_tokens":
@@ -197,24 +228,27 @@ class AnthropicAPI(Model):
 
     def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
         self.check_budget()
+        model, effort = self.choose(name)
         response = self.client.beta.messages.create(
-            model=self.model, max_tokens=16000, system=system,
+            model=model, max_tokens=16000, system=system,
             messages=[{"role": "user", "content": user}],
-            output_config={"format": {"type": "json_schema", "schema": schema}},
+            output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
             # If a safety check declines, the API retries on a suitable model itself.
-            betas=["server-side-fallback-2026-07-01"], fallbacks="default")
-        self.finished(response)
+            **({"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+               if model in FALLBACK_MODELS else {}))
+        self.finished(response, model)
         return parse_json(next((b.text for b in response.content if b.type == "text"), ""))
 
-    def complete(self, messages: list[dict], tools: list[dict]) -> dict:
+    def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         self.check_budget()
+        model, effort = self.choose(task)  # One task per agent run, so one model per conversation.
         response = self.client.beta.messages.create(
-            model=self.model, max_tokens=16000, system=messages[0]["content"],
+            model=model, max_tokens=16000, system=messages[0]["content"], output_config={"effort": effort},
             messages=to_anthropic(messages[1:]), thinking=self.THINKING, betas=self.AGENT_BETAS,
             context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
             tools=[{"name": t["function"]["name"], "description": t["function"]["description"],
                     "input_schema": t["function"]["parameters"]} for t in tools])
-        self.finished(response)
+        self.finished(response, model)
         text = "".join(b.text for b in response.content if b.type == "text").strip()
         return {"content": text or None,
                 "tool_calls": [{"id": b.id, "type": "function",
@@ -222,6 +256,10 @@ class AnthropicAPI(Model):
                                for b in response.content if b.type == "tool_use"],
                 # Replayed exactly as received, thinking blocks included.
                 "provider_content": [b.model_dump(exclude_none=True) for b in response.content]}
+
+
+# Server-side refusal fallbacks ("default" routing) are offered on these models.
+FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
 
 def to_anthropic(messages: list[dict]) -> list[dict]:
@@ -256,9 +294,9 @@ def client(settings):
     if backend == "off":
         return None
     if backend == "claude-code" or (backend == "auto" and shutil.which("claude")):
-        return ClaudeCode(settings.model)
+        return ClaudeCode(settings.model, settings.tier_models)
     if backend == "anthropic" or (backend == "auto" and has_api_credentials()):
-        return AnthropicAPI(settings.model, settings.spend_cap_usd)
+        return AnthropicAPI(settings.model, settings.spend_cap_usd, settings.tier_models)
     return None
 
 

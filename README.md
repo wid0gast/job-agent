@@ -91,6 +91,16 @@ For resumes in your own LaTeX style, also install [Tectonic](https://tectonic-ty
 | **Your Claude plan** (default) | Sign in on the dashboard's **Connect Claude** page (Pro or Max). Job Agent runs Claude Code headless with your sign-in. | Counts against your plan, like using Claude Code |
 | **Anthropic API key** | Set `MODEL_BACKEND=anthropic` and `ANTHROPIC_API_KEY` in `.env` | Pay per token, with a spending cap per run |
 
+Each task gets a model that fits it, so simple work doesn't spend your best model and important work isn't shortchanged:
+
+| Model | Used for |
+| --- | --- |
+| **Haiku 5.5** | Ranking job titles in bulk (the fit check reads the full posting later) |
+| **Sonnet 5.5** | Reading resume PDFs, profile facts, company research, the planner |
+| **Opus 5.5** | Fit checks, tailored resumes, cover letters, application answers, filling unfamiliar forms |
+
+The dashboard's Connect page shows the full list. `CLAUDE_MODEL_LIGHT`, `_STANDARD` and `_BEST` swap a tier, and `CLAUDE_MODEL` uses one model for everything.
+
 Job Agent is a personal tool: each person runs it on their own computer with their own Claude account or key.
 
 ## Built to be trusted

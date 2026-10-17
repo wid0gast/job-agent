@@ -18,7 +18,7 @@ class ExploreModel(ScriptedModel):
         super().__init__()
         self.done, self.calls = set(), []
 
-    def complete(self, messages, tools):
+    def complete(self, messages, tools, task="agent"):
         last = json.loads(messages[-1]["content"]) if messages[-1]["role"] == "tool" else None
         result = (last or {}).get("result")
         page = (result.get("page") if isinstance(result, dict) and "page" in result

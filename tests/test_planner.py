@@ -17,7 +17,7 @@ class AgentModel(ScriptedModel):
         super().__init__()
         self.steps = list(steps)
 
-    def complete(self, messages, tools):
+    def complete(self, messages, tools, task="agent"):
         last = json.loads(messages[-1]["content"]) if messages[-1]["role"] == "tool" else None
         name, args = self.steps.pop(0)(last)
         return {"role": "assistant", "content": f"Next: {name}.",

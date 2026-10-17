@@ -21,7 +21,7 @@ class ResearchModel(ScriptedModel):
                       ("save_fact", {"fact": "Released the LayoutEval benchmark in 2026", "url": url, "quote": REAL}),
                       ("finish", {"summary": "Contoso builds document models; released LayoutEval."})]
 
-    def complete(self, messages, tools):
+    def complete(self, messages, tools, task="agent"):
         if messages[-1]["role"] == "tool":
             self.results.append(json.loads(messages[-1]["content"]))
         name, args = self.steps.pop(0)

@@ -250,7 +250,9 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                 "board": board, "job_id": job_key, "company_id": company_id,
                 "apply_url": job["url"] if system is web else system.apply_url(board, job_key)},
         "prepared_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "model": ctx.llm.model,
+        # Which model wrote each part (llm.TASKS); a stand-in model in tests has one name.
+        "models": ({t: ctx.llm.choose(t)[0] for t in ("fit", "tailored_resume", "cover_letter", "form_answers")}
+                   if hasattr(ctx.llm, "choose") else {"all": getattr(ctx.llm, "model", "")}),
         "fit": fit,
         "description": description[:20000],
         "form_notes": form_notes,

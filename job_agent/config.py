@@ -1,7 +1,7 @@
 """Paths and settings. Everything personal lives under profile/ and data/."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -31,7 +31,7 @@ BACKENDS = ("auto", "claude-code", "anthropic", "off")
 @dataclass(frozen=True)
 class Settings:
     backend: str                     # auto | claude-code | anthropic | off (see llm.client)
-    model: str                       # Empty: the backend's default
+    model: str                       # Set: one model for every task. Empty: a model per task (llm.TASKS)
     submit_mode: str
     daily_submit_limit: int
     browser_channel: str
@@ -41,6 +41,7 @@ class Settings:
     spend_cap_usd: float = 1.0       # Anthropic API backend only; Claude Code uses your plan
     cover_letter: str = "required"   # required | always | never
     research: str = "auto"           # auto (for letters and "why us" answers) | off
+    tier_models: dict = field(default_factory=dict)  # light / standard / best -> a model to use instead
 
     @classmethod
     def from_env(cls, require_model: bool = True) -> "Settings":
@@ -63,6 +64,8 @@ class Settings:
             spend_cap_usd=float(os.environ.get("SPEND_CAP_USD", "1.00")),
             cover_letter=os.environ.get("COVER_LETTER", "required").strip(),
             research=os.environ.get("RESEARCH", "auto").strip().lower(),
+            tier_models={tier: os.environ.get(f"CLAUDE_MODEL_{tier.upper()}", "").strip()
+                         for tier in ("light", "standard", "best")},
         )
 
 

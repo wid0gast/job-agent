@@ -125,7 +125,7 @@ def research(ctx, job: dict, description: str, log) -> dict:
     researcher = Researcher(ctx, job, description, log)
     log("  researching the company")
     agent = AgentRun(ctx.llm, RESEARCH_PROMPT, researcher.tools(), trace_path(trace_name(job["id"])),
-                     max_steps=25, max_seconds=8 * 60,
+                     task="research", max_steps=25, max_seconds=8 * 60,
                      observer=lambda kind, data: log(f"    [{kind}] {str(data)[:160]}") if kind == "call" else None)
     try:
         summary = agent.run(json.dumps({

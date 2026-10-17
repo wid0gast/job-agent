@@ -68,12 +68,17 @@ Profile and resume content is sent to Claude while applying.
    Code's own tools turned off. Usage counts against your Claude plan, like
    using Claude Code yourself, and nothing is billed per token. An
    `ANTHROPIC_API_KEY` in the environment is hidden from it so your sign-in is
-   what's used. `CLAUDE_MODEL` (e.g. `opus` or `sonnet`) picks the model;
-   empty means Claude Code's default for your plan.
+   what's used.
 2. **An Anthropic API key.** Put `ANTHROPIC_API_KEY=` in `.env`, or sign in
    with Anthropic's `ant auth login`. Billed per token by Anthropic, with
-   `SPEND_CAP_USD` enforced per run. `CLAUDE_MODEL` defaults to
-   `claude-opus-5-5`.
+   `SPEND_CAP_USD` enforced per run.
+
+Either way, each task uses a model that fits it: Haiku 5.5 ranks job titles,
+Sonnet 5.5 reads resumes, extracts profile facts, researches companies and runs
+the planner, and Opus 5.5 checks fit and writes the tailored resume, cover
+letter and answers (it also drives the form-filling agent). Models are named by
+full ID, because Claude Code's short names (`haiku`, `sonnet`) still point at
+older models. The Connect page lists every task's model and effort.
 
 Set `MODEL_BACKEND=claude-code` or `anthropic` to force one. This is a
 personal tool: each person runs it on their own computer with their own
@@ -184,7 +189,8 @@ emailed code).
 | `COMPANY_CAP`, `COMPANY_WINDOW_DAYS` | `3`, `30` | Default per-company limit (rolling). Known limits are in `company-rules.yaml`. |
 | `FIT_THRESHOLD` | `60` | Jobs scoring below this aren't prepared. |
 | `MODEL_BACKEND` | `auto` | `claude-code` (your Claude sign-in), `anthropic` (API key), `auto` (the first available), or `off`. |
-| `CLAUDE_MODEL` | (empty) | Model name or alias. Empty: Claude Code's default, or `claude-opus-5-5` with an API key. |
+| `CLAUDE_MODEL` | (empty) | One model for every task. Empty: a model per task (Haiku 5.5 to rank titles, Sonnet 5.5 for reading and research, Opus 5.5 for fit, resumes, letters and answers; see `TASKS` in `job_agent/llm.py`). |
+| `CLAUDE_MODEL_LIGHT`, `_STANDARD`, `_BEST` | (empty) | Swap the model for a tier (Haiku, Sonnet, Opus by default). Use full model IDs. |
 | `ANTHROPIC_API_KEY` | (empty) | For the `anthropic` backend (or use `ant auth login`). |
 | `SPEND_CAP_USD` | `1.00` | With an API key, a run stops once spending reaches this. Claude Code usage comes from your plan. |
 | `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
