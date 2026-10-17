@@ -62,7 +62,8 @@ def save(printer, job_dir: Path, stem: str, body_markdown: str, title: str) -> d
 
 def save_resume(printer, folder: Path, stem: str, doc: dict, contact: dict, pages: int,
                 title: str) -> dict:
-    """A structured resume typeset in your LaTeX style (or, without LaTeX, as HTML)."""
+    """A structured resume typeset in your LaTeX style (or, without LaTeX, as HTML).
+    Returns the files, page count and, under "doc", the resume as printed."""
     from . import latex
 
     folder.mkdir(parents=True, exist_ok=True)
@@ -70,14 +71,14 @@ def save_resume(printer, folder: Path, stem: str, doc: dict, contact: dict, page
     md_path, pdf_path = folder / f"{stem}.md", folder / f"{stem}.pdf"
     md_path.write_text(markdown, encoding="utf-8")
     if not latex.available():
-        return {**save(printer, folder, stem, markdown, title), "style": "plain (no LaTeX)"}
+        return {**save(printer, folder, stem, markdown, title), "style": "plain (no LaTeX)", "doc": doc}
     doc, count, removed = latex.fit(doc, contact, pages, pdf_path)
     markdown = f"# {contact.get('name', '')}\n{contact_line(contact)}\n\n" + latex.plain(doc)
     md_path.write_text(markdown, encoding="utf-8")
     (folder / f"{stem}.tex").write_text(latex.resume_tex(doc, contact, pages), encoding="utf-8")
     return {"markdown": str(md_path), "pdf": str(pdf_path), "tex": str(folder / f"{stem}.tex"),
             "pages": count, "fill": latex.page_fill(pdf_path), "style": "latex",
-            "trimmed": removed}
+            "trimmed": removed, "doc": doc}  # doc: what was printed, after fitting (not kept in the packet's documents).
 
 
 def save_letter(printer, folder: Path, stem: str, text: str, contact: dict, title: str) -> dict:

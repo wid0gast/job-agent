@@ -12,6 +12,7 @@ dependencies = [
   "pypdf>=5,<7",
   "cryptography>=42",
   "anthropic>=1.15.0",
+  "claude-agent-sdk>=0.2.168",
 ]
 
 [project.scripts]

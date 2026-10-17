@@ -106,12 +106,6 @@ def run_task(task: dict, ctx: Context, log) -> str:
         raise TimeoutError("No reply within 15 minutes.")
 
     ctx.ask = ask  # Agents inside a step (the explorer during prepare) ask through this task.
-    if task["kind"] == "plan":
-        from . import planner
-
-        if ctx.llm is None:
-            raise ValueError(NOT_SET_UP)
-        return planner.run(task["arg"] or "", ctx, ask, log, task["id"])
     if task["kind"] == "discover":
         from . import discover
 
@@ -143,8 +137,10 @@ def run_task(task: dict, ctx: Context, log) -> str:
         return score_matches(ctx, log)
     if task["kind"] == "draft":
         return prepare.draft_missing(task["job_id"], ctx, log)
-    if task["kind"] == "prepare":
-        return prepare.prepare(task["job_id"], ctx, log)
+    if task["kind"] == "prepare":  # arg: a note on what to change, for a redo.
+        return prepare.prepare(task["job_id"], ctx, log, note=task["arg"] or "")
+    if task["kind"] == "render":
+        return prepare.render(task["job_id"], ctx, log)
     if task["kind"] == "submit":
         return submit.submit(task["job_id"], ctx, ask, log)
     raise ValueError(f"Unknown task {task['kind']!r}.")

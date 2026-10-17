@@ -53,43 +53,39 @@ def test_pages_and_request_checks(tmp_path, monkeypatch):
         server.shutdown()
 
 
-def test_goal_starts_a_planner_run_and_its_trace_renders(tmp_path, monkeypatch):
+def test_today_points_to_the_assistant_and_agent_traces_render(tmp_path, monkeypatch):
     import json
 
-    from job_agent import planner
+    from job_agent.harness import trace_path
 
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    tracker = Tracker(tmp_path / "t.db")
+    tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
     settings = replace(config.Settings.from_env(require_model=False), submit_mode="review")
     app = dashboard.Dashboard(settings, 0)
-    app.ensure_worker = lambda: None  # No real worker in this test.
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
     server.RequestHandlerClass = dashboard.handler_for(app)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    port, origin = app.port, {"Origin": f"http://127.0.0.1:{app.port}"}
     try:
-        today = request(port, "GET", "/")[1]
-        assert "Give the agent a goal" in today
-        token = re.search(r'name=token value="([^"]+)"', today).group(1)
-        status, _, headers = request(port, "POST", "/plan", f"token={token}&goal=Find+3+ML+internships", origin)
-        assert status == 303 and headers["Location"].startswith("/runs/")
-        task_id = int(headers["Location"].split("/")[2].split("?")[0])
-        assert app.tracker.task(task_id)["arg"] == "Find 3 ML internships"
+        today = request(app.port, "GET", "/")[1]
+        assert "Ask the assistant" in today and 'action="/assistant"' in today
+        assert 'href="/assistant"' in today  # In the navigation, next to Today.
+        prefilled = request(app.port, "GET", "/assistant?q=Find+3+ML+internships")[1]
+        assert ">Find 3 ML internships</textarea>" in prefilled  # Filled in, never sent by a link.
 
-        trace = planner.trace_path(task_id)
+        trace = trace_path("explore-1")
         trace.parent.mkdir(parents=True)
         trace.write_text("\n".join(json.dumps(e) for e in [
-            {"t": 0, "kind": "task", "data": "{}"},
-            {"t": 1, "kind": "thought", "data": "Checking the queue first."},
-            {"t": 2, "kind": "call", "data": {"name": "queue_status", "args": {}}},
-            {"t": 3, "kind": "result", "data": {"name": "queue_status", "ok": True, "result": {"prepared": 0}}},
-            {"t": 4, "kind": "result", "data": {"name": "redo", "ok": False, "error": "ValueError: approved"}},
-            {"t": 5, "kind": "finish", "data": "Nothing to do."}]))
-        page = request(port, "GET", f"/runs/{task_id}")[1]
-        for text in ("Checking the queue first.", "queue_status", "error: ValueError: approved", "Nothing to do.",
-                     "Find 3 ML internships"):
+            {"t": 1, "kind": "thought", "data": "Opening the form."},
+            {"t": 2, "kind": "call", "data": {"name": "snapshot", "args": {}}},
+            {"t": 3, "kind": "result", "data": {"name": "click", "ok": False, "error": "ValueError: gone"}},
+            {"t": 4, "kind": "finish", "data": "Stopped at submit."}]))
+        page = request(app.port, "GET", "/runs/explore-1")[1]
+        for text in ("Fill in the application for ML Intern at Acme", "Opening the form.", "snapshot",
+                     "error: ValueError: gone", "Stopped at submit."):
             assert text in page, text
-        assert f'href="/runs/{task_id}"' in request(port, "GET", "/")[1]
+        assert request(app.port, "GET", "/runs/7")[0] == 404  # Planner runs are gone.
     finally:
         server.shutdown()

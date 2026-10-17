@@ -1,4 +1,4 @@
-"""Local dashboard at http://127.0.0.1:<port>: today, approval queue, jobs, activity.
+"""Local dashboard at http://127.0.0.1:<port>: today, the assistant chat, approval queue, jobs.
 
 It only reads the database and queues tasks; the worker process it starts
 does the browsing. Any website you visit can send requests to 127.0.0.1, so
@@ -21,6 +21,8 @@ from email.parser import BytesParser
 from email.policy import default as email_policy
 
 from . import actions, claude_login, config, history, matching, packets, resumes, sources, systems
+from . import llm as llm_models
+from .chat import ChatStore, Turns
 from .tracker import OUTCOMES, Tracker
 from .worker import DB_PATH
 
@@ -43,7 +45,7 @@ CSS = """
 --line:#242a3a;--soft:#1a1f2e;--accent:#8b85ff;--accent-2:#b18cff;--accent-soft:#1f2147;--good:#34d399;
 --good-soft:#0f2a22;--bad:#f87171;--bad-soft:#2d1517;--warn:#fbbf24;--warn-soft:#2b2210;--info:#60a5fa;
 --info-soft:#12233a;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
-*{box-sizing:border-box}
+*{box-sizing:border-box}[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
 font:14px/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -135,6 +137,43 @@ padding:0 0 12px}.steps li form.code{flex-basis:100%;margin-left:40px}
 .steps li::before{content:counter(step);flex:none;width:26px;height:26px;border-radius:50%;
 display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent)}
 .steps li.done::before{content:"✓";background:var(--good-soft);color:var(--good)}
+.chat{display:grid;grid-template-columns:230px minmax(0,1fr);gap:22px;align-items:start}
+.chats{position:sticky;top:76px;display:flex;flex-direction:column;gap:2px;max-height:calc(100vh - 100px);overflow:auto}
+.chats a.c{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:9px;color:var(--text);font-weight:500;
+font-size:13px}.chats a.c span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chats a.c:hover{background:var(--soft);text-decoration:none}.chats a.c.on{background:var(--accent-soft);color:var(--accent)}
+.chats a.c button{visibility:hidden;padding:0 6px;border:0;background:none;color:var(--muted);font-size:15px}
+.chats a.c:hover button{visibility:visible}.chats .new{margin-bottom:10px;text-align:center}
+.convo{max-width:820px;width:100%;margin:0 auto;display:flex;flex-direction:column;min-height:calc(100vh - 140px)}
+#log{flex:1}
+.item{margin:0 0 14px}.item.user{display:flex;justify-content:flex-end}
+.bubble{max-width:78%;padding:10px 14px;border-radius:16px 16px 4px 16px;background:var(--accent-soft);
+color:var(--text);white-space:normal;overflow-wrap:anywhere}
+.md{line-height:1.6;overflow-wrap:anywhere}.md p{margin:0 0 10px}.md ul,.md ol{margin:0 0 10px;padding-left:22px}
+.md h4{margin:14px 0 6px;font-size:14.5px}.md td a{color:var(--accent);font-weight:500}.md table{margin:0 0 12px;font-size:13px}.md td,.md th{padding:7px 8px}
+.item.tool{margin:0 0 6px;font-size:13px}.item.tool summary{cursor:pointer;color:var(--text);list-style:none}
+.item.tool summary::-webkit-details-marker{display:none}.item.tool pre{max-height:260px;margin:6px 0}
+.state{display:inline-grid;place-items:center;width:18px;color:var(--good)}.state.error{color:var(--warn)}
+.spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--accent);
+border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}@keyframes spin{to{transform:rotate(360deg)}}
+.card.ask{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));margin:4px 0 14px}.card.ask ul{margin:8px 0 12px}
+.undo{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted)}.undo button{padding:3px 10px;font-size:12.5px}
+.note{text-align:center;color:var(--muted);font-size:12.5px}
+.thinking span{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:var(--muted);
+animation:blink 1.2s infinite}.thinking span:nth-child(2){animation-delay:.2s}.thinking span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+.composer{position:sticky;bottom:0;padding:14px 0 18px;background:linear-gradient(transparent,var(--bg) 28%)}
+.composer .box{padding:10px;border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:var(--shadow)}
+.composer textarea{min-height:44px;max-height:220px;border:0;box-shadow:none;resize:none;padding:6px 8px}
+.composer textarea:focus{box-shadow:none}.composer .row{justify-content:space-between}
+.composer select{width:auto;padding:5px 8px;font-size:12.5px}
+#tasks{position:sticky;top:64px;z-index:3}.task{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;margin:0 0 8px;
+border:1px solid var(--line);border-radius:12px;background:var(--card);font-size:13px}
+.task.waiting{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.task form{flex-basis:100%}.task input{max-width:320px}
+.prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
+.prompts button{text-align:left;font-weight:500;padding:12px 14px}
+@media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
 .diff .add{background:color-mix(in srgb,var(--good) 18%,transparent)}
 .diff .del{background:color-mix(in srgb,var(--bad) 18%,transparent);text-decoration:line-through}
 """
@@ -157,6 +196,9 @@ class Dashboard:
         self.model = llm.model if llm else ""  # Set only when CLAUDE_MODEL forces one model.
         self.plan = llm.plan() if llm else {}  # Task -> (model, effort)
         self._missing: bool | None = None  # Tests set llm_missing directly.
+        self.chats = ChatStore(DB_PATH)
+        self.chats.recover()
+        self.turns = Turns(self.chats, self.tracker, settings, lambda: self.ensure_worker())
 
     @property
     def llm_missing(self) -> bool:
@@ -203,7 +245,7 @@ class Dashboard:
 
 
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False) -> bytes:
-    links = [("/", "Today"), ("/search", "Search"), ("/jobs", "Ranked jobs"),
+    links = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jobs", "Ranked jobs"),
              ("/queue", "Approval queue"), ("/applications", "Applications"),
              ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity")]
     nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
@@ -250,7 +292,7 @@ def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
 TASK_LABELS = {
     "match_scores": "Ranking job titles", "resume_markdown": "Reading resume PDFs",
     "resume_facts": "Profile facts from your resume", "research": "Company research (agent)",
-    "planner": "Planner (agent)", "fit": "Fit check on the full posting", "tailored_resume": "Tailored resume",
+    "assistant": "Assistant chat (default; pick per chat)", "fit": "Fit check on the full posting", "tailored_resume": "Tailored resume",
     "cover_letter": "Cover letter", "form_answers": "Application answers and essays",
     "explore": "Filling unfamiliar forms (agent)",
 }
@@ -342,10 +384,6 @@ def page_today(app: Dashboard, flash: str) -> bytes:
                             '<input type=text name=answer autofocus style="max-width:260px;margin-right:8px">')
                      + "</div>")
         job = f' <a href="/job/{task["job_id"]}">job {task["job_id"]}</a>' if task["job_id"] else ""
-        if task["kind"] == "plan":
-            job = f' <a href="/runs/{task["id"]}">trace</a>'
-            if task["arg"]:
-                job += f'<span class=kind>{esc(task["arg"][:90])}</span>'
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(task["kind"])}{job}</td>'
                     f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
                     f'<td class="muted">{esc((task["result"] or "")[:160])}</td></tr>')
@@ -359,11 +397,12 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
       · {esc(app.connection)}</span>
     </div></div>
-    <div class="card"><h2>Give the agent a goal</h2>
-    <form method=post action="/plan"><input type=hidden name=token value="{app.token}">
-    <textarea name=goal rows=2 required placeholder="Fill the queue with my 8 best matches, NYC or remote. One per company."></textarea>
-    <div class=row style="margin-top:8px"><button class=primary>Start the agent</button>
-    <span class=muted>It finds, ranks, prepares and reviews applications, and asks you if it needs to. You still approve every one.</span></div></form></div>
+    <div class="card"><h2>Ask the assistant</h2>
+    <form method=get action="/assistant"><textarea name=q rows=2 required
+    placeholder="Find my 5 best matches in NYC or remote, one per company, and prepare them."></textarea>
+    <div class=row style="margin-top:8px"><button class=primary>Open in the assistant</button>
+    <span class=muted>It can find, prepare and fix applications, edit your resume and profile, and search the web.
+    Nothing is submitted until you confirm.</span></div></form></div>
     <div class="card"><h2>Tasks</h2><table><tr><th>#</th><th>Task</th><th>Status</th><th>Result</th></tr>
     {"".join(rows) or '<tr><td colspan=4 class=muted>Nothing yet. Refresh the job lists to start.</td></tr>'}
     </table></div>"""
@@ -832,20 +871,13 @@ def application_block(app: Dashboard, job: dict) -> str:
 
 
 def page_run(app: Dashboard, name: str) -> bytes:
-    from .harness import read_trace
-    from .planner import trace_path
+    """How an exploration or research agent worked on a job, step by step."""
+    from .harness import read_trace, trace_path
 
-    if "-" in name:  # An exploration or research run: shown like a run, titled by its job.
-        kind, job_id = name.split("-")
-        job = app.tracker.get(int(job_id))
-        doing = "Fill in the application" if kind == "explore" else "Research the company"
-        task = {"id": name, "status": "done", "question": None,
-                "arg": f"{doing} for {job['title']} at {job['company']}" if job else ""}
-    else:
-        task = app.tracker.task(int(name))
-    if task is None:
-        return layout(app, "/", "<h1>No such run</h1>")
-    task_id = task["id"]
+    kind, job_id = name.split("-")
+    job = app.tracker.get(int(job_id))
+    doing = "Fill in the application" if kind == "explore" else "Research the company"
+    goal = f"{doing} for {job['title']} at {job['company']}" if job else ""
     rows = []
     for entry in read_trace(trace_path(name)):
         kind, data = entry["kind"], entry["data"]
@@ -863,13 +895,94 @@ def page_run(app: Dashboard, name: str) -> bytes:
                         f'{"result" if ok else "error"}: {esc(text[:140])}</summary><pre>{esc(text[:6000])}</pre></details>')
         elif kind == "finish":
             rows.append(f'<div class=card><h2>Report</h2>{esc(data)}</div>')
-    running = task["status"] in ("queued", "running", "waiting")
-    waiting = (f'<div class="flash warn">Waiting for you on <a href="/">Today</a>: {esc(task["question"])}</div>'
-               if task["status"] == "waiting" else "")
-    body = (f'<h1>Agent run {task_id} <span class="pill {esc(task["status"])}">{esc(task["status"])}</span></h1>'
-            f'<p class=muted>Goal: {esc(task["arg"])}</p>{waiting}'
-            + ("".join(rows) or "<p class=muted>Starting…</p>"))
-    return layout(app, "/", body, refresh=running and task["status"] != "waiting")
+    body = (f'<h1>{esc(doing)}</h1><p class=muted>{esc(goal)}</p>'
+            + ("".join(rows) or "<p class=muted>No steps recorded.</p>"))
+    return layout(app, "/", body)
+
+
+CHAT_JS = Path(__file__).parent / "static" / "chat.js"
+SUGGESTIONS = [
+    "Find my 5 best matches, one per company, and prepare them.",
+    "What's waiting for me, and what should I look at first?",
+    "Add my new project to my resume.",
+    "Look up what this company works on before I apply.",
+]
+
+
+def page_assistant(app: Dashboard, chat_id: int | None, draft: str = "") -> bytes:
+    chat = app.chats.chat(chat_id) if chat_id else None
+    model = chat["model"] if chat else app.turns.default_model()
+    names = {**{m: MODEL_NAMES.get(m, m) for m in llm_models.TIERS.values()}, model: MODEL_NAMES.get(model, model)}
+    options = "".join(f'<option value="{esc(m)}"{" selected" if m == model else ""}>{esc(n)}</option>'
+                      for m, n in names.items())
+    chats = "".join(f'<a class="c{" on" if chat and c["id"] == chat["id"] else ""}" href="/assistant?chat={c["id"]}">'
+                    f'<span>{esc(c["title"])}</span><button data-delete="{c["id"]}" title="Delete chat">×</button></a>'
+                    for c in app.chats.chats())
+    hello = "" if chat else (
+        '<div id=empty><h1>What can I do for you?</h1><p class=muted>I can do anything this app does: find and '
+        'prepare applications, fix a packet, edit your resume, profile or search, and look things up on the web. '
+        'You confirm every submission.</p><div class=prompts>'
+        + "".join(f'<button data-prompt="{esc(t)}">{esc(t)}</button>' for t in SUGGESTIONS) + "</div></div>")
+    body = f"""<div class=chat id=chat data-token="{app.token}" data-chat="{chat["id"] if chat else ""}">
+    <nav class=chats><a class="button new" href="/assistant">+ New chat</a>{chats}</nav>
+    <section class=convo><div id=tasks></div>{hello}<div id=log><div id=live></div></div>
+    <div class=composer><div class=box><textarea id=message rows=1 placeholder="Message the assistant">{esc(draft)}</textarea>
+    <div class=row><select id=model title="Model for this chat">{options}</select>
+    <span><button id=stop hidden>Stop</button> <button id=send class=primary>Send</button></span></div></div></div>
+    </section></div><script src="/assistant/chat.js"></script>"""
+    return layout(app, "/assistant", body)
+
+
+def chat_poll(app: Dashboard, chat_id: int | None, since: int) -> dict:
+    items = app.chats.items(chat_id, since) if chat_id else []
+    rev = max([since] + [i["rev"] for i in items])
+    active = [t for t in app.tracker.tasks(30) if t["status"] in ("queued", "running", "waiting")]
+    from .assistant import task_brief
+
+    partial = app.turns.partial(chat_id) if chat_id else None
+    return {"rev": rev, "items": [{"id": i["id"], "kind": i["kind"], "data": public(i)} for i in items],
+            "running": partial is not None, "partial": partial or "", "tasks": [task_brief(t) for t in active]}
+
+
+def public(item: dict) -> dict:
+    """An item as the page sees it (an undo card's saved text stays on the server)."""
+    return {k: v for k, v in item["data"].items() if k != "before"}
+
+
+def chat_card(app: Dashboard, item_id: int, choice: str) -> None:
+    """Your click on a card: confirm or cancel a submission, or undo an edit."""
+    item = app.chats.item(item_id)
+    if item is None or item["data"].get("state") != "pending":
+        raise ValueError("That's already been handled.")
+    data, chat_id = item["data"], item["chat_id"]
+    if item["kind"] == "confirm" and choice == "yes":
+        ids = [j["id"] for j in data["jobs"]]
+        ready, problems = actions.ready_to_submit(app.tracker, app.settings, ids)
+        if ready:
+            app.ensure_worker()
+        tasks = [app.tracker.add_task("submit", job_id) for job_id in ready]
+        result = (f"Submitting {len(ready)}: watch the Chrome window." if ready else "Nothing was submitted.") + (
+            " " + " ".join(problems) if problems else "")
+        app.chats.change(item_id, state="done", result=result)
+        app.chats.add(chat_id, "note", {"text": f"The user confirmed. Submit tasks {tasks} for jobs {ready}."
+                                        + (f" Not submitted: {' '.join(problems)}" if problems else ""),
+                                        "shown": f"You confirmed. {result}", "delivered": False})
+    elif item["kind"] == "confirm" and choice == "no":
+        app.chats.change(item_id, state="cancelled", result="Not submitted.")
+        app.chats.add(chat_id, "note", {"text": f"The user chose not to submit jobs {[j['id'] for j in data['jobs']]} "
+                                        "for now.", "shown": "You chose not to submit for now.", "delivered": False})
+    elif item["kind"] == "undo" and choice == "undo":
+        if data["file"] == "resume.md":
+            resumes.save_master(data["before"])
+            app.ensure_worker()
+            app.tracker.add_task("sync_profile")
+        else:
+            actions.save_profile(app.tracker, data["file"], data["before"])
+        app.chats.change(item_id, state="undone")
+        app.chats.add(chat_id, "note", {"text": f"The user undid your edit to {data['file']}.",
+                                        "shown": f"You undid the edit to {data['file']}.", "delivered": False})
+    else:
+        raise ValueError("Unknown choice.")
 
 
 def page_activity(app: Dashboard) -> bytes:
@@ -919,6 +1032,15 @@ def handler_for(app: Dashboard):
             parts = url.path.strip("/").split("/")
             if url.path == "/":
                 return self.send(page_today(app, flash))
+            if url.path == "/assistant":
+                chat = query.get("chat", "")
+                return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
+            if url.path == "/assistant/chat.js":
+                return self.send(CHAT_JS.read_bytes(), ctype="text/javascript; charset=utf-8")
+            if url.path == "/assistant/api/poll":
+                chat, since = query.get("chat", ""), query.get("since", "0")
+                state = chat_poll(app, int(chat) if chat.isdigit() else None, int(since) if since.isdigit() else 0)
+                return self.send(json.dumps(state, default=str).encode(), ctype="application/json")
             if url.path == "/queue":
                 return self.send(page_queue(app, flash))
             if url.path == "/jobs":
@@ -940,7 +1062,7 @@ def handler_for(app: Dashboard):
                 history.export_sheet(target, app.tracker)
                 return self.send(target.read_bytes(), ctype="text/csv",
                                  headers={"Content-Disposition": 'attachment; filename="applications.csv"'})
-            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"((explore|research)-)?\d+", parts[1]):
+            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"(explore|research)-\d+", parts[1]):
                 return self.send(page_run(app, parts[1]))
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))
@@ -974,6 +1096,12 @@ def handler_for(app: Dashboard):
             one = {k: v[0] for k, v in fields.items()}
             if not secrets.compare_digest(one.get("token", ""), app.token):
                 return self.send(b"Forbidden: reload the dashboard.", 403, "text/plain")
+            if urlsplit(self.path).path.startswith("/assistant/api/"):
+                try:
+                    reply = self.chat_api(urlsplit(self.path).path, one)
+                except ValueError as error:
+                    reply = {"error": str(error)}
+                return self.send(json.dumps(reply).encode(), ctype="application/json")
             referer = urlsplit(self.headers.get("Referer") or "/")
             keep = {k: v[0] for k, v in parse_qs(referer.query).items() if k != "msg"}
             back = (referer.path or "/") + (f"?{urlencode(keep)}" if keep else "")
@@ -995,6 +1123,35 @@ def handler_for(app: Dashboard):
                 elif name:
                     fields.setdefault(name, []).append(part.get_content().strip())
             return fields
+
+        def chat_api(self, path: str, one: dict) -> dict:
+            chat = int(one["chat"]) if one.get("chat", "").isdigit() else None
+            if one.get("model") and one["model"] not in {*llm_models.TIERS.values(), app.turns.default_model()}:
+                raise ValueError("Pick a model from the list.")
+            if path == "/assistant/api/send":
+                if app.llm_missing:
+                    raise ValueError("Connect Claude first (the Connect page).")
+                return {"chat": app.turns.send(chat, one.get("text", ""), one.get("model", ""))}
+            if path == "/assistant/api/stop" and chat:
+                app.turns.stop(chat)
+                return {"ok": True}
+            if path == "/assistant/api/model" and chat:
+                app.chats.update(chat, model=one.get("model", "") or app.turns.default_model())
+                return {"ok": True}
+            if path == "/assistant/api/delete" and chat:
+                app.turns.stop(chat)
+                app.chats.delete(chat)
+                return {"ok": True}
+            if path == "/assistant/api/card":
+                chat_card(app, int(one.get("item", 0)), one.get("choice", ""))
+                return {"ok": True}
+            if path == "/assistant/api/reply":
+                task = app.tracker.task(int(one.get("task_id", 0)))
+                if task is None or task["status"] != "waiting":
+                    raise ValueError("That task isn't waiting any more.")
+                app.tracker.set_task(task["id"], answer=one.get("answer", ""))
+                return {"ok": True}
+            raise ValueError("Unknown action.")
 
         def act(self, path: str, one: dict, fields: dict, back: str) -> tuple[str, str]:
             tracker = app.tracker
@@ -1020,13 +1177,6 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 tracker.add_task("refresh")
                 return "Refreshing the job lists.", "/"
-            if path == "/plan":
-                goal = one.get("goal", "").strip()
-                if not goal:
-                    raise ValueError("Describe what the agent should do.")
-                app.ensure_worker()
-                task_id = tracker.add_task("plan", arg=goal[:1000])
-                return "The agent is working on it. Follow along here.", f"/runs/{task_id}"
             if path == "/prepare":
                 app.ensure_worker()
                 tracker.add_task("prepare", int(one["job_id"]))
@@ -1050,8 +1200,7 @@ def handler_for(app: Dashboard):
 
                 threshold = int(one.get("fit_threshold") or app.settings.fit_threshold)
                 age = one.get("max_posting_age_days", "").strip()
-                fields_before = sources.chosen_fields(config.load_profile())
-                config.save_search({
+                message, refresh = actions.save_search(tracker, app.settings, {
                     "description": one.get("description", "").strip(),
                     "roles": words("roles"),
                     # Every field ticked is the same as none: no field filter.
@@ -1066,26 +1215,11 @@ def handler_for(app: Dashboard):
                     "fit_threshold": max(0, min(100, threshold)),
                     "resume_pages": 2 if one.get("resume_pages") == "2" else 1,
                 })
-                before = len(tracker.with_status("found"))
-                sources.apply_filters(tracker, config.load_profile())
-                matching.keyword_rank(tracker, config.load_profile())
-                # A lower threshold brings back jobs whose fit was below the old one.
-                for job in tracker.with_status("filtered_out"):
-                    if (job["reason"] or "").startswith("Fit ") and (job["fit_score"] or 0) >= threshold:
-                        tracker.update(job["id"], status="found", reason="Back: above your new threshold.")
-                if sources.chosen_fields(config.load_profile()) != fields_before:
+                if refresh:
                     app.ensure_worker()
                     tracker.add_task("refresh")
-                    return ("Saved. Your fields changed, so the job lists are being refreshed; "
-                            "follow it on Today."), "/"
-                if not tracker.with_status(*ORDER):  # Nothing fetched yet.
-                    app.ensure_worker()
-                    tracker.add_task("refresh")
-                    return ("Saved. No jobs yet, so the job lists are being refreshed with these filters; "
-                            "follow it on Today."), "/"
-                after = len(tracker.with_status("found"))
-                return (f"Saved. {after} job(s) pass your filters ({after - before:+d}). "
-                        "Rank them on the Ranked jobs page."), "/search"
+                    return message + " Follow it on Today.", "/"
+                return message + " Rank them on the Ranked jobs page.", "/search"
             if path == "/draft":
                 app.ensure_worker()
                 tracker.add_task("draft", int(one["job_id"]))
@@ -1176,10 +1310,7 @@ def handler_for(app: Dashboard):
                 return message, "/resumes"
             if path == "/profile/save":
                 name = one.get("file", "")
-                config.save_profile_file(name, one.get("content", ""))
-                if name == "profile.yaml":  # Preferences may have changed what passes the filters.
-                    sources.apply_filters(tracker, config.load_profile())
-                    matching.keyword_rank(tracker, config.load_profile())
+                actions.save_profile(tracker, name, one.get("content", ""))
                 return f"Saved {name}.", "/profile"
             if path == "/resumes/discard":
                 resumes.discard()

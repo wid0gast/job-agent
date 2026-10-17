@@ -59,7 +59,7 @@ def explore(ctx, job: dict, description: str, document, log, facts=lambda: []) -
     "cover_letter"), making the letter on first request. Returns answers,
     recording and the agent's report; raises ValueError if it didn't reach
     the final step."""
-    from .planner import trace_path
+    from .harness import trace_path
     from .prompts import EXPLORE_PROMPT
 
     browser = ctx.browser()

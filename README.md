@@ -20,8 +20,15 @@ and applies only after you approve.
 - **Ranks** every job against what you're looking for: free keyword scores for all of them, then Claude scores the best 120.
 - **Prepares** an application: it reads the full posting, checks your fit requirement by requirement, tailors your resume, researches the company, and drafts every answer, each with its source.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.
+- **Talks with you.** The Assistant tab is a chat that can do everything the app does, and search the web too.
 
 It never invents experience or numbers, ignores instructions hidden in job pages, and hands CAPTCHAs and verification codes back to you.
+
+## Just ask
+
+Use the dashboard, or just ask. "Find my 5 best matches, one per company, and prepare them." "Add my new project to my resume." "Make the Stripe cover letter shorter." The assistant uses the same tools as the dashboard. Each step shows in the chat, edits to your resume and profile can be undone, and it can only *ask* to submit: nothing is sent until you click.
+
+<p align="center"><img src="docs/screenshots/assistant.png" alt="The assistant chat: it checks an application and asks you to confirm before submitting" width="900"></p>
 
 ## How it works
 
@@ -98,7 +105,7 @@ Each task gets a model that fits it, so simple work doesn't spend your best mode
 | Model | Used for |
 | --- | --- |
 | **Haiku 5.5** | Ranking job titles in bulk (the fit check reads the full posting later) |
-| **Sonnet 5.5** | Reading resume PDFs, profile facts, company research, the planner |
+| **Sonnet 5.5** | The assistant chat (pick another model per chat), reading resume PDFs, profile facts, company research |
 | **Opus 5.5** | Fit checks, tailored resumes, cover letters, application answers, filling unfamiliar forms |
 
 The dashboard's Connect page shows the full list. `CLAUDE_MODEL_LIGHT`, `_STANDARD` and `_BEST` swap a tier, and `CLAUDE_MODEL` uses one model for everything.

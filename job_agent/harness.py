@@ -25,11 +25,20 @@ class Tool:
     fn: Callable[..., object]
     # Results of ephemeral tools (page snapshots) are pruned once superseded.
     ephemeral: bool = False
+    # Reads only: safe to run alongside other reads.
+    read_only: bool = False
 
     def declaration(self) -> dict:
         return {"type": "function",
                 "function": {"name": self.name, "description": self.description,
                              "parameters": self.parameters}}
+
+
+def trace_path(name: int | str) -> Path:
+    """Where an agent run's trace lives (data/runs/<name>.jsonl)."""
+    from . import config
+
+    return config.DATA_DIR / "runs" / f"{name}.jsonl"
 
 
 def schema(properties: dict | None = None, required: list[str] | None = None) -> dict:

@@ -90,7 +90,7 @@ class Stop(Exception):
 
 def prepare(job_id: int, ctx, log=print, note: str = "") -> str:
     """Returns the job's new status. `ctx` carries tracker, settings, llm, headless, http.
-    `note` is a reviewer's instruction for a redo (e.g. from the planner agent)."""
+    `note` is your instruction for a redo (e.g. given to the assistant)."""
     tracker = ctx.tracker
     job = tracker.get(job_id)
     tracker.move(job_id, ("found", "needs_you", "prepared"), "preparing", reason=None)
@@ -185,6 +185,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
     log("  tailoring the resume")
     tailored, resume = tailored_resume(ctx, job, description, profile, master, folder, stem,
                                        full_name, log, note)
+    printed = resume.pop("doc")  # After fitting to the page: what edits change and typesetting reuses.
     docs = {"resume": resume, "cover_letter": None}
 
     found: dict = {}
@@ -260,7 +261,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         "documents": docs,
         "tailoring": {k: tailored[k] for k in ("matched", "emphasized", "gaps")},
         # The structured resume, so it can be typeset again without a model call.
-        "resume_doc": {k: tailored[k] for k in ("header_note", "sections")},
+        "resume_doc": {k: printed.get(k) for k in ("header_note", "sections")},
         "reviewer_note": note or None,
         "checks": {"resume_pages": resume["pages"],
                    "invented_numbers": tailored.get("invented", [])},
@@ -349,3 +350,37 @@ def draft_missing(job_id: int, ctx, log=print) -> str:
     if job["status"] == "needs_you" and not waiting:
         tracker.move(job_id, "needs_you", "prepared", reason="Drafted the new answers; review and approve.")
     return f"{len(open_fields) - waiting} drafted, {waiting} still need you"
+
+
+def render(job_id: int, ctx, log=print) -> str:
+    """Typeset a packet's documents again after an edit (resume_doc and the letter's Markdown)."""
+    job = ctx.tracker.get(job_id)
+    packet = packets.load(job)
+    if packet is None or job["status"] not in ("prepared", "needs_you"):
+        raise ValueError(f"Job {job_id} has no packet to typeset (it is {job['status']}).")
+    profile = config.load_profile()
+    contact = profile.get("contact", {})
+    full_name = contact.get("name", "Applicant")
+    folder = Path(packet["_dir"])
+    docs, done = packet["documents"], []
+    if docs.get("resume") and packet.get("resume_doc"):
+        log("  typesetting the resume")
+        pages = int(profile.get("preferences", {}).get("resume_pages") or 1)
+        stem = Path(docs["resume"]["pdf"]).stem
+        docs["resume"] = documents.save_resume(ctx.headless, folder, stem, packet["resume_doc"], contact, pages,
+                                               f"{full_name} Resume")
+        printed = docs["resume"].pop("doc")
+        packet["resume_doc"] = {k: printed.get(k) for k in ("header_note", "sections")}
+        packet["checks"]["resume_pages"] = docs["resume"]["pages"]
+        done.append("resume")
+    if docs.get("cover_letter"):
+        log("  typesetting the cover letter")
+        letter = docs["cover_letter"]
+        text = Path(letter["markdown"]).read_text(encoding="utf-8")
+        docs["cover_letter"] = documents.save_letter(ctx.headless, folder, Path(letter["pdf"]).stem, text,
+                                                     contact, f"{full_name} Cover Letter")
+        done.append("cover letter")
+    packet["approved_hash"] = None
+    packets.store(packet)
+    ctx.tracker.update(job_id, resume_path=(docs.get("resume") or {}).get("pdf"))
+    return f"Typeset again: {', '.join(done) or 'nothing'}."

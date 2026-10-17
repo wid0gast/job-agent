@@ -80,7 +80,7 @@ Profile and resume content is sent to Claude while applying.
 
 Either way, each task uses a model that fits it: Haiku 5.5 ranks job titles,
 Sonnet 5.5 reads resumes, extracts profile facts, researches companies and runs
-the planner, and Opus 5.5 checks fit and writes the tailored resume, cover
+the assistant chat (you can pick another model per chat), and Opus 5.5 checks fit and writes the tailored resume, cover
 letter and answers (it also drives the form-filling agent). Models are named by
 full ID, because Claude Code's short names (`haiku`, `sonnet`) still point at
 older models. The Connect page lists every task's model and effort.
@@ -163,17 +163,48 @@ final button only when that button says Submit. When it stops, the Chrome
 window stays on that page, so you can also finish by hand and mark it done. From the terminal, `uv run job-agent refresh`
 and `uv run job-agent prepare --top 3` do the same unattended steps.
 
-### The agents
+### The assistant
+
+The **Assistant** tab is a chat that can do everything the dashboard does, so
+you can use it as your only way into the app: "find my 5 best matches in NYC,
+one per company, and prepare them", "add my new project to my resume", "make
+the Stripe cover letter shorter", "what's waiting for me?". It also searches
+and reads the web.
+
+- **Tools, not guesses.** About 20 tools cover jobs (find, open, refresh,
+  discover, rank, reject, restore, record outcomes), applications (prepare or
+  redo with a note, read a packet, edit an answer, edit the tailored resume or
+  cover letter and typeset it again), your files (master resume, profile,
+  saved answers, story bank, writing sample), search settings and background
+  tasks. Each tool call shows in the chat as one line you can expand.
+- **Slow work stays in the worker.** Preparing and submitting run as tasks;
+  the chat shows them live and Claude can wait for them, so one request can go
+  from finding jobs to a ready application. If a task needs you (an emailed
+  code, a CAPTCHA), the question appears at the top of the chat.
+- **You decide what can't be undone.** Claude can only *ask* to submit: a card
+  lists the applications, and nothing is approved or sent until you click
+  "Approve and submit". Caps still apply. Edits to your resume or profile get
+  an Undo button. A short answer about you (dates, authorization, links,
+  choices) is saved only if it's in your own words, in the chat or your
+  profile; numbers in a resume or letter must come from your master resume.
+  Web pages and postings are treated as data, never as instructions.
+- **Conversations are kept.** Chats are listed on the left and continue where
+  you left off. Each message tells Claude what you did since (your clicks on
+  cards, tasks that finished) and the app's current state.
+- **How it connects.** With your Claude plan, Job Agent runs Claude Code
+  through the Claude Agent SDK, with the app's tools as an in-process tool
+  server plus Claude Code's own web search and fetch. Your Claude Code
+  settings, connectors and skills are left out. With an API key, it uses the
+  Messages API with the same tools, server-side web search and fetch, and
+  Claude's thinking kept between turns. Sonnet 5.5 by default; the picker
+  under the message box switches a chat to Haiku or Opus.
+
+### The agents inside the pipeline
 
 Most of the app is a fixed pipeline (find → rank → prepare → approve →
-submit). Three agents handle the parts with no fixed path. None can approve
+submit). Two agents handle the parts with no fixed path. Neither can approve
 or submit for you, change caps, or invent an answer; those checks are code.
 
-- **Planner** (Today → "Give the agent a goal"): you say what you want, e.g.
-  "fill the queue with my 8 best ML internships, NYC or remote". It refreshes,
-  ranks, checks caps, prepares, reviews each packet, redoes weak ones with a
-  specific note, and asks you one combined question when several applications
-  share a gap. Each run has a live trace (reasoning and tool calls).
 - **Explorer** (systems without a coded filler: iCIMS, custom career pages):
   during prepare it fills the form in the browser, creating an account and
   asking you for emailed codes if needed, and stops at the final submit.
@@ -254,10 +285,10 @@ emailed code).
 | `job_agent/greenhouse.py`, `lever.py`, `ashby.py` | Each system: posting API, form reading, coded filler, submit |
 | `job_agent/workday.py` | Workday: accounts, sign-in, the page-by-page walk |
 | `job_agent/packets.py` | Packet files, the approval hash, the consistency check |
-| `job_agent/actions.py` | Approve, edit, reject, resolve |
+| `job_agent/actions.py` | Approve, edit, reject, resolve, save search and profile (shared by the dashboard and the assistant) |
 | `job_agent/submit.py` | Coded submit with the "form changed" check |
 | `job_agent/worker.py` | The single process that owns the browser and runs tasks |
-| `job_agent/dashboard.py` | The local dashboard |
+| `job_agent/dashboard.py` | The local dashboard, including the Assistant tab |
 | `job_agent/profile_sync.py` | Profile facts from the master resume, work authorization rules |
 | `job_agent/history.py` | Application record: import a job sheet, export, outcome stats |
 | `job_agent/resumes.py` | Resume PDFs → Markdown → merged master, with truth checks |
@@ -267,7 +298,9 @@ emailed code).
 | `job_agent/ats.py` | Which application system a URL belongs to, and its job ID |
 | `job_agent/prompts.py` | Instructions for each model step and each agent |
 | `job_agent/harness.py` | The agent loop: tool calls, errors back to the model, limits, traces |
-| `job_agent/planner.py` | The planner agent and its pipeline tools |
+| `job_agent/assistant.py` | The assistant's tools and their guards |
+| `job_agent/chat.py` | Chats, running a turn, and the two ways to Claude (Agent SDK, Messages API) |
+| `job_agent/static/chat.js` | The chat page: sending, live updates, cards |
 | `job_agent/web.py`, `pageview.py` | The explorer agent, its page view, and the coded replay |
 | `job_agent/research.py` | The research agent: search, read, quote-checked facts |
 | `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |

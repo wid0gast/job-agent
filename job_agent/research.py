@@ -119,7 +119,7 @@ def research(ctx, job: dict, description: str, log) -> dict:
     """Facts about the company and team, each backed by a quote from a fetched page."""
     import json
 
-    from .planner import trace_path
+    from .harness import trace_path
     from .prompts import RESEARCH_PROMPT
 
     researcher = Researcher(ctx, job, description, log)

@@ -33,7 +33,7 @@ TASKS = {
     "resume_markdown": ("standard", "low"),    # a PDF's text to Markdown, wording kept
     "resume_facts": ("standard", "low"),       # contact, education, work authorization: used in every form
     "research": ("standard", "medium"),        # agent: reads company pages, keeps quoted facts
-    "planner": ("standard", "medium"),         # agent: runs the pipeline; the writing is done by Opus steps
+    "assistant": ("standard", "medium"),       # the chat (pick per chat); the writing is done by Opus steps
     "fit": ("best", "medium"),                 # decides whether you apply at all
     "tailored_resume": ("best", "high"),       # what recruiters read; must not invent
     "cover_letter": ("best", "high"),

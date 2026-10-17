@@ -1,4 +1,4 @@
-"""What you can do to a job from the dashboard (or a script).
+"""What you can do from the dashboard, the assistant or a script.
 
 Approval is where limits are enforced for you: it refuses when a required
 answer is missing, an answer contradicts your profile, or the company or
@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import yaml
 
-from . import answers, companies, config, packets
+from . import answers, companies, config, matching, packets, sources
 from .forms import pick_option
 
 
@@ -83,3 +83,50 @@ def requeue(tracker, job_id: int) -> None:
     tracker.move(job_id, ("failed", "rejected", "skipped", "closed", "filtered_out"), "found",
                  reason="Requeued by you.")
 
+
+
+def ready_to_submit(tracker, settings, job_ids: list[int]) -> tuple[list[int], list[str]]:
+    """Approve the prepared ones (approved ones stay); returns (ready ids, problems)."""
+    ready, problems = [], []
+    for job_id in job_ids:
+        job = tracker.get(job_id)
+        try:
+            if job is None:
+                raise ValueError("no such job")
+            if job["status"] == "prepared":
+                approve(tracker, settings, job_id)
+            elif job["status"] != "approved":
+                raise ValueError(f"it is {job['status'].replace('_', ' ')}, not prepared")
+            ready.append(job_id)
+        except ValueError as error:
+            problems.append(f"#{job_id}: {error}")
+    return ready, problems
+
+
+def save_search(tracker, settings, values: dict) -> tuple[str, bool]:
+    """Save search settings and apply them to the jobs found. Returns (message, refresh needed)."""
+    fields_before = sources.chosen_fields(config.load_profile())
+    config.save_search(values)
+    profile = config.load_profile()
+    before = len(tracker.with_status("found"))
+    sources.apply_filters(tracker, profile)
+    matching.keyword_rank(tracker, profile)
+    # A lower threshold brings back jobs whose fit was below the old one.
+    threshold = config.fit_threshold(profile, settings)
+    for job in tracker.with_status("filtered_out"):
+        if (job["reason"] or "").startswith("Fit ") and (job["fit_score"] or 0) >= threshold:
+            tracker.update(job["id"], status="found", reason="Back: above your new threshold.")
+    if sources.chosen_fields(profile) != fields_before:
+        return "Saved. Your fields changed, so the job lists are being refreshed.", True
+    if not tracker.all():  # Nothing fetched yet.
+        return "Saved. No jobs yet, so the job lists are being refreshed with these filters.", True
+    after = len(tracker.with_status("found"))
+    return f"Saved. {after} job(s) pass your filters ({after - before:+d}).", False
+
+
+def save_profile(tracker, name: str, content: str) -> None:
+    """Save a profile file; preferences may change which jobs pass the filters."""
+    config.save_profile_file(name, content)
+    if name == "profile.yaml":
+        sources.apply_filters(tracker, config.load_profile())
+        matching.keyword_rank(tracker, config.load_profile())
