@@ -33,6 +33,15 @@ parser.add_argument("--personal-from", type=Path, default=ROOT / "profile",
                     help="Your profile folder (read only, to check nothing personal goes in the ZIP).")
 args = parser.parse_args()
 PERSONAL = personal_pattern(args.personal_from)
+
+# The platform's build starts with `uv lock --check --offline`: a lock that doesn't match
+# pyproject.toml (a changed version or description) fails there, before the build runs.
+import subprocess  # noqa: E402
+
+check = subprocess.run(["uv", "lock", "--check", "--offline"], cwd=ROOT / "appstore", capture_output=True, text=True)
+if check.returncode != 0:
+    raise SystemExit("Refusing: appstore/uv.lock doesn't match appstore/pyproject.toml. Run `uv lock` in appstore/.\n"
+                     + (check.stderr or check.stdout).strip()[-400:])
 if args.output.exists():
     parser.error(f"{args.output} exists; choose another name.")
 
