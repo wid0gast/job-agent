@@ -143,7 +143,7 @@ class Assistant:
         return self.queue("discover", note="Searches job sites for your roles (about a minute).")
 
     def rank_jobs(self):
-        return self.queue("score_matches", note="Claude scores the best keyword matches (a minute or two).")
+        return self.queue("score_matches", note="The model scores the best keyword matches (a minute or two).")
 
     def prepare_applications(self, job_ids: list[int], note: str = ""):
         queued, problems = [], []
@@ -204,7 +204,7 @@ class Assistant:
         if not essay:
             self.check_their_words(value)
         actions.edit_answer(self.tracker, job_id, key, value, remember=remember and not essay)
-        if essay:  # Written by Claude for you: marked as such on the review page.
+        if essay:  # Written by the model for you: marked as such on the review page.
             packet = packets.load(self.tracker.get(job_id))
             for a in packet["answers"]:
                 if a["key"] == key:
@@ -404,7 +404,7 @@ class Assistant:
                  schema(), self.refresh_jobs),
             Tool("discover_companies", "Search applicant-tracking sites for companies hiring for the user's roles "
                  "and add their boards (background task).", schema(), self.discover_companies),
-            Tool("rank_jobs", "Have Claude score the best keyword matches against the user's description "
+            Tool("rank_jobs", "Have the model score the best keyword matches against the user's description "
                  "(background task).", schema(), self.rank_jobs),
             Tool("prepare_applications", "Prepare application packets (fit check, tailored resume, drafted "
                  "answers) as background tasks. Also redoes a prepared one: pass a note saying what to change, "

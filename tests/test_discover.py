@@ -179,3 +179,25 @@ def test_remote_abroad_and_past_seasons():
         == "Summer 2025 has passed."
     picky = {"preferences": {"locations": ["any"], "terms": ["Summer 2099"]}}
     assert filters.check({"title": "ML Intern - Fall 2098", "job_type": "internship"}, {}, picky).startswith("Term")
+
+
+def test_discover_without_a_web_searching_model(world, monkeypatch):
+    """The class models can't search the web: the app runs the searches itself, and no model call is made."""
+    from job_agent import research
+
+    tracker, company_file = world
+    asked = []
+
+    def search(client, query):
+        asked.append(query)
+        return [{"title": "Job Application for Software Engineer Intern at Acme",
+                 "url": "https://apply.workable.com/acme/j/AB12/", "snippet": ""},
+                {"title": "Software Engineer - Indeed", "url": "https://www.indeed.com/viewjob?jk=1", "snippet": ""}]
+
+    monkeypatch.setattr(research, "search", search)
+    monkeypatch.setattr(discover.time, "sleep", lambda s: None)
+    counts = discover.run(None, tracker, config.load_profile(), log=lambda *_: None)
+    assert asked and all("site:" in q for q in asked) and len(asked) <= discover.MAX_SEARCHES
+    assert '"Software Engineer" New York' in asked[0]
+    assert companies.Companies(company_file).by_board("workable", "acme")
+    assert counts["new_boards"] == 1 and counts["new"] >= 1

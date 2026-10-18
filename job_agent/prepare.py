@@ -13,7 +13,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import answers, companies, config, documents, filters, latex, packets, research, systems, web
-from .llm import NOT_SET_UP
 from .prompts import COVER_LETTER_PROMPT, FIT_PROMPT, TAILOR_PROMPT
 
 
@@ -147,7 +146,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         raise Stop("filtered_out", reason)
 
     if ctx.llm is None:
-        raise Stop("found", NOT_SET_UP)
+        raise Stop("found", "Add an OpenRouter key and model in .env to prepare applications.")
     master = config.read_master_resume()
     log("  scoring fit")
     fit = ctx.llm.json(FIT_PROMPT, json.dumps({
@@ -336,7 +335,7 @@ def draft_missing(job_id: int, ctx, log=print) -> str:
     if packet is None or job["status"] not in ("needs_you", "prepared"):
         raise ValueError(f"Job {job_id} has nothing to draft (it is {job['status']}).")
     if ctx.llm is None:
-        raise ValueError(NOT_SET_UP)
+        raise ValueError("Add an OpenRouter key and model in .env to draft answers.")
     open_fields = [a for a in packet["answers"]
                    if a.get("value") in (None, "", []) and a["kind"] != "file"]
     if open_fields:

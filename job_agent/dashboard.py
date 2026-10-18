@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from email.parser import BytesParser
 from email.policy import default as email_policy
 
-from . import actions, claude_login, config, history, matching, packets, resumes, sources, systems
+from . import actions, config, history, matching, packets, resumes, sources, systems
 from . import llm as llm_models
 from .chat import ChatStore, Turns
 from .tracker import OUTCOMES, Tracker
@@ -179,6 +179,34 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 """
 
 
+# Hosted only: the class platform refuses plain form posts as cross-origin but
+# accepts the same request sent by a script, so forms are sent with fetch().
+FORMS_JS = """
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || form.method.toLowerCase() !== "post") return;
+  event.preventDefault();
+  const data = new FormData(form);
+  if (event.submitter && event.submitter.name) data.append(event.submitter.name, event.submitter.value);
+  const buttons = form.querySelectorAll("button");
+  buttons.forEach((b) => { b.disabled = true; });
+  document.body.style.cursor = "progress";
+  try {
+    const response = await fetch(form.action, { method: "POST", body: data, credentials: "same-origin" });
+    if (!response.ok) throw new Error(response.status + " " + (await response.text()).slice(0, 300));
+    location.href = response.url;
+  } catch (error) {
+    buttons.forEach((b) => { b.disabled = false; });
+    document.body.style.cursor = "";
+    const note = document.createElement("div");
+    note.className = "flash bad";
+    note.textContent = "Could not send that: " + error.message;
+    document.querySelector("main").prepend(note);
+  }
+});
+"""
+
+
 def esc(value) -> str:
     return html.escape("" if value is None else str(value))
 
@@ -192,8 +220,8 @@ class Dashboard:
         from .llm import client
 
         llm = client(settings)
-        self.backend = None if llm is None else type(llm).__name__  # ClaudeCode or AnthropicAPI
-        self.model = llm.model if llm else ""  # Set only when CLAUDE_MODEL forces one model.
+        self.backend = None if llm is None else type(llm).__name__  # Broker (class app store) or OpenRouter
+        self.model = settings.model
         self.plan = llm.plan() if llm else {}  # Task -> (model, effort)
         self._missing: bool | None = None  # Tests set llm_missing directly.
         self.chats = ChatStore(DB_PATH)
@@ -202,11 +230,8 @@ class Dashboard:
 
     @property
     def llm_missing(self) -> bool:
-        """No usable connection: none set up, or Claude Code isn't signed in."""
         if self._missing is not None:
             return self._missing
-        if self.backend == "ClaudeCode":
-            return not claude_login.status()["loggedIn"]
         return self.backend is None
 
     @llm_missing.setter
@@ -215,15 +240,10 @@ class Dashboard:
 
     @property
     def connection(self) -> str:
-        if self.backend == "AnthropicAPI":
-            return "Anthropic API" + (f" · {self.model}" if self.model else "")
-        if self.backend == "ClaudeCode":
-            info = claude_login.status()
-            if not info["loggedIn"]:
-                return "Claude: not signed in"
-            # The plan only: the header shows on every page (and in screenshots); the Connect page has the email.
-            return claude_login.describe({**info, "email": ""}) + (f" · {self.model}" if self.model else "")
-        return "Claude not connected"
+        if self.backend is None:
+            return "No model connected"
+        name = self.model.split(",")[0].split("/")[-1]
+        return ("Class models · " if self.backend == "Broker" else "OpenRouter · ") + name
 
     def ensure_worker(self) -> None:
         if self.worker and self.worker.poll() is None:
@@ -242,6 +262,7 @@ class Dashboard:
                 self.worker.kill()
 
 
+SCRIPT = '<script src="/forms.js" defer></script>'
 
 
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False) -> bytes:
@@ -254,27 +275,89 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     auto = '<meta http-equiv="refresh" content="4">' if refresh else ""
     banner = ('<div class="flash warn">Auto-submit is on.</div>'
               if app.settings.submit_mode == "auto" else "")
+    if config.HOSTED:
+        banner += hosted_banner()
     banner += start_here(app, active)
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
             f"content='width=device-width,initial-scale=1'>{auto}<title>Job Agent</title>"
-            f"<link rel=stylesheet href=/style.css></head><body><header>"
+            f"<link rel=stylesheet href=/style.css>{SCRIPT if config.HOSTED else ''}</head><body><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
             f"<main>{banner}{note}{body}</main></body></html>").encode()
 
 
 def start_here(app: Dashboard, active: str) -> str:
-    """First-run guidance: connect Claude, then upload a resume and describe the jobs you want."""
+    """First-run guidance: a model, then a resume and the jobs you want."""
     parts = []
     if app.llm_missing and active != "/connect":
-        parts.append('<div class="flash bad"><b>Claude isn\'t connected yet.</b> '
-                     '<a href="/connect">Connect Claude</a> to rank jobs and prepare applications.</div>')
+        how = ("The class models aren't available this visit." if config.HOSTED else
+               'Set <code>OPENROUTER_API_KEY</code> and <code>OPENROUTER_MODEL</code> in <code>.env</code> and restart.')
+        parts.append(f'<div class="flash bad"><b>No model connected.</b> {how} '
+                     '<a href="/connect">Details</a>.</div>')
     if not (config.PROFILE_DIR / "resume.md").exists() and active not in ("/resumes",):
         parts.append('<div class="flash warn">Start here: <a href="/resumes">upload your resume PDF(s)</a>, '
                      'accept the merged master resume, then describe the jobs you want on '
                      '<a href="/search">Search</a>. Optional: import your job sheet on '
                      '<a href="/applications">Applications</a>.</div>')
     return "".join(parts)
+
+
+def hosted_banner() -> str:
+    """Class app store: the session is temporary, so say when it ends and offer the download."""
+    import os
+    from datetime import datetime
+
+    parts = []
+    if os.environ.get("JOB_AGENT_MODEL_ERROR"):
+        parts.append(f'<div class="flash bad">Could not connect to the class models: '
+                     f'{esc(os.environ["JOB_AGENT_MODEL_ERROR"])}</div>')
+    ends = os.environ.get("JOB_AGENT_SESSION_ENDS", "")
+    try:
+        minutes = int((datetime.fromisoformat(ends.replace("Z", "+00:00")).timestamp()
+                       - datetime.now().timestamp()) // 60)
+        left = f"This session ends in about {max(0, minutes)} minutes and forgets everything. "
+    except ValueError:
+        left = "This session is temporary and forgets everything when it ends. "
+    parts.append(f'<div class="flash">{left}<a href="/export.zip">Download everything</a> '
+                 '(resumes, applications, answers, passwords) before then.</div>')
+    return "".join(parts)
+
+
+def page_passwords() -> str:
+    """Hosted: site accounts made this session; there's no keychain to keep them in."""
+    if not config.HOSTED or not config.PASSWORDS_FILE.exists():
+        return ""
+    stored = json.loads(config.PASSWORDS_FILE.read_text())
+    rows = "".join(f"<tr><td>{esc(k.split('|')[0].split(':', 1)[-1])}</td><td>{esc(k.split('|')[-1])}</td>"
+                   f"<td><code>{esc(v)}</code></td></tr>" for k, v in stored.items())
+    return (f'<div class=card><h2>Accounts created this session</h2><p class=muted>Save these: the session '
+            f'forgets them.</p><table><tr><th>Site</th><th>Email</th><th>Password</th></tr>{rows}</table></div>')
+
+
+def export_zip() -> bytes:
+    """Everything the session made, minus caches."""
+    import io
+    import zipfile
+
+    import sqlite3
+
+    buffer = io.BytesIO()
+    skip = {"browser-profile", "worker.lock", "cache"}  # cache: raw job lists, fetched again on refresh.
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for folder in (config.PROFILE_DIR, config.DATA_DIR):
+            for path in folder.rglob("*"):
+                if (path.is_file() and not skip & set(path.relative_to(config.HOME).parts)
+                        and not path.name.startswith("applications.db")):
+                    archive.write(path, path.relative_to(config.HOME))
+        # One consistent copy of the database, even while the worker is writing to it.
+        live, copy = sqlite3.connect(DB_PATH), sqlite3.connect(":memory:")
+        try:
+            live.backup(copy)
+            archive.writestr("data/applications.db", copy.serialize())
+        finally:
+            live.close()
+            copy.close()
+    return buffer.getvalue()
 
 
 def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
@@ -289,78 +372,35 @@ def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
 # ----- pages ----------------------------------------------------------------
 
 
-TASK_LABELS = {
-    "match_scores": "Ranking job titles", "resume_markdown": "Reading resume PDFs",
-    "resume_facts": "Profile facts from your resume", "research": "Company research (agent)",
-    "assistant": "Assistant chat (default; pick per chat)", "fit": "Fit check on the full posting", "tailored_resume": "Tailored resume",
-    "cover_letter": "Cover letter", "form_answers": "Application answers and essays",
-    "explore": "Filling unfamiliar forms (agent)",
-}
-MODEL_NAMES = {"claude-haiku-5-5": "Haiku 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5"}
-
-
-def models_card(app: Dashboard) -> str:
-    """Which model and effort each task uses: lighter models for bulk work, Opus for what employers see."""
-    if not app.plan:
-        return ""
-    rows = "".join(f"<tr><td>{TASK_LABELS.get(task, task)}</td><td><b>{esc(MODEL_NAMES.get(model, model))}</b></td>"
-                   f"<td class=muted>{effort}</td></tr>"
-                   for task, (model, effort) in sorted(app.plan.items(), key=lambda kv: (kv[1][0], kv[0])))
-    how = ("<code>CLAUDE_MODEL</code> is set, so every task uses it." if app.model else
-           "Bulk work goes to lighter models; what decides whether you apply, and what employers read, gets Opus. "
-           "Change a tier with <code>CLAUDE_MODEL_LIGHT</code>, <code>_STANDARD</code> or <code>_BEST</code> in "
-           "<code>.env</code>, or use one model everywhere with <code>CLAUDE_MODEL</code>.")
-    return (f'<div class=card><h2>Which model does what</h2><p class=muted>{how}</p>'
-            f'<table><tr><th>Task</th><th>Model</th><th>Effort</th></tr>{rows}</table></div>')
 
 
 def page_connect(app: Dashboard, flash: str) -> bytes:
-    """Connect Claude: your Claude Code sign-in (your plan), or an API key."""
-    if app.backend == "AnthropicAPI":
-        body = f"""<h1>Connect Claude</h1>
-    <div class=card><h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Connected with an
-    Anthropic API key</h2><p class=muted>Billed per token by Anthropic, with a
-    spending cap of ${app.settings.spend_cap_usd:.2f} per run (<code>SPEND_CAP_USD</code>). To use your Claude plan
-    instead, set <code>MODEL_BACKEND=claude-code</code> in <code>.env</code> and restart.</p></div>
-    {models_card(app)}"""
-        return layout(app, "/connect", body, flash)
-    info = claude_login.status(fresh=True)
-    login = claude_login.current()
-    if not info["installed"]:
-        state = """<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>Claude Code isn't
-        installed</h2><p class=muted>Job Agent reaches Claude through Claude Code, signed in with your own Claude
-        account. Install it (<a href="https://code.claude.com/docs/en/setup" target=_blank>instructions</a>), then
-        reload this page.</p>"""
-    elif info["loggedIn"]:
-        state = (f'<h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Connected to '
-                 f'{esc(claude_login.describe(info))}</h2><p class=muted>Each model request runs Claude Code headless '
-                 f'with your sign-in: a fresh, unsaved session with its own tools off. Usage counts against your '
-                 f'Claude plan; nothing is billed per token.</p>'
-                 + form(app, "/connect/logout", "Sign out of Claude Code"))
+    """Which model the app uses: the class broker's on the app store, OpenRouter on a laptop."""
+    model = esc(app.model.split(",")[0]) if app.model else ""
+    if app.backend == "Broker":
+        state = (f'<h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Class models: '
+                 f'{model}</h2><p class=muted>Requests go through the class model broker, with a budget of '
+                 f'${app.settings.spend_cap_usd:.2f} for this visit. The platform allows about 20 model requests '
+                 'per visit, two at a time, so ranking scores only the best keyword matches and each assistant '
+                 'reply uses a few.</p>')
+    elif app.backend == "OpenRouter":
+        state = (f'<h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>OpenRouter: '
+                 f'{model}</h2><p class=muted>Set by <code>OPENROUTER_MODEL</code> in <code>.env</code> (a '
+                 f'comma-separated list tries each in turn). Spending cap ${app.settings.spend_cap_usd:.2f} per run '
+                 f'(<code>SPEND_CAP_USD</code>); providers that train on your data are '
+                 f'{"excluded" if app.settings.data_collection == "deny" else "allowed"}.</p>')
+    elif config.HOSTED:
+        state = ('<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>No class model '
+                 'this visit</h2><p class=muted>The class broker didn\'t give this visit a model. Reopen the app '
+                 'from the class portal.</p>')
     else:
-        waiting = login is not None and login.running and login.url
-        step2 = (f'<li>Approve on the Claude page (<a href="{esc(login.url)}" target=_blank>open it again</a>) '
-                 f'and copy the code it shows.</li><li>Paste the code here:'
-                 f'<form method=post action="/connect/code" class="row code">'
-                 f'<input type=hidden name=token value="{app.token}">'
-                 f'<input type=text name=code required autofocus placeholder="Code from the Claude page" '
-                 f'style="max-width:420px"><button class=primary>Connect</button></form></li>'
-                 if waiting else
-                 '<li>Approve on the Claude page and copy the code it shows.</li><li>Paste the code here.</li>')
-        state = (f'<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>Not signed in'
-                 f'</h2><p class=muted>Sign in with your Claude account (Pro or Max) to use your plan. No API key.'
-                 f'</p><ol class=steps><li class="{"done" if waiting else ""}">'
-                 + (form(app, "/connect/start", "Sign in with Claude", primary=True) if not waiting else
-                    "A Claude sign-in page opened in your browser.")
-                 + f'</li>{step2}</ol>')
-    body = f"""<h1>Connect Claude</h1>
-    <div class=card>{state}</div>
-    {models_card(app)}
-    <div class=card><h2>Prefer an API key?</h2><p class=muted style="margin:0">Put
-    <code>MODEL_BACKEND=anthropic</code> and <code>ANTHROPIC_API_KEY=…</code> in <code>.env</code> (or sign in with
-    Anthropic's <code>ant auth login</code>) and restart. Billed per token, with <code>SPEND_CAP_USD</code> per run.
-    Job Agent is a personal tool: use your own account or key on your own computer.</p></div>"""
+        state = ('<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>No model '
+                 'connected</h2><p class=muted>Put <code>OPENROUTER_API_KEY</code> and <code>OPENROUTER_MODEL</code> '
+                 'in <code>.env</code> (see <code>.env.example</code>) and restart.</p>')
+    body = f"""<h1>Model</h1><div class=card>{state}<p class=muted style="margin:0">One model does every step:
+    ranking, fit checks, tailored resumes, cover letters, answers, the agents and the assistant chat.</p></div>"""
     return layout(app, "/connect", body, flash)
+
 
 def page_today(app: Dashboard, flash: str) -> bytes:
     jobs = app.tracker.all()
@@ -379,14 +419,18 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     for task in tasks:
         reply = ""
         if task["status"] == "waiting":
-            reply = (f'<div class="card" style="margin:8px 0 0"><b>{esc(task["question"])}</b>'
+            from .worker import LIVE_SCREENSHOT
+
+            shot = (f' <a href="/file?path={quote(str(LIVE_SCREENSHOT))}" target=_blank>See the page</a>'
+                    if config.HOSTED and LIVE_SCREENSHOT.exists() else "")
+            reply = (f'<div class="card" style="margin:8px 0 0"><b>{esc(task["question"])}</b>{shot}'
                      + form(app, "/reply", "Send", {"task_id": task["id"]}, True,
                             '<input type=text name=answer autofocus style="max-width:260px;margin-right:8px">')
                      + "</div>")
         job = f' <a href="/job/{task["job_id"]}">job {task["job_id"]}</a>' if task["job_id"] else ""
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(task["kind"])}{job}</td>'
                     f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
-                    f'<td class="muted">{esc((task["result"] or "")[:160])}</td></tr>')
+                    f'<td class="muted">{esc((task["result"] or "")[:2000 if task["kind"] == "warmup" else 160])}</td></tr>')
     body = f"""
     <h1>Today</h1>
     <div class="stats">{stats}</div>
@@ -395,7 +439,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       {form(app, "/discover", "Discover companies")}
       {form(app, "/prepare-top", "Prepare top matches", extra='<input type=number name=count value=3 min=1 max=20 style="width:70px;margin-right:6px">')}
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
-      · {esc(app.connection)}</span>
+      · model {esc(app.settings.model or "not set")}</span>
     </div></div>
     <div class="card"><h2>Ask the assistant</h2>
     <form method=get action="/assistant"><textarea name=q rows=2 required
@@ -622,7 +666,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     if checks.get("invented_numbers"):
         warn.append(f"Tailoring invented {esc(checks['invented_numbers'])}; your resume was used unchanged.")
     warn += [esc(n) for n in packet.get("form_notes", [])]
-    noticed = ('<div class="card"><h2>What Claude noticed in the posting</h2><ul style="margin:0;padding-left:20px">'
+    noticed = ('<div class="card"><h2>What the model noticed in the posting</h2><ul style="margin:0;padding-left:20px">'
                + "".join(f"<li>{esc(flag)}</li>" for flag in fit["flags"]) + "</ul></div>") if fit.get("flags") else ""
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
@@ -798,7 +842,7 @@ def page_profile(app: Dashboard, flash: str) -> bytes:
             f'{"font:12.5px/1.55 ui-monospace,monospace" if mono else ""}">{esc(text)}</textarea>'
             f'<div class=row style="margin-top:10px"><button class=primary>Save</button></div></form></div>')
     body = f"""<h1>Profile</h1>
-    <p class=muted style="margin-top:-8px">Stays on your computer; sent to Claude only to tailor resumes and answer
+    <p class=muted style="margin-top:-8px">Stays on your computer; sent to the model only to tailor resumes and answer
     application questions.</p>
     {facts}{"".join(cards)}"""
     return layout(app, "/profile", body, flash)
@@ -850,7 +894,7 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
     <input type=text name=status_column placeholder="status column (optional)" style="width:200px">
     <button class=primary>Import</button></form>
     <p style="margin-top:12px"><a class=button href="/applications.csv">Export as CSV</a></p></div>"""
-    return layout(app, "/applications", body, flash)
+    return layout(app, "/applications", body + page_passwords(), flash)
 
 
 def application_block(app: Dashboard, job: dict) -> str:
@@ -912,7 +956,8 @@ SUGGESTIONS = [
 def page_assistant(app: Dashboard, chat_id: int | None, draft: str = "") -> bytes:
     chat = app.chats.chat(chat_id) if chat_id else None
     model = chat["model"] if chat else app.turns.default_model()
-    names = {**{m: MODEL_NAMES.get(m, m) for m in llm_models.TIERS.values()}, model: MODEL_NAMES.get(model, model)}
+    # One model per visit on the class app store; a laptop's OPENROUTER_MODEL list offers each.
+    names = {m: m.split("/")[-1] for m in [model, *llm_models.choices()] if m}
     options = "".join(f'<option value="{esc(m)}"{" selected" if m == model else ""}>{esc(n)}</option>'
                       for m, n in names.items())
     chats = "".join(f'<a class="c{" on" if chat and c["id"] == chat["id"] else ""}" href="/assistant?chat={c["id"]}">'
@@ -1008,16 +1053,18 @@ def handler_for(app: Dashboard):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Content-Security-Policy",
-                             "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
+            if not config.HOSTED:  # The class portal may show the app in a frame.
+                self.send_header("X-Frame-Options", "DENY")
+                self.send_header("Content-Security-Policy",
+                                 "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
             for key, value in (headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 
         def host_ok(self) -> bool:
-            return self.headers.get("Host", "") in allowed_hosts
+            # Hosted, the platform fronts the app and the session token guards changes.
+            return config.HOSTED or self.headers.get("Host", "") in allowed_hosts
 
         def do_GET(self):
             url = urlsplit(self.path)
@@ -1027,6 +1074,11 @@ def handler_for(app: Dashboard):
                 return self.send(b"Forbidden", 403, "text/plain")
             if url.path == "/style.css":
                 return self.send(CSS.encode(), ctype="text/css; charset=utf-8")
+            if url.path == "/forms.js":
+                return self.send(FORMS_JS.encode(), ctype="text/javascript; charset=utf-8")
+            if url.path == "/export.zip" and config.HOSTED:
+                return self.send(export_zip(), ctype="application/zip",
+                                 headers={"Content-Disposition": 'attachment; filename="job-agent-session.zip"'})
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
             flash = query.get("msg", "")
             parts = url.path.strip("/").split("/")
@@ -1081,7 +1133,8 @@ def handler_for(app: Dashboard):
 
         def do_POST(self):
             sent_origin = self.headers.get("Origin")
-            if not self.host_ok() or (sent_origin and sent_origin not in (origin, f"http://localhost:{app.port}")):
+            if not self.host_ok() or (not config.HOSTED and sent_origin
+                                      and sent_origin not in (origin, f"http://localhost:{app.port}")):
                 return self.send(b"Forbidden", 403, "text/plain")
             size = int(self.headers.get("Content-Length", 0))
             if size > 30 * 1024 * 1024:
@@ -1126,11 +1179,11 @@ def handler_for(app: Dashboard):
 
         def chat_api(self, path: str, one: dict) -> dict:
             chat = int(one["chat"]) if one.get("chat", "").isdigit() else None
-            if one.get("model") and one["model"] not in {*llm_models.TIERS.values(), app.turns.default_model()}:
+            if one.get("model") and one["model"] not in {*llm_models.choices(), app.turns.default_model()}:
                 raise ValueError("Pick a model from the list.")
             if path == "/assistant/api/send":
                 if app.llm_missing:
-                    raise ValueError("Connect Claude first (the Connect page).")
+                    raise ValueError("No model is connected (see the Model page).")
                 return {"chat": app.turns.send(chat, one.get("text", ""), one.get("model", ""))}
             if path == "/assistant/api/stop" and chat:
                 app.turns.stop(chat)
@@ -1156,17 +1209,6 @@ def handler_for(app: Dashboard):
         def act(self, path: str, one: dict, fields: dict, back: str) -> tuple[str, str]:
             tracker = app.tracker
             ids = [int(i) for raw in fields.get("ids", []) for i in raw.split(",") if i.strip().isdigit()]
-            if path == "/connect/start":
-                login = claude_login.start()
-                if not login.url:
-                    raise ValueError("Claude Code didn't start its sign-in: " + " ".join(login.output)[-200:])
-                return "A Claude sign-in page opened in your browser. Approve it, then paste the code here.", "/connect"
-            if path == "/connect/code":
-                info = claude_login.finish(one.get("code", ""))
-                return f"Connected: {claude_login.describe(info)}.", "/connect"
-            if path == "/connect/logout":
-                claude_login.logout()
-                return "Signed out of Claude Code on this computer.", "/connect"
             if path == "/discover":
                 app.ensure_worker()
                 tracker.add_task("discover")
@@ -1237,7 +1279,8 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 for job_id in ids:
                     tracker.add_task("submit", job_id)
-                return f"Submitting {len(ids)}. Watch the Chrome window and this page.", "/"
+                where = "this page" if config.HOSTED else "the Chrome window and this page"
+                return f"Submitting {len(ids)}. Watch {where}.", "/"
             if path == "/edit":
                 value = fields.get("value", [""])
                 value = value if len(value) > 1 else value[0]

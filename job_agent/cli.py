@@ -19,7 +19,7 @@ def cmd_setup(_args) -> None:
         print("Created .env from .env.example.")
     print(
         "\nNext: uv run job-agent dashboard, then follow its steps:\n"
-        "  1. Connect Claude (your Claude plan via Claude Code, or an API key).\n"
+        "  1. Put your OpenRouter key and model in .env.\n"
         "  2. Resumes: upload your resume PDF(s) and accept the master resume.\n"
         "  3. Search: describe the jobs you want, and save."
     )
@@ -70,13 +70,12 @@ def cmd_prepare(args) -> None:
 
 def cmd_resumes(args) -> None:
     from . import resumes
-    from .llm import NOT_SET_UP, client
+    from .llm import OpenRouter
 
     def model():
-        llm = client(config.Settings.from_env())
-        if llm is None:
-            raise SystemExit(NOT_SET_UP)
-        return llm
+        settings = config.Settings.from_env()
+        return OpenRouter(settings.api_key, settings.model, settings.spend_cap_usd,
+                          settings.data_collection)
 
     if args.action == "import":
         if not args.pdfs:

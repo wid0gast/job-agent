@@ -77,7 +77,7 @@ def env(site, tmp_path, monkeypatch):
     monkeypatch.setattr(greenhouse, "BOARDS", f"{site}/gh")
     monkeypatch.setattr(demo_greenhouse, "FORM_EXTRA_REQUIRED", False)
     demo_greenhouse.SUBMISSIONS.clear()
-    settings = replace(config.Settings.from_env(require_model=False), backend="off",
+    settings = replace(config.Settings.from_env(require_model=False), api_key="", model="",
                        browser_channel="chromium", cover_letter="required")
     return settings, Tracker(tmp_path / "data" / "t.db")
 

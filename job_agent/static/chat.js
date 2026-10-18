@@ -1,4 +1,4 @@
-// The assistant chat: sends your messages, polls for what Claude does, renders it.
+// The assistant chat: sends your messages, polls for what the assistant does, renders it.
 // Everything shown is escaped first; Markdown is applied to the escaped text.
 (function () {
   "use strict";

@@ -5,6 +5,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, sync_playwright
 
+from . import config
 
 # Text a person can actually see. innerText alone still includes white-on-white
 # and 1px text, which is how pages hide instructions aimed at AI agents.
@@ -64,9 +65,20 @@ class Headless:
     def __init__(self, playwright, channel: str = "chrome"):
         self.playwright, self.channel, self._browser = playwright, channel, None
 
+    _shared: dict = {}  # Hosted: one Chromium per Playwright, for reading and applying alike (memory is tight).
+
     @property
     def browser(self):
         if self._browser is None:
+            if config.HOSTED:
+                from . import hosted
+
+                shared = Headless._shared.get(id(self.playwright))
+                if shared is None or not shared.is_connected():
+                    shared = hosted.launch_chromium(self.playwright)
+                    Headless._shared[id(self.playwright)] = shared
+                self._browser = shared
+                return shared
             try:
                 self._browser = self.playwright.chromium.launch(channel=self.channel or None)
             except PlaywrightError:
@@ -109,7 +121,7 @@ class Headless:
             try:
                 self._browser.close()
             except PlaywrightError:
-                pass  # A crashed browser is already gone.
+                pass  # Hosted: the shared browser was already closed.
             self._browser = None
 
 
@@ -128,13 +140,17 @@ class Browser:
             viewport=None if not headless else {"width": 1280, "height": 900},
             accept_downloads=True,
         )
-        try:
-            self.context = self.playwright.chromium.launch_persistent_context(
-                channel=channel or None, **options
-            )
-        except PlaywrightError:
-            # Fall back to Playwright's Chromium when Chrome is unavailable.
-            self.context = self.playwright.chromium.launch_persistent_context(**options)
+        if config.HOSTED:  # Sessions don't persist, so no saved profile: a fresh context each visit.
+            self.context = self._printer.browser.new_context(
+                viewport={"width": 1280, "height": 900}, accept_downloads=True)
+        else:
+            try:
+                self.context = self.playwright.chromium.launch_persistent_context(
+                    channel=channel or None, **options
+                )
+            except PlaywrightError:
+                # Fall back to Playwright's Chromium when Chrome is unavailable.
+                self.context = self.playwright.chromium.launch_persistent_context(**options)
         self.context.set_default_timeout(15000)
         self.page: Page = (
             self.context.pages[0] if self.context.pages else self.context.new_page()
