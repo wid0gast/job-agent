@@ -34,7 +34,7 @@ class PeopleModel(ScriptedModel):
         self.steps, self.results, self.drafts = steps, [], 0
 
     def complete(self, messages, tools, task="agent"):
-        if messages[-1]["role"] == "tool":
+        if messages[-1]["role"] == "tool" and task == "people":
             self.results.append(json.loads(messages[-1]["content"]))
         if task != "people":  # Company research: nothing to report.
             return {"tool_calls": [{"id": "r", "type": "function",

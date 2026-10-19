@@ -22,6 +22,7 @@ and applies only after you approve.
 - **Finds people to contact** at the company (someone from your school, someone in the role, the recruiter) and drafts a short email and LinkedIn note for each, the way career advisers recommend. You send them from your own email.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.
 - **Talks with you.** The Assistant tab is a chat that can do everything the app does, and search the web too.
+- **Shows its work.** Every application has a "How this was made" timeline: each step, which model did it, what it was asked and answered, and every check in code that passed or caught something. The How it works tab explains each design choice.
 
 It never invents experience or numbers, ignores instructions hidden in job pages, and hands CAPTCHAs and verification codes back to you.
 
@@ -119,6 +120,7 @@ Job Agent is a personal tool: each person runs it on their own computer with the
 - **Can't be steered by the page.** The model sees only what a person could see; hidden instructions and trap fields never reach it.
 - **Human checks stay human.** It never tries to solve CAPTCHAs. It asks you for one-time codes, and keeps site passwords in your macOS Keychain.
 - **Quality over volume.** A daily submit cap, per-company limits and your approval on every application.
+- **Nothing hidden.** Each job's timeline records every model request and every check, so you can see why it did what it did.
 
 <p align="center"><img src="docs/screenshots/dark.png" alt="Dark mode" width="720"><br><sub>Follows your system's light or dark mode.</sub></p>
 

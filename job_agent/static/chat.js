@@ -80,6 +80,7 @@
 
   // ----- items ----------------------------------------------------------------------
 
+  const MODEL_NAMES = {"claude-haiku-5-5": "Haiku 5.5", "claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5"};
   const TOOL_NAMES = {
     overview: "Checked where things stand", find_jobs: "Looked through jobs", get_job: "Opened a job",
     get_packet: "Read an application", refresh_jobs: "Refreshing job lists", discover_companies: "Discovering companies",
@@ -150,6 +151,11 @@
       const done = d.state === "undone";
       el.innerHTML = `<div class="undo"><span>Changed <b>${esc(d.file)}</b>${done ? " — undone" : ""}</span>` +
                      (done || d.state === "kept" ? "" : `<button data-choice="undo">Undo</button>`) + `</div>`;
+    } else if (item.kind === "stats") {
+      const k = n => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+      const name = MODEL_NAMES[d.model] || d.model;
+      el.innerHTML = `<div class="stats-line">${esc(name)} · ${d.requests} request${d.requests === 1 ? "" : "s"} · ` +
+                     `${d.seconds} s · ${k(d.input)} tokens in, ${k(d.output)} out</div>`;
     } else if (item.kind === "note") {
       el.innerHTML = `<div class="note">${esc(d.shown || d.text)}</div>`;
     } else if (item.kind === "error") {
@@ -184,7 +190,8 @@
 
   function showTasks(tasks) {
     tasksBox.innerHTML = tasks.map(t => {
-      const job = t.job_id ? ` · <a href="/job/${t.job_id}" target="_blank">job ${t.job_id}</a>` : "";
+      const job = t.job_id ? ` · <a href="/job/${t.job_id}" target="_blank">job ${t.job_id}</a>` +
+        (t.status === "running" ? ` · <a href="/job/${t.job_id}/trace" target="_blank">watch it step by step</a>` : "") : "";
       if (t.status === "waiting") {
         return `<div class="task waiting"><b>${esc(t.what)} needs you:</b> ${esc(t.question)}${job}` +
                `<form data-task="${t.id}" class="row"><input type="text" name="answer" autocomplete="off">` +

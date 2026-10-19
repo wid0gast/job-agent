@@ -258,6 +258,28 @@ or submit for you, change caps, or invent an answer; those checks are code.
 - **People finder** (see People to contact): searches for people at the
   company; code checks each one against what the pages and results showed.
 
+### Seeing how it works
+
+- **How this was made.** Every run on a job (prepare, finding people,
+  rewriting messages, typesetting, submit) is recorded as a timeline, opened
+  from the job's page or from **Activity**. Each step shows how long it took
+  and what came of it. Inside are the model requests (which model, what
+  effort, time and tokens; "Show prompts and replies" opens exactly what was
+  sent and what came back), agent runs (linking to every turn and tool call)
+  and the **checks**: rules in code that passed (✓) or caught something and
+  acted on it (⚑), such as hidden text removed from a posting, a resume draft
+  that invented a number, or a person kept only because a page names them at
+  the company. "Only the checks" shows just those. Traces live in
+  `data/traces/<job id>/`, the last 8 runs per job.
+- **How it works** (a tab): the journey of one application, step by step and
+  who does each (code, a model, an agent, or you), and the reasons behind the
+  main design choices. Its text is `job_agent/static/how-it-works.md`.
+- **The chat** shows under each reply which model answered, how many requests
+  it took, the time and the tokens. A running task links to its live timeline.
+- **Rehearsing a demo.** `uv run job-agent demo save` snapshots a demo home
+  with made-up data (`.demo-readme/` by default); `uv run job-agent demo`
+  restores it and opens its dashboard on port 8771, separate from yours.
+
 ### Your applications
 
 The **Applications** page is your record: every job you've applied to (by the
@@ -343,6 +365,7 @@ emailed code).
 | `job_agent/ats.py` | Which application system a URL belongs to, and its job ID |
 | `job_agent/prompts.py` | Instructions for each model step and each agent |
 | `job_agent/harness.py` | The agent loop: tool calls, errors back to the model, limits, traces |
+| `job_agent/trace.py` | Each run's timeline: steps, model requests, agent runs and checks |
 | `job_agent/assistant.py` | The assistant's tools and their guards |
 | `job_agent/chat.py` | Chats, running a turn, and the two ways to Claude (Agent SDK, Messages API) |
 | `job_agent/static/chat.js` | The chat page: sending, live updates, cards |

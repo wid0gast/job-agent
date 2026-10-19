@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from . import trace
+
 
 class StopRun(Exception):
     """Raised by a tool to end the run with a final message."""
@@ -27,6 +29,8 @@ class Tool:
     ephemeral: bool = False
     # Reads only: safe to run alongside other reads.
     read_only: bool = False
+    # A guard in code (e.g. "Fact is quoted from a page it read"): each call is a check in the job's trace.
+    guard: str = ""
 
     def declaration(self) -> dict:
         return {"type": "function",
@@ -74,6 +78,8 @@ class AgentRun:
         self.observer(kind, data)
 
     def run(self, task: str) -> str:
+        self.start_line = len(read_trace(self.trace_path))  # This run's part of the trace file.
+        self.steps, self.used_tools, self.reminded = 0, False, False
         self.messages.append({"role": "user", "content": task})
         self.trace("task", task)
         declarations = [tool.declaration() for tool in self.tools]
@@ -83,6 +89,7 @@ class AgentRun:
                 return self.end(f"Stopped at the time limit ({self.max_seconds / 60:.0f} minutes).")
             if not getattr(self.llm, "prunes_context", False):  # Else the API clears old results itself.
                 self.prune_snapshots()
+            self.steps += 1
             message = self.llm.complete(self.messages, declarations, task=self.task)
             # provider_content: the model's reply as sent, replayed unchanged (thinking blocks included).
             message = {k: message[k] for k in ("content", "tool_calls", "provider_content") if message.get(k)}
@@ -99,16 +106,27 @@ class AgentRun:
                                       "Continue with tool calls, or call finish if you're done."})
                 continue
             for call in calls:
+                if call["function"]["name"] == "finish" and not self.used_tools and not self.reminded:
+                    # Finishing before any tool ran usually means it tried a tool of its own
+                    # (none are on) and gave up. Say how tools work, once.
+                    self.reminded = True
+                    self.tool_result(call, {"ok": False, "error": (
+                        "No tool has run yet in this task. Tools run only when you list them in your reply's "
+                        "tool calls (for example web_search), and their results come back to you. Do the work "
+                        "with them, then finish.")})
+                    continue
                 try:
                     result = self.execute(call)
                 except StopRun as stop:
                     self.tool_result(call, {"ok": True, "result": str(stop)})
                     return self.end(str(stop))
+                self.used_tools = True
                 self.tool_result(call, result)
         return self.end(f"Stopped after {self.max_steps} steps without finishing.")
 
     def end(self, report: str) -> str:
         self.trace("finish", report)
+        trace.agent(self.trace_path.stem, getattr(self, "start_line", 0), getattr(self, "steps", 0), report)
         return report
 
     def execute(self, call: dict) -> dict:
@@ -121,13 +139,19 @@ class AgentRun:
         except json.JSONDecodeError as error:
             return {"ok": False, "error": f"Arguments were not valid JSON: {error}"}
         self.trace("call", {"name": name, "args": args})
+        what = "; ".join(str(v)[:120] for v in list(args.values())[:2])
         try:
-            return {"ok": True, "result": tool.fn(**args)}
+            result = {"ok": True, "result": tool.fn(**args)}
+            if tool.guard:
+                trace.check(tool.guard, True, f"Kept: {what}")
+            return result
         except StopRun:
             raise
         except TypeError as error:
             return {"ok": False, "error": f"Bad arguments for {name}: {error}"}
         except Exception as error:  # noqa: BLE001 - the model decides how to recover.
+            if tool.guard and isinstance(error, ValueError):
+                trace.check(tool.guard, False, f"Refused {what}: {error}")
             return {"ok": False, "error": f"{type(error).__name__}: {error}"[:1500]}
 
     def tool_result(self, call: dict, result: dict) -> None:

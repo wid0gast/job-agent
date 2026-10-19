@@ -22,7 +22,11 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
+from contextlib import contextmanager
+
+from . import trace
 
 DEFAULT_API_MODEL = "claude-opus-5-5"
 # Full IDs: Claude Code's short names (haiku, sonnet) still point at older models.
@@ -66,6 +70,16 @@ class Model:
         self.spent_usd = 0.0
         self.calls = 0
         self._counting = threading.Lock()  # Match scoring calls the model from two threads.
+        self._local = threading.local()
+
+    @property
+    def last_usage(self) -> dict:
+        """Tokens and cost of this thread's latest request (match scoring runs on two threads)."""
+        return getattr(self._local, "usage", {})
+
+    @last_usage.setter
+    def last_usage(self, value: dict) -> None:
+        self._local.usage = value
 
     def choose(self, task: str) -> tuple[str, str]:
         """(model, effort) for a task."""
@@ -98,6 +112,8 @@ class Model:
                 return value
             except ValueError as problem:
                 error = str(problem)
+                trace.check("Reply has the expected shape", False,
+                            f"{error}; " + ("asked again." if not attempt else "gave up."))
         raise ValueError(f"Model did not return valid JSON: {error}")
 
     def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
@@ -121,7 +137,9 @@ class ClaudeCode(Model):
 You are working through tools. Reply with a JSON object: "thought" (a sentence or two on
 what you're doing, shown to the user) and "tool_calls" (the calls to make now, each a tool
 "name" and its "arguments" object, in order). Call only the tools listed below, with
-arguments that match their schemas. When the work is done, call the finishing tool.
+arguments that match their schemas. Your own built-in tools are switched off: a tool
+runs only when you list it in tool_calls, and its result arrives in the next message.
+When the work is done, call the finishing tool.
 
 Tools:
 """
@@ -137,8 +155,16 @@ Tools:
         self.workdir = config.DATA_DIR / "claude-code"
         self.workdir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, system: str, prompt: str, schema: dict, task: str, tools: tuple[str, ...] = ()) -> dict:
+    def run(self, system: str, prompt: str, schema: dict, task: str, tools: tuple[str, ...] = (),
+            turn: bool = False) -> dict:
+        """One headless request; recorded in the job's trace (trace.py) when one is open."""
         model, effort = self.choose(task)
+        with recorded(self, task, model, effort, system, prompt, turn) as done:
+            value = self._run(system, prompt, schema, model, effort, tools)
+            done.update(text=json.dumps(value, ensure_ascii=False))
+        return value
+
+    def _run(self, system: str, prompt: str, schema: dict, model: str, effort: str, tools: tuple[str, ...]) -> dict:
         allowed = ",".join(tools)  # Claude Code's own tools: none, except web search for discovery.
         command = [self.executable, "-p", "--output-format", "json", "--tools", allowed,
                    *(["--allowedTools", allowed] if tools else []),
@@ -159,6 +185,11 @@ Tools:
             raise RuntimeError(f"Claude Code failed (exit {done.returncode}): {detail}") from None
         # Your plan pays, so this is a notional cost: shown, never capped.
         self.count(float(reply.get("total_cost_usd") or 0))
+        usage = reply.get("usage") or {}
+        self.last_usage = {"input": (usage.get("input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0)
+                           + (usage.get("cache_creation_input_tokens") or 0),
+                           "output": usage.get("output_tokens") or 0,
+                           "cost_usd": float(reply.get("total_cost_usd") or 0), "plan": True}
         self.last_models = list(reply.get("modelUsage") or {})  # Which models answered (for checks).
         if reply.get("is_error") or reply.get("subtype") != "success":
             message = str(reply.get("result") or reply.get("subtype"))[:400]
@@ -193,7 +224,7 @@ Tools:
         system = messages[0]["content"] + self.TURN_PROMPT + "\n".join(
             json.dumps({"name": t["function"]["name"], "description": t["function"]["description"],
                         "arguments": t["function"]["parameters"]}, ensure_ascii=False) for t in tools)
-        reply = self.run(system, transcript(messages[1:]), schema, task)
+        reply = self.run(system, transcript(messages[1:]), schema, task, turn=True)
         return {"content": reply.get("thought") or None,
                 "tool_calls": [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
                                 "function": {"name": c["name"],
@@ -241,7 +272,12 @@ class AnthropicAPI(Model):
         return ((fresh + cached) * price_in + (usage.output_tokens or 0) * price_out) / 1e6 + searches * 0.01
 
     def finished(self, response, model: str) -> None:
-        self.count(self.cost(response.usage, model))
+        cost = self.cost(response.usage, model)
+        self.count(cost)
+        usage = response.usage
+        self.last_usage = {"input": (usage.input_tokens or 0) + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+                           + (getattr(usage, "cache_creation_input_tokens", 0) or 0),
+                           "output": usage.output_tokens or 0, "cost_usd": cost}
         if response.stop_reason == "refusal":
             raise RuntimeError("Claude declined this request.")
         if response.stop_reason == "max_tokens":
@@ -250,6 +286,11 @@ class AnthropicAPI(Model):
     def _json(self, system: str, user: str, schema: dict, name: str) -> dict:
         self.check_budget()
         model, effort = self.choose(name)
+        with recorded(self, name, model, effort, system, user) as done:
+            done.update(text=self._api_json(system, user, schema, model, effort))
+        return parse_json(done["text"])
+
+    def _api_json(self, system: str, user: str, schema: dict, model: str, effort: str) -> str:
         response = self.client.beta.messages.create(
             model=model, max_tokens=16000, system=system,
             messages=[{"role": "user", "content": user}],
@@ -258,12 +299,19 @@ class AnthropicAPI(Model):
             **({"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
                if model in FALLBACK_MODELS else {}))
         self.finished(response, model)
-        return parse_json(next((b.text for b in response.content if b.type == "text"), ""))
+        return next((b.text for b in response.content if b.type == "text"), "")
 
     def web_json(self, system: str, user: str, schema: dict, task: str, domains: list[str],
                  max_searches: int) -> dict:
         self.check_budget()
         model, effort = self.choose(task)
+        with recorded(self, task, model, effort, system, user) as done:
+            done.update(text=self._api_web(system, user, schema, model, effort, domains, max_searches))
+        value = parse_json(done["text"])
+        check(value, schema)
+        return value
+
+    def _api_web(self, system, user, schema, model, effort, domains, max_searches) -> str:
         messages = [{"role": "user", "content": user}]
         for _ in range(4):  # A long run of searches can pause; sending it back continues it.
             response = self.client.messages.create(
@@ -276,20 +324,15 @@ class AnthropicAPI(Model):
             self.count(self.cost(response.usage, model))
             messages = [*messages, {"role": "assistant", "content": response.content}]
         self.finished(response, model)
-        value = parse_json(next((b.text for b in reversed(response.content) if b.type == "text"), ""))
-        check(value, schema)
-        return value
+        return next((b.text for b in reversed(response.content) if b.type == "text"), "")
 
     def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         self.check_budget()
         model, effort = self.choose(task)  # One task per agent run, so one model per conversation.
-        response = self.client.beta.messages.create(
-            model=model, max_tokens=16000, system=messages[0]["content"], output_config={"effort": effort},
-            messages=to_anthropic(messages[1:]), thinking=self.THINKING, betas=self.AGENT_BETAS,
-            context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
-            tools=[{"name": t["function"]["name"], "description": t["function"]["description"],
-                    "input_schema": t["function"]["parameters"]} for t in tools])
-        self.finished(response, model)
+        with recorded(self, task, model, effort, turn=True) as done:
+            response = self._api_turn(messages, tools, model, effort)
+            done.update(text=json.dumps([b.model_dump(exclude_none=True) for b in response.content
+                                         if b.type in ("text", "tool_use")], ensure_ascii=False))
         text = "".join(b.text for b in response.content if b.type == "text").strip()
         return {"content": text or None,
                 "tool_calls": [{"id": b.id, "type": "function",
@@ -297,6 +340,29 @@ class AnthropicAPI(Model):
                                for b in response.content if b.type == "tool_use"],
                 # Replayed exactly as received, thinking blocks included.
                 "provider_content": [b.model_dump(exclude_none=True) for b in response.content]}
+
+    def _api_turn(self, messages: list[dict], tools: list[dict], model: str, effort: str):
+        response = self.client.beta.messages.create(
+            model=model, max_tokens=16000, system=messages[0]["content"], output_config={"effort": effort},
+            messages=to_anthropic(messages[1:]), thinking=self.THINKING, betas=self.AGENT_BETAS,
+            context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
+            tools=[{"name": t["function"]["name"], "description": t["function"]["description"],
+                    "input_schema": t["function"]["parameters"]} for t in tools])
+        self.finished(response, model)
+        return response
+
+
+@contextmanager
+def recorded(client, task: str, model: str, effort: str, system: str = "", prompt: str = "", turn: bool = False):
+    """Time one request and write it to the open trace (with its reply, or the error)."""
+    done, started = {}, time.time()
+    try:
+        yield done
+    except Exception as error:
+        trace.model_call(task, model, effort, time.time() - started, system, prompt, error=str(error), turn=turn)
+        raise
+    trace.model_call(task, model, effort, time.time() - started, system, prompt, done.get("text", ""),
+                     getattr(client, "last_usage", {}), turn=turn)
 
 
 # Server-side refusal fallbacks ("default" routing) are offered on these models.
