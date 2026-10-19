@@ -117,7 +117,7 @@ def keyword_score(job: dict) -> int:
 def score(llm, tracker, limit: int | None = None, log=print) -> dict:
     """Model match scores for the best `limit` (default SHORTLIST) keyword matches not yet scored,
     PARALLEL calls at a time."""
-    profile, resume = config.load_profile(), config.read_master_resume()
+    profile, resume = config.load_profile(), config.read_optional("resume.md") or ""  # Ranking works before a resume.
     prefs = profile.get("preferences", {})
     if not prefs.get("description") and not prefs.get("roles"):
         raise ValueError("Describe what you're looking for on the Search page first.")

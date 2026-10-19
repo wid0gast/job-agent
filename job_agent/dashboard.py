@@ -489,7 +489,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     jobs = app.tracker.with_status(*wanted)
 
     jobs.sort(key=matching.rank_key)
-    unscored = len(matching.stale(app.tracker, profile, config.read_master_resume())) \
+    unscored = len(matching.stale(app.tracker, profile, config.read_optional("resume.md") or "")) \
         if (profile.get("preferences", {}).get("description") or profile.get("preferences", {}).get("roles")) else None
     rows = []
     for job in jobs[:500]:
@@ -1406,6 +1406,27 @@ def handler_for(app: Dashboard):
             return self.headers.get("Host", "") in allowed_hosts
 
         def do_GET(self):
+            self.safely(self.get)
+
+        def do_POST(self):
+            self.safely(self.post)
+
+        def safely(self, handle):
+            """A failing page shows its error instead of never answering (SystemExit included)."""
+            try:
+                handle()
+            except (Exception, SystemExit) as error:  # noqa: BLE001 - shown to you, and logged.
+                import traceback
+
+                traceback.print_exc()
+                try:
+                    self.send(layout(app, "/", f'<h1>Something went wrong</h1><div class="flash bad">'
+                                     f'{esc(type(error).__name__)}: {esc(error)}</div><p><a href="/">Back to '
+                                     f'Today</a></p>'), 500)
+                except Exception:  # noqa: BLE001 - the response may have started already.
+                    pass
+
+        def get(self):
             url = urlsplit(self.path)
             if url.path == "/healthz":
                 return self.send(b"ok", ctype="text/plain")
@@ -1474,7 +1495,7 @@ def handler_for(app: Dashboard):
             kind = "application/pdf" if path.suffix == ".pdf" else "image/png"
             self.send(path.read_bytes(), ctype=kind)
 
-        def do_POST(self):
+        def post(self):
             sent_origin = self.headers.get("Origin")
             if not self.host_ok() or (sent_origin and sent_origin not in (origin, f"http://localhost:{app.port}")):
                 return self.send(b"Forbidden", 403, "text/plain")
