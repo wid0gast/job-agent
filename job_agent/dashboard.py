@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from email.parser import BytesParser
 from email.policy import default as email_policy
 
-from . import actions, config, history, matching, packets, resumes, sources, systems
+from . import actions, config, history, matching, packets, people, resumes, sources, systems
 from . import llm as llm_models
 from .chat import ChatStore, Turns
 from .tracker import OUTCOMES, Tracker
@@ -174,6 +174,9 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
 .prompts button{text-align:left;font-weight:500;padding:12px 14px}
 @media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
+.person{border-top:1px solid var(--line);padding:16px 0 4px}.person:first-of-type{border-top:0;padding-top:4px}
+.person .draft{display:grid;gap:8px;margin:10px 0}.person .draft label{font-size:12px;color:var(--muted);font-weight:600}
+.person textarea.short{min-height:60px}.person .sent{color:var(--good);font-weight:600}
 .diff .add{background:color-mix(in srgb,var(--good) 18%,transparent)}
 .diff .del{background:color-mix(in srgb,var(--bad) 18%,transparent);text-decoration:line-through}
 """
@@ -441,6 +444,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
       · model {esc(app.settings.model or "not set")}</span>
     </div></div>
+    {outreach_card(app)}
     <div class="card"><h2>Ask the assistant</h2>
     <form method=get action="/assistant"><textarea name=q rows=2 required
     placeholder="Find my 5 best matches in NYC or remote, one per company, and prepare them."></textarea>
@@ -451,6 +455,28 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     {"".join(rows) or '<tr><td colspan=4 class=muted>Nothing yet. Refresh the job lists to start.</td></tr>'}
     </table></div>"""
     return layout(app, "/", body, flash, refresh=running)
+
+
+def outreach_card(app: Dashboard) -> str:
+    """Who to follow up with, or try next, from the people you emailed."""
+    rows = []
+    for due in people.due(app.tracker):
+        job, person = due["job"], due["person"]
+        where = f'<a href="/job/{job["id"]}#people">{esc(job["title"])}</a> at {esc(job["company"])}'
+        if due["action"] == "follow_up":
+            what = (f'Follow up with <b>{esc(person["name"])}</b>: emailed {due["days"]} days ago, no reply yet.')
+            buttons = send_buttons(app, job["id"], person["id"], follow_up=True)
+        else:
+            what = (f'No reply in {due["days"]} days: try <b>{esc(person["name"])}</b> '
+                    f'<span class=muted>({esc(people.KINDS[person["kind"]].lower())})</span>.')
+            buttons = send_buttons(app, job["id"], person["id"])
+        rows.append(f'<tr><td>{what}<div class=src>{where}</div></td><td><div class=row>{" ".join(buttons)}'
+                    f'</div></td></tr>')
+    if not rows:
+        return ""
+    return (f'<div class=card><h2>People to follow up with</h2><table>{"".join(rows)}</table>'
+            f'<p class=muted>Sent today: {app.tracker.contacted_today()} of {people.daily_limit()}. Mark replies on '
+            f'each job\'s page to stop the reminders.</p></div><script src="/people.js"></script>')
 
 
 def page_queue(app: Dashboard, flash: str) -> bytes:
@@ -593,8 +619,32 @@ def page_search(app: Dashboard, flash: str) -> bytes:
       <option value="1"{" selected" if str(prefs.get("resume_pages") or 1) == "1" else ""}>One page</option>
       <option value="2"{" selected" if str(prefs.get("resume_pages") or 1) == "2" else ""}>Two pages</option>
     </select></div>
+    {people_settings(prefs)}
     <button class=primary>Save</button></form>"""
     return layout(app, "/search", body, flash)
+
+
+PEOPLE_HINTS = {"background": "same school or past employer: the likeliest to reply",
+                "peer": "someone in this role or on the team",
+                "recruiter": "best contacted once you've applied",
+                "hiring_manager": "advice is mixed: some welcome it, some pass it to HR"}
+
+
+def people_settings(prefs: dict) -> str:
+    kinds, count = people.wanted({"preferences": prefs})
+    boxes = "".join(f'<label class=row style="gap:6px"><input type=checkbox name=people_kinds value="{k}"'
+                    f'{" checked" if k in kinds else ""}> {label} <span class=muted>({PEOPLE_HINTS[k]})</span></label>'
+                    for k, label in people.KINDS.items())
+    options = "".join(f'<option{" selected" if n == count else ""}>{n}</option>'
+                      for n in range(1, people.MAX_PER_JOB + 1))
+    return f"""<div class=card><h2>People to contact</h2>
+    <p class=muted>Each prepared application can include a few people at the company, with a short email and
+    LinkedIn note for each. Career advisers' advice: ask for their advice rather than a job, under 100 words, one
+    person per company at a time, and one follow-up after a week. Nothing is sent until you open the draft in your
+    own email and send it. Untick all to turn this off.</p>
+    <div style="display:grid;gap:6px">{boxes}</div>
+    <p style="margin:12px 0 4px"><b>People per job</b></p>
+    <select name=people_per_job style="width:auto">{options}</select></div>"""
 
 
 def answer_input(app: Dashboard, job_id: int, answer: dict, editable: bool) -> str:
@@ -721,8 +771,117 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     <table><tr><th>Requirement</th><th>Met</th><th>Evidence</th></tr>{reqs}</table></div>
     <div class=card><h2>Tailoring</h2><p><b>Matched:</b> {esc("; ".join(t["matched"]))}</p>
     <p><b>Emphasized:</b> {esc("; ".join(t["emphasized"]))}</p><p><b>Gaps:</b> {esc("; ".join(t["gaps"]))}</p></div>
-    <div class=card><h2>Answers</h2><table>{rows}</table></div>"""
+    <div class=card><h2>Answers</h2><table>{rows}</table></div>
+    {people_card(app, job, packet)}"""
     return layout(app, "/queue", body, flash)
+
+
+EMAIL_STATUS = {"published": "shown on a page", "yours": "you entered it",
+                "guessed": "guessed from the company's email format: it may bounce, so send the LinkedIn note too"}
+
+
+def people_card(app: Dashboard, job: dict, packet: dict) -> str:
+    """People at the company, each with drafts you edit and send from your own email."""
+    found = packet.get("people") or {}
+    listed = [p for p in found.get("people", []) if not p.get("removed")]
+    finding = any(t["kind"] == "people" and t["job_id"] == job["id"] and t["status"] in ("queued", "running")
+                  for t in app.tracker.tasks(30))
+    again = ('<span class=muted>Finding people…</span>' if finding else
+             form(app, "/people/find", "Find people again" if found else "Find people to contact", {"job_id": job["id"]}))
+    if not listed:
+        summary = esc(found.get("summary") or "Not looked up for this job.")
+        return (f'<div class=card id=people><h2>People to contact</h2><p class=muted>{summary} '
+                f'<a href="/search">Choose who to find</a>.</p>{again}</div>')
+    applied = job["status"] == "submitted"
+    blocks = [person_block(app, job, p, applied) for p in listed]
+    trail = (f' <a href="/runs/{people.trace_name(job["id"])}">How it searched</a>'
+             if (config.DATA_DIR / "runs" / f"{people.trace_name(job['id'])}.jsonl").exists() else "")
+    return (f'<div class=card id=people><h2>People to contact</h2><p class=muted>{esc(found.get("summary") or "")}'
+            f'{trail}</p><p class=muted>Advice: one person at a time; if there\'s no reply in '
+            f'{people.SECOND_PERSON_DAYS} days, try the next; follow up once after a week. LinkedIn notes you send '
+            f'yourself (the app never uses LinkedIn).</p>{"".join(blocks)}<div class=row>{again}</div></div>'
+            f'<script src="/people.js"></script>')
+
+
+def person_block(app: Dashboard, job: dict, person: dict, applied: bool) -> str:
+    job_id, pid = job["id"], person["id"]
+    links = [f'<a href="{esc(person["source"])}" target=_blank rel=noopener>source</a>']
+    if person.get("linkedin"):
+        links.append(f'<a href="{esc(person["linkedin"])}" target=_blank rel=noopener>LinkedIn</a>')
+    why = esc(person.get("why") or "")
+    email = person.get("email")
+    address = (f'<b>{esc(email)}</b> <span class=muted>({EMAIL_STATUS.get(person.get("email_status"), "")})</span>'
+               if email else '<span class=muted>No email found: add one below, or use the LinkedIn note.</span>')
+    if person["kind"] in ("recruiter", "hiring_manager") and not applied:
+        timing = "Advisers suggest sending this after you've applied."
+    elif person["kind"] in ("background", "peer") and not applied:
+        timing = "Good to send before you apply: a referral helps most then."
+    else:
+        timing = ""
+    hint = f'<p class=muted style="margin:4px 0">{timing}</p>' if timing and not person.get("sent_at") else ""
+    message = person.get("draft") or {}
+    checks = "".join(f'<div class="flash warn">Check: {esc(c)}</div>' for c in person.get("checks") or [])
+    state, buttons = "", []
+    if person.get("replied_at"):
+        state = f'<span class=sent>Replied {person["replied_at"][:10]}</span>'
+    elif person.get("sent_at"):
+        state = f'<span class=sent>Emailed {person["sent_at"][:10]}</span>'
+        if person.get("followed_up_at"):
+            state += f' <span class=sent>· followed up {person["followed_up_at"][:10]}</span>'
+        buttons.append(form(app, "/people/state", "They replied", {"job_id": job_id, "person": pid, "state": "replied"}))
+        if not person.get("followed_up_at") and message.get("follow_up"):
+            buttons += send_buttons(app, job_id, pid, follow_up=True)
+        buttons.append(form(app, "/people/unsend", "Undo: I didn't send it", {"job_id": job_id, "person": pid}))
+    elif email and message:
+        buttons += send_buttons(app, job_id, pid)
+    if message.get("linkedin_note") and not person.get("replied_at"):
+        buttons.append(f'<button type=button data-copy="note-{esc(pid)}">Copy LinkedIn note</button>')
+        if person.get("linkedin"):
+            buttons.append(f'<a class=button href="{esc(person["linkedin"])}" target=_blank rel=noopener>Open LinkedIn</a>')
+    if not person.get("sent_at"):
+        buttons.append(form(app, "/people/state", "Remove", {"job_id": job_id, "person": pid, "state": "removed"}))
+    draft = ""
+    if message:
+        disabled = " disabled" if person.get("sent_at") and person.get("followed_up_at") else ""
+        draft = (f'<details{"" if person.get("sent_at") else " open"}><summary class=muted>Drafts</summary>'
+                 f'<form method=post action="/people/edit" class=draft><input type=hidden name=token value="{app.token}">'
+                 f'<input type=hidden name=job_id value="{job_id}"><input type=hidden name=person value="{esc(pid)}">'
+                 f'<label>To</label><input type=email name=email value="{esc(email or "")}" placeholder="name@company.com">'
+                 f'<label>Subject</label><input type=text name=subject value="{esc(message["subject"])}">'
+                 f'<label>Email ({len(message["body"].split())} words)</label><textarea name=body rows=7>{esc(message["body"])}</textarea>'
+                 f'<label>LinkedIn connection note ({len(message["linkedin_note"])}/{people.NOTE_CHARS} characters): '
+                 f'copy it, open their profile, Connect, Add a note</label>'
+                 f'<textarea class=short name=linkedin_note id="note-{esc(pid)}">{esc(message["linkedin_note"])}</textarea>'
+                 f'<label>Follow-up (one week later, if there\'s no reply)</label>'
+                 f'<textarea class=short name=follow_up>{esc(message["follow_up"])}</textarea>'
+                 f'<div class=row><button{disabled}>Save drafts</button></div></form></details>')
+    return (f'<div class=person><div class=row><b>{esc(person["name"])}</b>'
+            f'<span class=pill>{esc(people.KINDS[person["kind"]])}</span><span class=muted>{esc(person["title"])}</span>'
+            f'{state}</div><p class=muted style="margin:4px 0">{why} · {" · ".join(links)}</p>'
+            f'<p style="margin:4px 0">{address}</p>'
+            f'{hint}'
+            f'{checks}{draft}<div class=row>{" ".join(buttons)}</div></div>')
+
+
+def send_buttons(app: Dashboard, job_id: int, pid: str, follow_up: bool = False) -> list[str]:
+    """Open the draft in Gmail or your mail app; it's recorded as sent (undo if you don't send it)."""
+    label = "follow-up" if follow_up else "email"
+    out = []
+    for via, name, target in (("gmail", "Gmail", " target=_blank"), ("mail", "your mail app", "")):
+        out.append(f'<form method=post action="/people/send" class=send style="display:inline"{target}>'
+                   f'<input type=hidden name=token value="{app.token}"><input type=hidden name=job_id value="{job_id}">'
+                   f'<input type=hidden name=person value="{esc(pid)}"><input type=hidden name=via value="{via}">'
+                   f'<input type=hidden name=follow_up value="{1 if follow_up else ""}">'
+                   f'<button class="{"primary" if via == "gmail" else ""}">Send {label} in {name}</button></form>')
+    return out
+
+
+PEOPLE_JS = """document.querySelectorAll("form.send").forEach(f => f.addEventListener("submit", () =>
+  setTimeout(() => location.reload(), 1500)));
+document.querySelectorAll("button[data-copy]").forEach(b => b.addEventListener("click", () => {
+  navigator.clipboard.writeText(document.getElementById(b.dataset.copy).value).then(() => {
+    b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy LinkedIn note", 1500); });
+}));"""
 
 
 def page_resumes(app: Dashboard, flash: str) -> bytes:
@@ -850,7 +1009,8 @@ def page_profile(app: Dashboard, flash: str) -> bytes:
 
 OUTCOME_NAMES = {"applied": "applied, no answer yet", "oa": "online assessment", "interview": "interview",
                  "offer": "offer", "rejected": "rejected", "withdrawn": "withdrawn",
-                 "no_response": "no response"}
+                 "no_response": "no response", "contacted": "emailed someone",
+                 "followed_up": "followed up"}
 
 
 def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
@@ -915,12 +1075,13 @@ def application_block(app: Dashboard, job: dict) -> str:
 
 
 def page_run(app: Dashboard, name: str) -> bytes:
-    """How an exploration or research agent worked on a job, step by step."""
+    """How an exploration, research or people-finding agent worked on a job, step by step."""
     from .harness import read_trace, trace_path
 
     kind, job_id = name.split("-")
     job = app.tracker.get(int(job_id))
-    doing = "Fill in the application" if kind == "explore" else "Research the company"
+    doing = {"explore": "Fill in the application", "research": "Research the company",
+             "people": "Find people to contact"}[kind]
     goal = f"{doing} for {job['title']} at {job['company']}" if job else ""
     rows = []
     for entry in read_trace(trace_path(name)):
@@ -1016,6 +1177,20 @@ def chat_card(app: Dashboard, item_id: int, choice: str) -> None:
         app.chats.change(item_id, state="cancelled", result="Not submitted.")
         app.chats.add(chat_id, "note", {"text": f"The user chose not to submit jobs {[j['id'] for j in data['jobs']]} "
                                         "for now.", "shown": "You chose not to submit for now.", "delivered": False})
+    elif item["kind"] == "outreach" and choice in ("sent", "no"):
+        follow_up = data.get("follow_up")
+        if choice == "sent":
+            try:
+                people.mark_sent(app.tracker, data["job_id"], data["person"], follow_up=bool(follow_up))
+                result, note = "Opened in your email.", (f"The user opened the {'follow-up' if follow_up else 'email'} "
+                                                         f"to {data['name']} in their email to send.")
+            except ValueError as error:
+                result, note = str(error), f"Not recorded as sent: {error}"
+        else:
+            result, note = "Not sent.", f"The user chose not to email {data['name']} for now."
+        app.chats.change(item_id, state="done" if choice == "sent" else "cancelled", result=result)
+        app.chats.add(chat_id, "note", {"text": note, "shown": result if choice == "no" else
+                                        f"You opened the email to {data['name']}.", "delivered": False})
     elif item["kind"] == "undo" and choice == "undo":
         if data["file"] == "resume.md":
             resumes.save_master(data["before"])
@@ -1087,6 +1262,8 @@ def handler_for(app: Dashboard):
             if url.path == "/assistant":
                 chat = query.get("chat", "")
                 return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
+            if url.path == "/people.js":
+                return self.send(PEOPLE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/assistant/chat.js":
                 return self.send(CHAT_JS.read_bytes(), ctype="text/javascript; charset=utf-8")
             if url.path == "/assistant/api/poll":
@@ -1114,7 +1291,7 @@ def handler_for(app: Dashboard):
                 history.export_sheet(target, app.tracker)
                 return self.send(target.read_bytes(), ctype="text/csv",
                                  headers={"Content-Disposition": 'attachment; filename="applications.csv"'})
-            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"(explore|research)-\d+", parts[1]):
+            if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"(explore|research|people)-\d+", parts[1]):
                 return self.send(page_run(app, parts[1]))
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))
@@ -1155,6 +1332,14 @@ def handler_for(app: Dashboard):
                 except ValueError as error:
                     reply = {"error": str(error)}
                 return self.send(json.dumps(reply).encode(), ctype="application/json")
+            if urlsplit(self.path).path == "/people/send":
+                try:
+                    person = people.mark_sent(app.tracker, int(one["job_id"]), one["person"],
+                                              follow_up=bool(one.get("follow_up")))
+                    target = people.compose_url(person, one.get("via", "gmail"), bool(one.get("follow_up")))
+                except ValueError as error:
+                    target = f"/job/{one.get('job_id', '')}?msg={quote(str(error)[:500])}#people"
+                return self.send(b"", 303, headers={"Location": target})
             referer = urlsplit(self.headers.get("Referer") or "/")
             keep = {k: v[0] for k, v in parse_qs(referer.query).items() if k != "msg"}
             back = (referer.path or "/") + (f"?{urlencode(keep)}" if keep else "")
@@ -1256,12 +1441,28 @@ def handler_for(app: Dashboard):
                     "exclude_title_words": words("exclude_title_words"),
                     "fit_threshold": max(0, min(100, threshold)),
                     "resume_pages": 2 if one.get("resume_pages") == "2" else 1,
+                    "people_kinds": [k for k in fields.get("people_kinds", []) if k in people.KINDS],
+                    "people_per_job": int(one.get("people_per_job") or people.DEFAULT_PER_JOB),
                 })
                 if refresh:
                     app.ensure_worker()
                     tracker.add_task("refresh")
                     return message + " Follow it on Today.", "/"
                 return message + " Rank them on the Ranked jobs page.", "/search"
+            if path == "/people/find":
+                app.ensure_worker()
+                tracker.add_task("people", int(one["job_id"]))
+                return "Looking for people to contact. They'll appear on this page.", back
+            if path == "/people/edit":
+                people.edit(tracker, int(one["job_id"]), one["person"],
+                            {k: one.get(k, "") for k in ("email", "subject", "body", "linkedin_note", "follow_up")})
+                return "Saved.", back
+            if path == "/people/unsend":
+                people.unmark(tracker, int(one["job_id"]), one["person"])
+                return "Marked as not sent.", back
+            if path == "/people/state":
+                people.set_state(tracker, int(one["job_id"]), one["person"], one.get("state", ""))
+                return "Saved.", back
             if path == "/draft":
                 app.ensure_worker()
                 tracker.add_task("draft", int(one["job_id"]))

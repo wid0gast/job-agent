@@ -9,6 +9,7 @@ what a page really says (hidden text on pages never counts).
 import html as html_lib
 import os
 import re
+from urllib.parse import urlsplit
 
 from .harness import AgentRun, StopRun, Tool, schema
 
@@ -52,6 +53,27 @@ def search(http, query: str) -> list[dict]:
     return results
 
 
+SEARCH_SCHEMA = {
+    "type": "object",
+    "properties": {"results": {"type": "array", "items": {
+        "type": "object", "properties": {"title": {"type": "string"}, "url": {"type": "string"},
+                                         "snippet": {"type": "string"}},
+        "required": ["title", "url", "snippet"], "additionalProperties": False}}},
+    "required": ["results"],
+    "additionalProperties": False,
+}
+SEARCH_PROMPT = """Run exactly one web search for the user's query and report what the search tool
+returned: each result's title and URL copied exactly, and its snippet or description as given (empty
+if there is none). Don't add, merge, reword or summarize results, and don't search again. Up to 8."""
+
+
+def model_search(llm, query: str, site: str = "") -> list[dict]:
+    """Web results through Claude's own web search (your plan or API key), optionally from one site."""
+    found = llm.web_json(SEARCH_PROMPT, query, SEARCH_SCHEMA, "web_search", [site] if site else [], 1)["results"]
+    return [{"title": r["title"].strip(), "url": r["url"].strip(), "snippet": r["snippet"].strip(), "via": "claude"}
+            for r in found[:8] if re.match(r"^https?://", r["url"].strip())]
+
+
 def strip_tags(text: str) -> str:
     return re.sub(r"\s+", " ", html_lib.unescape(re.sub(r"<[^>]+>", " ", text or ""))).strip()
 
@@ -69,8 +91,23 @@ class Researcher:
         self.pages: dict[str, str] = {}   # url -> visible text, fetched this run
         self.facts: list[dict] = []
 
-    def web_search(self, query: str):
-        return {"results": search(self.ctx.http, query[:200])}
+    def web_search(self, query: str, site: str = ""):
+        """The search API when a key is set; else Claude's web search, or the free one for test stand-ins."""
+        named = re.search(r"\bsite:(\S+)", query)
+        site = (site or (named.group(1) if named else "")).strip().removeprefix("https://").strip("/")
+        query = re.sub(r"\bsite:\S+\s*", "", query).strip()
+        if (not os.environ.get("BRAVE_API_KEY", "").strip() and hasattr(self.ctx.llm, "web_json")
+                and getattr(self.ctx.llm, "searches_web", True)):
+            try:
+                return {"results": model_search(self.ctx.llm, query[:200], site)}
+            except NotImplementedError:
+                pass
+        if not site or os.environ.get("BRAVE_API_KEY", "").strip():
+            return {"results": search(self.ctx.http, (f"site:{site} " if site else "") + query[:200])}
+        # The free search refuses site: queries, so name the site and keep only its results.
+        host = site.split("/")[0].removeprefix("www.")
+        found = search(self.ctx.http, f"{query[:200]} {host.split('.')[0]}")
+        return {"results": [r for r in found if (urlsplit(r["url"]).hostname or "").endswith(host)]}
 
     def fetch_page(self, url: str, offset: int = 0):
         if not re.match(r"^https?://", url):
@@ -105,7 +142,8 @@ class Researcher:
     def tools(self) -> list[Tool]:
         string = {"type": "string"}
         return [
-            Tool("web_search", "Search the web.", schema({"query": string}), self.web_search),
+            Tool("web_search", "Search the web; site limits results to one site (e.g. linkedin.com).",
+                 schema({"query": string, "site": string}, ["query"]), self.web_search),
             Tool("fetch_page", f"Read a page's visible text, 6,000 characters at a time (max {MAX_FETCHES} pages).",
                  schema({"url": string, "offset": {"type": "integer"}}, ["url"]), self.fetch_page),
             Tool("save_fact", "Keep a fact for the letter, with the page's exact words as the quote.",

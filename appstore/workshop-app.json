@@ -2,7 +2,7 @@
   "schemaVersion": "workshop.app.v1",
   "slug": "job-agent",
   "title": "Job Agent",
-  "description": "Finds jobs in any field, tailors resumes, applies after you approve, and has an assistant chat.",
+  "description": "Finds jobs in any field, tailors resumes, finds people to contact, applies after you approve, and has an assistant chat.",
   "runtime": {
     "languages": [
       "python312"

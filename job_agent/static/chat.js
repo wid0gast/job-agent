@@ -87,6 +87,8 @@
     edit_document: "Edited a document", request_submission: "Asked you to confirm", set_job_status: "Updated jobs",
     read_file: "Read a file", edit_file: "Edited a file", update_search: "Updated your search",
     list_tasks: "Checked tasks", wait_for_tasks: "Waiting for tasks", cancel_task: "Cancelled a task",
+    find_people: "Finding people to contact", edit_outreach: "Edited a message", redraft_outreach: "Rewriting messages",
+    request_outreach: "Asked you to send an email", set_contact: "Updated a contact",
     WebSearch: "Searched the web", WebFetch: "Read a web page", web_search: "Searched the web", web_fetch: "Read a web page",
   };
 
@@ -129,6 +131,21 @@
       }
       el.innerHTML = `<div class="card ask"><b>Submit ${d.jobs.length === 1 ? "this application" : `these ${d.jobs.length} applications`}?</b>` +
                      `<ul>${jobs}</ul>${foot}</div>`;
+    } else if (item.kind === "outreach") {
+      let foot;
+      if (d.state === "pending") {
+        foot = `<div class="row"><a class="button primary" href="${esc(d.gmail)}" target="_blank" rel="noopener" data-choice="sent">Send in Gmail</a>` +
+               `<a class="button" href="${esc(d.mail)}" data-choice="sent">Send in your mail app</a>` +
+               `<button data-choice="no">Not now</button></div>` +
+               `<p class="muted">It opens as a draft in your own email; you press Send there.` +
+               (d.guessed ? " The address is a guess from the company's email format, so it may bounce." : "") + `</p>`;
+      } else {
+        foot = `<p class="muted">${esc(d.result || (d.state === "done" ? "Opened in your email." : "Not sent."))}</p>`;
+      }
+      el.innerHTML = `<div class="card ask"><b>${d.follow_up ? "Follow up with" : "Email"} ${esc(d.name)}?</b> ` +
+                     `<span class="muted">${esc(d.kind)} · <a href="/job/${d.job_id}#people" target="_blank">${esc(d.title)} at ${esc(d.company)}</a></span>` +
+                     `<p style="margin:8px 0 4px"><span class="muted">To</span> ${esc(d.email)}<br><span class="muted">Subject</span> ${esc(d.subject)}</p>` +
+                     `<pre>${esc(d.body)}</pre>${foot}</div>`;
     } else if (item.kind === "undo") {
       const done = d.state === "undone";
       el.innerHTML = `<div class="undo"><span>Changed <b>${esc(d.file)}</b>${done ? " — undone" : ""}</span>` +
@@ -141,6 +158,10 @@
     el.querySelectorAll("button[data-choice]").forEach(button => button.addEventListener("click", () => {
       button.disabled = true;
       post("/assistant/api/card", {item: item.id, choice: button.dataset.choice}).then(poll);
+    }));
+    // Links open your email as well as recording the choice.
+    el.querySelectorAll("a[data-choice]").forEach(link => link.addEventListener("click", () => {
+      post("/assistant/api/card", {item: item.id, choice: link.dataset.choice}).then(poll);
     }));
     return el;
   }

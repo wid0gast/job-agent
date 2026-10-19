@@ -2,8 +2,10 @@
 
 A local agent that finds jobs matching what you ask for, tailors your resume
 to each one, writes a cover letter when needed, fills in the application and
-submits it, with you approving each submit. It tracks every job so it never
-applies twice. The **Assistant** tab lets you do all of it by chatting.
+submits it, with you approving each submit. It can also find people at the
+company to contact, with a short email and LinkedIn note for each that you
+send yourself. It tracks every job so it never applies twice. The
+**Assistant** tab lets you do all of it by chatting.
 
 This branch is the version for the class app store: models come from the
 class model broker there, and from [OpenRouter](https://openrouter.ai) on a
@@ -175,6 +177,33 @@ and reads the web.
   out, it says so and continues when you ask. With several models in
   `OPENROUTER_MODEL`, the picker under the message box chooses one per chat.
 
+### People to contact
+
+Each prepared application can include a few people at the company, each with
+a short email, a LinkedIn connection note and a follow-up, drafted for you.
+Choose who on the **Search** page (or untick all to turn it off): someone who
+**shares your background** (same school or past employer: the likeliest to
+reply), someone **in this role or team**, the **recruiter** (best once you've
+applied), and optionally the **hiring manager** (advice is mixed).
+
+This follows what career advisers recommend (Steve Dalton's *The 2-Hour Job
+Search*, university career centers, Ask a Manager): ask for their advice, not
+a job or a referral; under 100 words; what you share first; one clear
+question; one person per company at a time, the next after 3 days without a
+reply; one follow-up after a week, then stop.
+
+- **Finding people.** An agent searches the web and reads pages (company
+  blogs, team pages, personal sites; LinkedIn only through search results,
+  never opened). Code keeps a person only if a page or result it saw names
+  them at the company, and a shared school only if a page says so.
+- **Email addresses** are only ones shown on a page, or guessed from the
+  company's format (marked "guessed": these can bounce). Often there's none:
+  use the LinkedIn note, or paste in an address you have.
+- **Sending is yours.** "Send email in Gmail" (or your mail app) opens the
+  draft in your own email and you press Send; the app records it, keeps to
+  `DAILY_OUTREACH_LIMIT`, and reminds you on Today when to try the next person
+  or follow up. The assistant can find people, edit drafts and show a send card.
+
 ### The agents inside the pipeline
 
 Most of the app is a fixed pipeline (find → rank → prepare → approve →
@@ -226,7 +255,8 @@ emailed code).
 | `OPENROUTER_DATA_COLLECTION` | `deny` | Skip providers that keep your data. Some free models need `allow`. |
 | `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
 | `RESEARCH` | `auto` | Research the company for letters and "why us" answers, or `off`. |
-| `BRAVE_API_KEY` | (empty) | Web search for research, Discover and the assistant. Without it, a free search is tried (best effort). |
+| `DAILY_OUTREACH_LIMIT` | `10` | Emails to people at companies per day (first emails and follow-ups). |
+| `BRAVE_API_KEY` | (empty) | Web search for research, finding people, Discover and the assistant. Without it, a free search is tried (best effort). |
 
 ### Design principles
 
@@ -276,6 +306,7 @@ emailed code).
 | `job_agent/chat.py` | Chats, running a turn with tool calls, and the chat's web search and page reading |
 | `job_agent/static/chat.js` | The chat page: sending, live updates, cards |
 | `job_agent/web.py`, `pageview.py` | The explorer agent, its page view, and the coded replay |
+| `job_agent/people.py` | People to contact: the finder agent and its checks, drafts, sending and reminders |
 | `job_agent/research.py` | The research agent: search, read, quote-checked facts |
 | `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |

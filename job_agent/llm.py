@@ -19,6 +19,7 @@ TASKS = {
     "match_scores": "low", "resume_markdown": "low", "resume_facts": "low", "research": "medium",
     "assistant": "medium", "fit": "medium", "tailored_resume": "high", "cover_letter": "high",
     "form_answers": "medium", "explore": "medium", "discover": "low",
+    "people": "medium", "web_search": "low", "outreach": "medium",
 }
 TIERS: dict = {}  # The standalone version's Claude tiers; here the visit's one model does everything.
 NOT_SET_UP = ("No model: set OPENROUTER_API_KEY and OPENROUTER_MODEL in .env "

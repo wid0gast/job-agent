@@ -55,7 +55,7 @@ class ChatStore:
             CREATE TABLE IF NOT EXISTS chat_items (
               id INTEGER PRIMARY KEY,
               chat_id INTEGER NOT NULL,
-              kind TEXT NOT NULL,            -- user, text, tool, confirm, undo, note, error
+              kind TEXT NOT NULL,            -- user, text, tool, confirm, outreach, undo, note, error
               data TEXT NOT NULL,
               rev INTEGER NOT NULL,
               created_at TEXT NOT NULL
@@ -386,9 +386,14 @@ def status_line(tracker, settings) -> str:
     active = [t for t in tracker.tasks(20) if t["status"] in ("queued", "running", "waiting")]
     tasks = "; ".join(f"task {t['id']} {t['kind']}" + (f" job {t['job_id']}" if t["job_id"] else "")
                       + f" {t['status']}" for t in active[:6])
+    from .people import due
+
+    reminders = "; ".join(f"{'follow up with' if d['action'] == 'follow_up' else 'next person to try:'} "
+                          f"{d['person']['name']} (job {d['job']['id']})" for d in due(tracker)[:4])
     return (f"jobs: {jobs or 'none yet'}; submitted today {tracker.submitted_today()} of "
             f"{settings.daily_submit_limit}; {'background: ' + tasks if tasks else 'no background tasks'}; "
-            f"today is {datetime.now():%Y-%m-%d}")
+            + (f"contact reminders: {reminders}; " if reminders else "")
+            + f"today is {datetime.now():%Y-%m-%d}")
 
 
 def summarize(result, ok: bool) -> str:

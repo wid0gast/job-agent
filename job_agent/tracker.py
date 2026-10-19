@@ -401,6 +401,18 @@ class Tracker:
         return [dict(r) for r in rows]
 
     @locked
+    def contacted_today(self) -> int:
+        """Emails to people at companies (first ones and follow-ups) since local midnight."""
+        return self.db.execute(
+            "SELECT COUNT(*) FROM events WHERE kind IN ('contacted', 'followed_up') AND at >= ?",
+            (local_midnight_utc(),)).fetchone()[0]
+
+    @locked
+    def contacted_jobs(self) -> list[int]:
+        rows = self.db.execute("SELECT DISTINCT job_id FROM events WHERE kind = 'contacted' ORDER BY job_id")
+        return [r["job_id"] for r in rows]
+
+    @locked
     def applications(self) -> list[dict]:
         rows = self.db.execute("SELECT * FROM jobs WHERE status = 'submitted' ORDER BY submitted_at DESC")
         return [dict(r) for r in rows]
