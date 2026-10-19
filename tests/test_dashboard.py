@@ -89,3 +89,25 @@ def test_today_points_to_the_assistant_and_agent_traces_render(tmp_path, monkeyp
         assert request(app.port, "GET", "/runs/7")[0] == 404  # Planner runs are gone.
     finally:
         server.shutdown()
+
+
+def test_ranked_jobs_open_before_a_resume_and_errors_show(tmp_path, monkeypatch):
+    """Without a master resume, Ranked jobs still opens; a page that fails says so (never hangs)."""
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    (config.PROFILE_DIR / "resume.md").unlink(missing_ok=True)
+    (config.PROFILE_DIR / "search.yaml").write_text("description: data science\n")
+    Tracker(tmp_path / "t.db").add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
+    settings = replace(config.Settings.from_env(require_model=False), submit_mode="review")
+    app = dashboard.Dashboard(settings, 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        status, body, _ = request(app.port, "GET", "/jobs")
+        assert status == 200 and "ML Intern" in body
+        monkeypatch.setattr(dashboard, "page_queue", lambda *_: (_ for _ in ()).throw(SystemExit("boom")))
+        status, body, _ = request(app.port, "GET", "/queue")
+        assert status == 500 and "Something went wrong" in body and "boom" in body
+    finally:
+        server.shutdown()

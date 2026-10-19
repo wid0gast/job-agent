@@ -131,3 +131,23 @@ def test_greenhouse_board_guesses_from_company_and_site():
 
     guesses = board_guesses({"company": "Pinterest", "url": "https://www.pinterestcareers.com/jobs/?gh_jid=1"})
     assert guesses[0] == "pinterest" and "pinterestcareers" in guesses
+
+
+def test_companies_found_are_saved_in_data_when_the_app_folder_is_read_only(tmp_path, monkeypatch):
+    """The class platform's app folder is read-only: the list the app grows lives in data/."""
+    from job_agent import companies, config
+
+    bundled = tmp_path / "app" / "companies.csv"
+    bundled.parent.mkdir()
+    bundled.write_text("company_id,name,aliases,website,ats,board,field_tags,source,added\n"
+                       "acme,Acme,,,greenhouse,acme,,list,2026-01-01\n")
+    bundled.chmod(0o444)
+    monkeypatch.setattr(companies, "COMPANIES_FILE", bundled)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    registry = companies.Companies()
+    assert registry.resolve("Acme") == "acme"
+    registry.rows["globex"] = {"company_id": "globex", "name": "Globex", "ats": "lever", "board": "globex"}
+    registry.dirty = True
+    registry.save()
+    assert (tmp_path / "data" / "companies.csv").exists() and "globex" not in bundled.read_text()
+    assert companies.Companies().resolve("Globex") == "globex"  # Read back from data/ next time.

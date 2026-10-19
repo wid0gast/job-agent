@@ -7,6 +7,7 @@ pages go to data/learned-rules.yaml until you confirm them.
 """
 
 import csv
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -32,13 +33,22 @@ def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
 
 
+def own_copy() -> tuple[Path, Path]:
+    """(read from, save to). The bundled list, unless the app folder is read-only (the class
+    platform): then companies the app adds are saved in your data folder and read from there."""
+    if os.access(COMPANIES_FILE, os.W_OK):
+        return COMPANIES_FILE, COMPANIES_FILE
+    mine = config.DATA_DIR / "companies.csv"
+    return (mine if mine.exists() else COMPANIES_FILE), mine
+
+
 class Companies:
     def __init__(self, path: Path | None = None):
-        self.path = path = path or COMPANIES_FILE
+        source, self.path = (path, path) if path else own_copy()
         self.rows: dict[str, dict] = {}
         self.alias: dict[str, str] = {}
-        if path.exists():
-            with path.open(newline="", encoding="utf-8") as handle:
+        if source.exists():
+            with source.open(newline="", encoding="utf-8") as handle:
                 for row in csv.DictReader(handle):
                     self._index(row)
         self.dirty = False
@@ -92,6 +102,7 @@ class Companies:
     def save(self) -> None:
         if not self.dirty:
             return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=FIELDS)
             writer.writeheader()
