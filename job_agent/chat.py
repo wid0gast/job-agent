@@ -55,7 +55,7 @@ class ChatStore:
             CREATE TABLE IF NOT EXISTS chat_items (
               id INTEGER PRIMARY KEY,
               chat_id INTEGER NOT NULL,
-              kind TEXT NOT NULL,            -- user, text, tool, confirm, outreach, undo, note, error
+              kind TEXT NOT NULL,            -- user, text, tool, confirm, outreach, undo, note, stats, error
               data TEXT NOT NULL,
               rev INTEGER NOT NULL,
               created_at TEXT NOT NULL
@@ -150,6 +150,14 @@ class Turn:
         self.stopped = threading.Event()
         self.interrupt: Callable[[], None] = lambda: None
         self.tool_items: dict[str, int] = {}    # Built-in web tool call id -> item.
+        self.started = time.time()
+        self.usage = {"requests": 0, "input": 0, "output": 0, "cost_usd": 0.0}  # For the reply's footer.
+
+    def count(self, requests: int, input_tokens: int, output_tokens: int, cost: float) -> None:
+        self.usage["requests"] += requests
+        self.usage["input"] += input_tokens
+        self.usage["output"] += output_tokens
+        self.usage["cost_usd"] += cost
 
     # Events from the backends.
 
@@ -257,6 +265,9 @@ class Turns:
             if turn.stopped.is_set():
                 self.store.add(turn.chat_id, "note", {"text": "The user stopped your last reply.",
                                                       "shown": "You stopped the assistant.", "delivered": False})
+            if turn.usage["requests"]:  # What this reply took, under it.
+                self.store.add(turn.chat_id, "stats", {**turn.usage, "model": turn.chat["model"],
+                                                       "seconds": round(time.time() - turn.started, 1)})
             with self.lock:
                 self.running.pop(turn.chat_id, None)
 
@@ -301,6 +312,8 @@ class ToolChat:
                         break
                     turn.new_text()
                     reply = self.client.complete(messages, declared, task="assistant")
+                    usage = getattr(self.client, "last_usage", None) or {}
+                    turn.count(1, usage.get("input", 0), usage.get("output", 0), usage.get("cost_usd", 0.0))
                     calls = reply.get("tool_calls") or []
                     messages.append({"role": "assistant", "content": reply.get("content") or None,
                                      **({"tool_calls": calls} if calls else {})})

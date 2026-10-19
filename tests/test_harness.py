@@ -55,3 +55,33 @@ def test_step_limit_ends_the_run(tmp_path):
     model = ScriptedModel([{"role": "assistant", "tool_calls": [call("noop", {}, str(i))]} for i in range(5)])
     run = AgentRun(model, "system", tools, tmp_path / "trace.jsonl", max_steps=3)
     assert "after 3 steps" in run.run("go")
+
+
+def test_finishing_before_any_tool_ran_is_refused_once(tmp_path):
+    """An agent that gives up before calling a tool (often: it tried a tool of its own) is told how tools work."""
+    import json
+
+    from job_agent.harness import AgentRun, StopRun, Tool, schema
+
+    replies = [("finish", {"summary": "No search tool, so no one found."}), ("look", {}),
+               ("finish", {"summary": "Done."})]
+
+    class Model:
+        seen = []
+
+        def complete(self, messages, tools, task="agent"):
+            if messages[-1]["role"] == "tool":
+                self.seen.append(json.loads(messages[-1]["content"]))
+            name, args = replies.pop(0)
+            return {"tool_calls": [{"id": name, "type": "function",
+                                    "function": {"name": name, "arguments": json.dumps(args)}}]}
+
+    def finish(summary):
+        raise StopRun(summary)
+
+    model = Model()
+    run = AgentRun(model, "system", [Tool("look", "Look.", schema(), lambda: "seen"),
+                                     Tool("finish", "Finish.", schema({"summary": {"type": "string"}}), finish)],
+                   tmp_path / "t.jsonl")
+    assert run.run("task") == "Done."
+    assert "No tool has run yet" in model.seen[0]["error"]

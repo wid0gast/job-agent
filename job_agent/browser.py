@@ -38,18 +38,22 @@ VISIBLE_TEXT_JS = r"""
     hiddenCache.set(el, result);
     return result;
   };
-  const out = [];
+  const out = [], dropped = [];
   const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT);
   let last = null;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node.nodeValue.replace(/\s+/g, ' ').trim();
     const el = node.parentElement;
-    if (!text || !el || hidden(el)) continue;
+    if (!text || !el) continue;
+    if (hidden(el)) {  // Text a person can't see (code and styles aren't counted).
+      if (!el.closest('script, style, noscript, template')) dropped.push(text);
+      continue;
+    }
     const block = el.closest('p,div,li,h1,h2,h3,h4,h5,h6,tr,section,article,label,button,a,dt,dd,legend,option');
     out.push((last && block !== last ? '\n' : ' ') + text);
     last = block;
   }
-  return out.join('').replace(/\n{3,}/g, '\n\n').trim();
+  return {text: out.join('').replace(/\n{3,}/g, '\n\n').trim(), hidden: dropped};
 }
 """
 
@@ -108,11 +112,14 @@ class Headless:
             page.close()
 
     def visible_text(self, html: str) -> str:
-        """Text a person would see in this HTML; hidden instructions are dropped."""
+        """Text a person would see in this HTML; hidden instructions are dropped.
+        What was dropped is kept in last_hidden, for the job's trace."""
         page = self.browser.new_page()
         try:
             page.set_content(f"<!doctype html><body>{html}</body>", wait_until="load")
-            return page.evaluate(VISIBLE_TEXT_JS)
+            result = page.evaluate(VISIBLE_TEXT_JS)
+            self.last_hidden = result["hidden"]
+            return result["text"]
         finally:
             page.close()
 

@@ -1,4 +1,4 @@
-"""Command line entry point: setup, refresh, prepare, resumes, history, dashboard, worker, status."""
+"""Command line entry point: setup, refresh, prepare, resumes, history, dashboard, worker, status, demo."""
 
 import argparse
 import shutil
@@ -161,6 +161,39 @@ def cmd_worker(_args) -> None:
     serve(config.Settings.from_env(require_model=False), log)
 
 
+def cmd_demo(args) -> None:
+    """A rehearsable demo: `demo save` snapshots a demo home; `demo` restores it and opens its dashboard.
+    A demo home is a separate folder (profile/ and data/) with made-up data, never your own."""
+    import os
+    import socket
+    import subprocess
+    import sys
+
+    home = (config.ROOT / args.home).resolve()
+    saved = home.with_name(home.name + ".saved")
+    if home in (config.HOME.resolve(), config.ROOT.resolve()) or home.name == ".demo":
+        raise SystemExit(f"{home} holds real data; use a demo home with made-up data (e.g. .demo-readme).")
+    if not (home / "profile").exists() and not saved.exists():
+        raise SystemExit(f"No demo home at {home}: create it with JOB_AGENT_HOME={args.home} first.")
+    ignore = shutil.ignore_patterns("worker.lock", "browser-profile", "*.saved")
+    if args.action == "save":
+        shutil.rmtree(saved, ignore_errors=True)
+        shutil.copytree(home, saved, ignore=ignore)
+        print(f"Saved the demo as it is now ({saved.name}). `uv run job-agent demo` brings it back.")
+        return
+    with socket.socket() as probe:
+        if probe.connect_ex(("127.0.0.1", args.port)) == 0:
+            raise SystemExit(f"Port {args.port} is in use: stop the running demo dashboard first.")
+    if saved.exists():
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.copytree(saved, home, ignore=ignore)
+        print(f"Restored the demo from {saved.name}.")
+    else:
+        print("No saved demo yet (`uv run job-agent demo save`): opening it as it is.")
+    env = {**os.environ, "JOB_AGENT_HOME": str(home)}
+    subprocess.run([sys.executable, "-m", "job_agent.cli", "dashboard", "--port", str(args.port)], env=env)
+
+
 def cmd_demo_site(args) -> None:
     from .demo_site import serve
 
@@ -189,6 +222,10 @@ def main() -> None:
     dash = sub.add_parser("dashboard", help="Open the local dashboard (starts the worker).")
     dash.add_argument("--port", type=int, default=8770)
     sub.add_parser("worker", help="Run queued tasks (the dashboard starts this for you).")
+    rehearse = sub.add_parser("demo", help="Restore the saved demo and open its dashboard (or `demo save`).")
+    rehearse.add_argument("action", nargs="?", choices=["run", "save"], default="run")
+    rehearse.add_argument("--home", default=".demo-readme", help="The demo's folder (made-up data only).")
+    rehearse.add_argument("--port", type=int, default=8771)
     demo = sub.add_parser("demo-site", help="Serve a fake job board for safe testing.")
     demo.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
@@ -201,6 +238,7 @@ def main() -> None:
         "history": cmd_history,
         "dashboard": cmd_dashboard,
         "worker": cmd_worker,
+        "demo": cmd_demo,
         "demo-site": cmd_demo_site,
     }[args.command](args)
 

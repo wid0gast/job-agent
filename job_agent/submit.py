@@ -9,10 +9,19 @@ and is never retried automatically after that.
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import answers, companies, forms, packets, systems, web
+from . import answers, companies, forms, packets, systems, trace, web
 
 
 def submit(job_id: int, ctx, ask, log=print) -> str:
+    with trace.run("submit", job_id) as outcome:
+        status = _submit(job_id, ctx, ask, log)
+        if outcome is not None:
+            job = ctx.tracker.get(job_id)
+            outcome.update(status=status, detail=job["reason"] or "")
+        return status
+
+
+def _submit(job_id: int, ctx, ask, log) -> str:
     tracker, settings = ctx.tracker, ctx.settings
     job = tracker.get(job_id)
     packet = packets.load(job)
@@ -24,42 +33,62 @@ def submit(job_id: int, ctx, ask, log=print) -> str:
 
     if job["status"] != "approved" or packet is None:
         raise ValueError(f"Job {job_id} is {job['status']}, not approved.")
-    if packet.get("approved_hash") != packets.content_hash(packet):
-        return back_to_you("The packet changed after approval. Review and approve it again.")
-    problem = companies.cap_problem(tracker, packet["job"]["company_id"], settings, job_id)
-    if problem:
-        return back_to_you(problem)
-    if tracker.submitted_today() >= settings.daily_submit_limit:
-        return back_to_you(f"Daily limit of {settings.daily_submit_limit} reached; try tomorrow.")
+    with trace.step("Checks before submitting") as step:
+        same = packet.get("approved_hash") == packets.content_hash(packet)
+        trace.check("Answers and documents are exactly what you approved", same,
+                    "" if same else "Changed after approval.")
+        if not same:
+            return back_to_you("The packet changed after approval. Review and approve it again.")
+        problem = companies.cap_problem(tracker, packet["job"]["company_id"], settings, job_id)
+        trace.check("The company limit has room", not problem, problem or "")
+        if problem:
+            return back_to_you(problem)
+        full = tracker.submitted_today() >= settings.daily_submit_limit
+        trace.check(f"Under today's limit of {settings.daily_submit_limit}", not full,
+                    f"{tracker.submitted_today()} submitted today.")
+        if full:
+            return back_to_you(f"Daily limit of {settings.daily_submit_limit} reached; try tomorrow.")
+        step.summary = "Passed"
 
     browser = ctx.browser()
     page = browser.page
     # Explored applications replay their approved recording (web.walk).
     system = web if packet.get("recording") else systems.adapter(packet["job"]["ats"])
     if hasattr(system, "walk"):
-        return walk_submit(job_id, ctx, ask, log, system, packet, page, back_to_you)
-    log("  opening the form")
-    page.goto(packet["job"]["apply_url"], wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle", timeout=20000)
-    page.wait_for_timeout(1000)
+        with trace.step("Filling the application page by page") as step:
+            step.summary = walk_submit(job_id, ctx, ask, log, system, packet, page, back_to_you)
+            return step.summary
+    with trace.step("Opening the form and comparing it") as step:
+        log("  opening the form")
+        page.goto(packet["job"]["apply_url"], wait_until="domcontentloaded")
+        page.wait_for_load_state("networkidle", timeout=20000)
+        page.wait_for_timeout(1000)
+        fields = system.page_fields(page)
+        differences = forms.unexpected(fields, with_known_answers(fields, packet))
+        trace.check("The live form is the one you approved answers for", not differences,
+                    "; ".join(differences) if differences else f"{len(fields)} questions, as approved.")
+        if differences:
+            return back_to_you("The form changed: " + "; ".join(differences))
+        step.summary = f"{len(fields)} questions, unchanged"
+    with trace.step("Typing your approved answers (code, no model)") as step:
+        try:
+            log("  filling approved answers")
+            system.fill_form(page, packet, packets.files(packet))
+        except forms.FillError as error:
+            trace.check("Every approved answer could be entered", False, f"{error.label}: {error.problem}")
+            return back_to_you(f"Couldn't fill “{error.label}”: {error.problem}.")
+        step.summary = f"{sum(a.get('value') not in (None, '', []) for a in packet['answers'])} answers and " \
+                       f"{len(packets.files(packet))} document(s)"
 
-    fields = system.page_fields(page)
-    differences = forms.unexpected(fields, with_known_answers(fields, packet))
-    if differences:
-        return back_to_you("The form changed: " + "; ".join(differences))
-    try:
-        log("  filling approved answers")
-        system.fill_form(page, packet, packets.files(packet))
-    except forms.FillError as error:
-        return back_to_you(f"Couldn't fill “{error.label}”: {error.problem}.")
-
-    tracker.move(job_id, "approved", "submitting")
-    log("  submitting")
-    try:
-        result = system.submit(page, ask)
-    except Exception as error:  # noqa: BLE001 - the click may have happened; you decide.
-        result = {"status": "needs_you", "detail": f"Error after clicking submit: {error}"}
-    return finish(job_id, ctx, packet, page, result, log)
+    with trace.step("Submitting") as step:
+        tracker.move(job_id, "approved", "submitting")
+        log("  submitting")
+        try:
+            result = system.submit(page, ask)
+        except Exception as error:  # noqa: BLE001 - the click may have happened; you decide.
+            result = {"status": "needs_you", "detail": f"Error after clicking submit: {error}"}
+        step.summary = result.get("detail", result["status"])
+        return finish(job_id, ctx, packet, page, result, log)
 
 
 def finish(job_id: int, ctx, packet: dict, page, result: dict, log) -> str:
@@ -71,6 +100,7 @@ def finish(job_id: int, ctx, packet: dict, page, result: dict, log) -> str:
         page.screenshot(path=str(shot), full_page=True)
     except Exception:  # noqa: BLE001 - proof is best effort.
         shot = None
+    trace.note(f"Proof saved: a screenshot of the page after submitting ({page.url}).")
     packet["submission"] = {"at": datetime.now(UTC).isoformat(timespec="seconds"),
                             "result": result, "screenshot": str(shot) if shot else None,
                             "url": page.url}

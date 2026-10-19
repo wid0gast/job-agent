@@ -116,7 +116,7 @@ class Assistant:
         checks = packet.get("checks") or {}
         return {
             "job_id": job_id, "status": job["status"], "company": job["company"], "title": job["title"],
-            "link": f"/job/{job_id}",
+            "link": f"/job/{job_id}", "how_it_was_made": f"/job/{job_id}/trace",
             "fit": {"score": fit.get("score"), "summary": fit.get("summary"),
                     "unmet_must_haves": [r["requirement"] for r in fit.get("requirements", [])
                                          if r.get("must_have") and r.get("met") != "yes"]},
@@ -298,7 +298,8 @@ class Assistant:
         if email and normalize(email) not in " ".join(normalize(m) for m in self.chat.said()):
             raise ValueError("An email address can be set only as the user wrote it in this chat.")
         text = " ".join(v for k, v in changes.items() if k != "email")
-        known = "\n".join([config.read_master_resume(), packet.get("description", ""), person["quote"], people.ASKS])
+        known = "\n".join([config.read_master_resume(), packet.get("description", ""), person["quote"], people.ASKS,
+                           json.dumps(packet.get("job") or {})])
         invented = documents.unsupported_numbers(text, known)
         if invented:
             raise ValueError(f"Numbers not in the resume, posting or person's page: {invented}. Nothing changed.")

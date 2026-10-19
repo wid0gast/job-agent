@@ -204,6 +204,21 @@ reply; one follow-up after a week, then stop.
   `DAILY_OUTREACH_LIMIT`, and reminds you on Today when to try the next person
   or follow up. The assistant can find people, edit drafts and show a send card.
 
+### Seeing how it works
+
+- **How this was made.** Every run on a job (prepare, finding people,
+  rewriting messages, typesetting, submit) is recorded as a timeline, opened
+  from the job's page or from **Activity**. Each step shows how long it took
+  and what came of it, with the model requests inside ("Show prompts and
+  replies" opens exactly what was sent and what came back), agent runs
+  (linking to every turn and tool call) and the **checks**: rules in code that
+  passed (✓) or caught something and acted on it (⚑), such as hidden text
+  removed from a posting or a resume draft that invented a number.
+- **How it works** (a tab): the journey of one application and who does each
+  step (code, the model, an agent, or you), and the reasons behind the main
+  design choices (`job_agent/static/how-it-works.md`).
+- **The chat** shows under each reply the model, the requests, time and tokens.
+
 ### The agents inside the pipeline
 
 Most of the app is a fixed pipeline (find → rank → prepare → approve →
@@ -302,6 +317,7 @@ emailed code).
 | `job_agent/ats.py` | Which application system a URL belongs to, and its job ID |
 | `job_agent/prompts.py` | Instructions for each model step and each agent |
 | `job_agent/harness.py` | The agent loop: tool calls, errors back to the model, limits, traces |
+| `job_agent/trace.py` | Each run's timeline: steps, model requests, agent runs and checks |
 | `job_agent/assistant.py` | The assistant's tools and their guards |
 | `job_agent/chat.py` | Chats, running a turn with tool calls, and the chat's web search and page reading |
 | `job_agent/static/chat.js` | The chat page: sending, live updates, cards |

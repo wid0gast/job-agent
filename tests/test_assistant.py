@@ -201,7 +201,9 @@ def test_a_chat_turn_uses_tools_and_remembers(app):
     state = json.loads(call(app, "GET", f"/assistant/api/poll?chat={chat_id}&since=0")[1])
     kinds = [(i["kind"], i["data"].get("name") or i["data"].get("text")) for i in state["items"]]
     assert kinds == [("user", "What jobs do I have?"), ("text", "Let me look."), ("tool", "find_jobs"),
-                     ("text", f"You have one: [the internship](/job/{job_id}).")]
+                     ("text", f"You have one: [the internship](/job/{job_id})."), ("stats", None)]
+    footer = state["items"][-1]["data"]  # What the reply took: two requests.
+    assert footer["requests"] == 2
     tool = state["items"][2]["data"]
     assert tool["status"] == "ok" and tool["summary"] == "1 job(s)"
     first, second = app.model_stub.sent[:2]

@@ -155,7 +155,7 @@ class PageView:
                 continue
             try:
                 result = frame.evaluate(SNAPSHOT_JS, next_ref)
-                frame_text = frame.evaluate(VISIBLE_TEXT_JS)
+                frame_text = frame.evaluate(VISIBLE_TEXT_JS)["text"]
             except PlaywrightError:
                 continue  # Detached or cross-origin frames that refuse scripts.
             for item in result["items"]:
@@ -257,7 +257,7 @@ class PageView:
             if CAPTCHA_FRAME.search(frame.url or ""):
                 continue
             try:
-                texts.append(frame.evaluate(VISIBLE_TEXT_JS))
+                texts.append(frame.evaluate(VISIBLE_TEXT_JS)["text"])
             except PlaywrightError:
                 continue
         text = "\n\n".join(t for t in texts if t.strip())

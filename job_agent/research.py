@@ -147,7 +147,8 @@ class Researcher:
             Tool("fetch_page", f"Read a page's visible text, 6,000 characters at a time (max {MAX_FETCHES} pages).",
                  schema({"url": string, "offset": {"type": "integer"}}, ["url"]), self.fetch_page),
             Tool("save_fact", "Keep a fact for the letter, with the page's exact words as the quote.",
-                 schema({"fact": string, "url": string, "quote": string}), self.save_fact),
+                 schema({"fact": string, "url": string, "quote": string}), self.save_fact,
+                 guard="Company fact is quoted, word for word, from a page it read"),
             Tool("finish", "End with a one-paragraph summary of what you found.",
                  schema({"summary": string}), self.finish),
         ]

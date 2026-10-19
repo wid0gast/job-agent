@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from email.parser import BytesParser
 from email.policy import default as email_policy
 
-from . import actions, config, history, matching, packets, people, resumes, sources, systems
+from . import actions, config, history, matching, packets, people, resumes, sources, systems, trace
 from . import llm as llm_models
 from .chat import ChatStore, Turns
 from .tracker import OUTCOMES, Tracker
@@ -159,6 +159,7 @@ border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}@keyfra
 .card.ask{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));margin:4px 0 14px}.card.ask ul{margin:8px 0 12px}
 .undo{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted)}.undo button{padding:3px 10px;font-size:12.5px}
 .note{text-align:center;color:var(--muted);font-size:12.5px}
+.stats-line{color:var(--muted);font-size:11.5px;margin:-8px 0 0;opacity:.8}
 .thinking span{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:var(--muted);
 animation:blink 1.2s infinite}.thinking span:nth-child(2){animation-delay:.2s}.thinking span:nth-child(3){animation-delay:.4s}
 @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
@@ -177,6 +178,22 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .person{border-top:1px solid var(--line);padding:16px 0 4px}.person:first-of-type{border-top:0;padding-top:4px}
 .person .draft{display:grid;gap:8px;margin:10px 0}.person .draft label{font-size:12px;color:var(--muted);font-weight:600}
 .person textarea.short{min-height:60px}.person .sent{color:var(--good);font-weight:600}
+.strip{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}.strip a{display:flex;flex-direction:column;padding:8px 11px;
+border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:12.5px;font-weight:600;min-width:96px}
+.strip a span{font-weight:500;color:var(--muted);font-size:11.5px}.strip a:hover{text-decoration:none;border-color:var(--accent)}
+.strip a.who-code{border-top:3px solid var(--good)}.strip a.who-model,.strip a.who-agent{border-top:3px solid var(--accent)}
+.strip a.who-you{border-top:3px solid var(--warn)}.strip a.ok{border-top:3px solid var(--good)}.strip a.caught{border-top:3px solid var(--warn)}.strip a.stopped{border-top:3px solid var(--bad)}
+.tl{list-style:none;margin:0;padding:0}.tl .tl{margin:6px 0 0 14px;padding-left:12px;border-left:2px solid var(--line)}
+.tl li{margin:0 0 8px}.tl .head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.tl .head b{font-size:14px}.tl .when{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}
+.ev{font-size:13px;padding:5px 10px;border-radius:9px;background:var(--soft)}
+.ev.pass{background:var(--good-soft)}.ev.caught{background:var(--warn-soft)}.ev.err{background:var(--bad-soft)}
+.ev .tag{font-weight:700;margin-right:6px}.ev.pass .tag{color:var(--good)}.ev.caught .tag{color:var(--warn)}
+.ev.model .tag{color:var(--accent)}.raw{display:none}.show-raw .raw{display:block}.raw pre{max-height:360px;margin:6px 0}
+.only-checks .tl li.plain{display:none}.only-checks .tl li.step>.head{opacity:.6}
+.totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 16px}
+.totals div{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.totals b{display:block;font-size:20px}.totals span{font-size:12px;color:var(--muted)}
 .diff .add{background:color-mix(in srgb,var(--good) 18%,transparent)}
 .diff .del{background:color-mix(in srgb,var(--bad) 18%,transparent);text-decoration:line-through}
 """
@@ -271,7 +288,7 @@ SCRIPT = '<script src="/forms.js" defer></script>'
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False) -> bytes:
     links = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jobs", "Ranked jobs"),
              ("/queue", "Approval queue"), ("/applications", "Applications"),
-             ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity")]
+             ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
     nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
@@ -760,6 +777,8 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         for outcome, label in (("submitted", "It went through"), ("prepared", "Back to queue"),
                                ("failed", "Mark failed")):
             buttons.append(form(app, "/resolve", label, {"job_id": job_id, "outcome": outcome}))
+    if trace.runs(job_id):
+        docs = f'<a class="button primary" href="/job/{job_id}/trace">How this was made</a> ' + docs
     t = packet["tailoring"]
     body = f"""{head}
     {"".join(f'<div class="flash bad">{w}</div>' for w in warn)}{needs}
@@ -1074,17 +1093,198 @@ def application_block(app: Dashboard, job: dict) -> str:
             f'<table style="margin-top:10px"><tr><th>When</th><th>What</th><th>Note</th></tr>{events}</table></div>')
 
 
-def page_run(app: Dashboard, name: str) -> bytes:
+# Labels for a run's model requests (one model does every step here).
+TASK_LABELS = {
+    "match_scores": "Ranking job titles", "resume_markdown": "Reading resume PDFs",
+    "resume_facts": "Profile facts from your resume", "research": "Company research (agent)",
+    "assistant": "Assistant chat", "fit": "Fit check on the full posting", "tailored_resume": "Tailored resume",
+    "cover_letter": "Cover letter", "form_answers": "Application answers and essays",
+    "explore": "Filling unfamiliar forms (agent)", "people": "Finding people to contact (agent)",
+    "outreach": "Emails and LinkedIn notes to them", "discover": "Discovering companies on job sites",
+}
+MODEL_NAMES: dict[str, str] = {}
+
+
+def seconds_text(value) -> str:
+    value = float(value or 0)
+    return f"{value:.1f} s" if value < 60 else f"{int(value // 60)} min {int(value % 60)} s"
+
+
+def tokens_text(n: int) -> str:
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def pretty_json(text: str) -> str:
+    """JSON indented, with line breaks inside strings shown as line breaks (for reading, not parsing)."""
+    try:
+        return json.dumps(json.loads(text), indent=1, ensure_ascii=False).replace("\\n", "\n")
+    except (ValueError, TypeError):
+        return text
+
+
+def node_state(node: dict) -> str:
+    """ok, caught (a check stopped something) or stopped (an error ended it)."""
+    if node.get("error"):
+        return "stopped"
+    flat = []
+
+    def walk(n):
+        for child in n["children"]:
+            flat.append(child)
+            walk(child)
+
+    walk(node)
+    return "caught" if any(c["type"] == "check" and not c["passed"] for c in flat) else "ok"
+
+
+def timeline(nodes: list[dict]) -> str:
+    """Steps with what happened inside each: model calls, agent runs, checks, notes."""
+    out = []
+    turns = [n for n in nodes if n["type"] == "model" and n.get("turn")]
+    for node in nodes:
+        kind = node["type"]
+        if kind == "step":
+            summary = node.get("error") or node.get("summary") or ""
+            inside = f'<ul class=tl>{timeline(node["children"])}</ul>' if node["children"] else ""
+            out.append(f'<li class="step" id="s{node["n"]}"><div class=head><b>{esc(node["name"])}</b>'
+                       f'<span class="{"bad" if node.get("error") else "muted"}">{esc(summary)}</span>'
+                       f'<span class=when>{seconds_text(node.get("seconds"))}</span></div>{inside}</li>')
+        elif kind == "check":
+            css, tag = ("pass", "✓ Check") if node["passed"] else ("caught", "⚑ Caught")
+            out.append(f'<li><div class="ev {css}"><span class=tag>{tag}</span>{esc(node["name"])}'
+                       f'{" — " + esc(node["detail"]) if node.get("detail") else ""}</div></li>')
+        elif kind == "model" and not node.get("turn"):
+            usage = node.get("usage") or {}
+            name = MODEL_NAMES.get(node["model"], node["model"])
+            line = (f'{esc(TASK_LABELS.get(node["task"], node["task"]))} · <b>{esc(name)}</b> · {esc(node["effort"])} '
+                    f'effort · {seconds_text(node["seconds"])}'
+                    + (f' · {tokens_text(usage.get("input", 0))} in / {tokens_text(usage.get("output", 0))} out'
+                       if usage else ""))
+            raw = (f'<div class=raw><details open><summary class=muted>Instructions (system prompt)</summary>'
+                   f'<pre>{esc(node.get("system"))}</pre></details><details open><summary class=muted>What was sent'
+                   f'</summary><pre>{esc(pretty_json(node.get("prompt", "")))}</pre></details><details open>'
+                   f'<summary class=muted>What came back</summary><pre>{esc(pretty_json(node.get("reply") or node.get("error", "")))}'
+                   f'</pre></details></div>')
+            error = f' <span class=bad>{esc(node["error"][:200])}</span>' if node.get("error") else ""
+            out.append(f'<li class=plain><div class="ev model{" err" if node.get("error") else ""}">'
+                       f'<span class=tag>◆ Model</span>{line}{error}{raw}</div></li>')
+        elif kind == "agent":
+            used = turns
+            spent = sum(t["seconds"] for t in used)
+            model = MODEL_NAMES.get(used[0]["model"], used[0]["model"]) if used else ""
+            out.append(f'<li class=plain><div class="ev model"><span class=tag>◆ Agent</span>{node["steps"]} turns'
+                       f'{f" with {esc(model)}" if model else ""}{f" · {seconds_text(spent)}" if used else ""} · '
+                       f'<a href="/runs/{esc(node["name"])}?from={node["start"]}">every turn, tool call and result</a>'
+                       f'<div class=muted style="margin-top:4px">Report: {esc(node["report"][:600])}</div></div></li>')
+        elif kind == "note":
+            out.append(f'<li class=plain><div class=ev><span class=tag>•</span>{esc(node["text"])}</div></li>')
+    return "".join(out)
+
+
+def page_trace(app: Dashboard, job_id: int, run_id: str) -> bytes:
+    """How a job's packet (or a later run on it) was made, step by step."""
+    job = app.tracker.get(job_id)
+    paths = trace.runs(job_id)
+    if job is None or not paths:
+        return layout(app, "/queue", "<h1>No runs recorded for this job yet</h1>")
+    path = next((p for p in paths if p.stem == run_id), paths[0])
+    shown = trace.tree(trace.read(path))
+    run, end, totals = shown["run"], shown["end"], shown["totals"]
+    tabs = "".join(f'<a class="tab{" on" if p == path else ""}" href="/job/{job_id}/trace?run={p.stem}">'
+                   f'{esc(trace.KINDS.get(p.stem.split("-", 2)[2], p.stem))} · {p.stem[4:6]}/{p.stem[6:8]} '
+                   f'{p.stem[9:11]}:{p.stem[11:13]}</a>' for p in paths)
+    steps = [n for n in shown["root"]["children"] if n["type"] == "step"]
+    strip = "".join(f'<a class="{node_state(n)}" href="#s{n["n"]}">{esc(n["name"])}'
+                    f'<span>{seconds_text(n.get("seconds"))}</span></a>' for n in steps)
+    status = (end.get("status") or "running…").replace("_", " ")
+    cost = (f'<div><b>${totals["cost"]:.2f}</b><span>'
+            f'{"model cost"}'
+            f'</span></div>') if totals["cost"] else ""
+    live = not end
+    body = f"""<h1>How this was made</h1>
+    <p class=muted><a href="/job/{job_id}">{esc(job["title"])} at {esc(job["company"])}</a> ·
+    {esc(trace.KINDS.get(run.get("kind"), run.get("kind", "")))} · {esc(status)}
+    {("· " + esc(end.get("detail"))) if end.get("detail") else ""} · {seconds_text(end.get("seconds"))} in all</p>
+    <div class=tabs>{tabs}</div>
+    <div class=totals><div><b>{len(steps)}</b><span>steps</span></div>
+    <div><b>{totals["calls"]}</b><span>model requests{f" + {totals['turns']} agent turns" if totals["turns"] else ""}</span></div>
+    <div><b>{tokens_text(totals["input"])} / {tokens_text(totals["output"])}</b><span>tokens in / out</span></div>{cost}
+    <div><b>{totals["passed"]} · {totals["caught"]}</b><span>checks passed · caught something</span></div></div>
+    <div class=strip>{strip}</div>
+    <div class=card><div class=row style="margin-bottom:12px">
+    <label class=row style="gap:6px"><input type=checkbox id=show-raw> Show prompts and replies</label>
+    <label class=row style="gap:6px"><input type=checkbox id=only-checks> Only the checks</label>
+    <span class=muted>Checks are rules in code, not the model: ✓ passed, ⚑ caught something and acted on it.</span></div>
+    <ul class=tl id=timeline>{timeline(shown["root"]["children"])}</ul></div>
+    <script src="/trace.js"></script>"""
+    return layout(app, "/queue", body, refresh=live)
+
+
+HOW_MD = Path(__file__).parent / "static" / "how-it-works.md"
+# The journey of one application: (stage, who does it, what happens, where in the code).
+JOURNEY = [
+    ("Find", "code", "Job lists and company boards, read in a few minutes; Discover searches job sites for companies "
+     "you haven't heard of", "sources.py, discover.py"),
+    ("Rank", "code + model", "Free keyword scores for every job, then the model scores the best ones against your words",
+     "matching.py"),
+    ("Filter", "code", "Location, season, degree, seniority, sponsorship, company and daily limits", "filters.py, companies.py"),
+    ("Read", "code", "The posting rendered in a browser; only text a person can see is kept", "prepare.py, browser.py"),
+    ("Fit", "model", "The model checks every requirement against your resume and scores the fit", "prepare.py"),
+    ("Form", "code", "The application's questions, read from Greenhouse, Lever, Ashby or Workday", "greenhouse.py, …"),
+    ("Answers", "code + model", "Profile and saved answers in code; the model drafts the rest from your material",
+     "answers.py"),
+    ("Resume", "model + code", "The model tailors it; code rejects invented numbers and fits it to the page", "prepare.py, latex.py"),
+    ("Research", "agent", "Searches and reads company pages; keeps facts quoted from them", "research.py"),
+    ("People", "agent + model", "Finds people to contact; the model drafts a short email and LinkedIn note", "people.py"),
+    ("Approve", "you", "You review everything; approval records a fingerprint of it", "actions.py"),
+    ("Submit", "code", "Checks nothing changed, types your approved answers, saves a screenshot", "submit.py"),
+]
+
+
+def page_how(app: Dashboard) -> bytes:
+    import markdown
+
+    stages = "".join(f'<a class="who-{who.split()[0]}" title="{esc(what)}">'
+                     f'{esc(stage)}<span>{esc(who)}</span></a>' for stage, who, what, _ in JOURNEY)
+    rows = "".join(f'<tr><td><b>{esc(stage)}</b></td><td><span class=pill>{esc(who)}</span></td><td>{esc(what)}</td>'
+                   f'<td class=muted><code>{esc(where)}</code></td></tr>' for stage, who, what, where in JOURNEY)
+    example = next((int(p.parent.name) for p in trace.recent(1)), None)
+    link = (f' <a href="/job/{example}/trace">See a real one, step by step.</a>' if example else "")
+    text = markdown.markdown(HOW_MD.read_text(encoding="utf-8"), extensions=["tables"])
+    body = f"""<h1>How it works</h1>
+    <div class=card><h2>The journey of one application</h2>
+    <p class=muted>Who does each step: <b>code</b> (fixed rules), a <b>model</b> (one request), an <b>agent</b> (a model
+    choosing its own steps with tools), or <b>you</b>.{link}</p>
+    <div class=strip>{stages}</div>
+    <table><tr><th>Step</th><th>Who</th><th>What happens</th><th>Code</th></tr>{rows}</table>
+    <p class=muted>The <a href="/assistant">assistant</a> uses the same steps as tools, so a chat request follows the
+    same path and the same checks.</p></div>
+    <div class="card md">{text}</div>"""
+    return layout(app, "/how", body)
+
+
+TRACE_JS = """const box = document.getElementById("timeline").parentElement;
+for (const [id, cls] of [["show-raw", "show-raw"], ["only-checks", "only-checks"]]) {
+  const input = document.getElementById(id);
+  try { input.checked = localStorage.getItem(id) === "1"; } catch (_) {}
+  const apply = () => { box.classList.toggle(cls, input.checked);
+    try { localStorage.setItem(id, input.checked ? "1" : "0"); } catch (_) {} };
+  input.addEventListener("change", apply); apply();
+}"""
+
+
+def page_run(app: Dashboard, name: str, start: int = 0) -> bytes:
     """How an exploration, research or people-finding agent worked on a job, step by step."""
     from .harness import read_trace, trace_path
 
     kind, job_id = name.split("-")
     job = app.tracker.get(int(job_id))
+    entries = read_trace(trace_path(name))[start:]
     doing = {"explore": "Fill in the application", "research": "Research the company",
              "people": "Find people to contact"}[kind]
     goal = f"{doing} for {job['title']} at {job['company']}" if job else ""
     rows = []
-    for entry in read_trace(trace_path(name)):
+    for entry in entries:
         kind, data = entry["kind"], entry["data"]
         if kind == "thought":
             rows.append(f'<div class=card style="margin:0 0 8px">{esc(data)}</div>')
@@ -1100,7 +1300,8 @@ def page_run(app: Dashboard, name: str) -> bytes:
                         f'{"result" if ok else "error"}: {esc(text[:140])}</summary><pre>{esc(text[:6000])}</pre></details>')
         elif kind == "finish":
             rows.append(f'<div class=card><h2>Report</h2>{esc(data)}</div>')
-    body = (f'<h1>{esc(doing)}</h1><p class=muted>{esc(goal)}</p>'
+    back = f' · <a href="/job/{job_id}/trace">back to how this was made</a>' if job else ""
+    body = (f'<h1>{esc(doing)}</h1><p class=muted>{esc(goal)}{back}</p>'
             + ("".join(rows) or "<p class=muted>No steps recorded.</p>"))
     return layout(app, "/", body)
 
@@ -1206,10 +1407,30 @@ def chat_card(app: Dashboard, item_id: int, choice: str) -> None:
 
 
 def page_activity(app: Dashboard) -> bytes:
+    """Recent runs on jobs (each opens its timeline), then the worker's raw log."""
     text = LOG_PATH.read_text(encoding="utf-8")[-20000:] if LOG_PATH.exists() else "No activity yet."
     running = app.worker is not None and app.worker.poll() is None
-    body = (f'<h1>Activity</h1><p class=muted>Worker {"running" if running else "not running"}. '
-            f'Full step logs are in data/logs/.</p><div class=card><pre>{esc(text)}</pre></div>')
+    rows = []
+    for path in trace.recent(40):
+        job_id = int(path.parent.name)
+        job = app.tracker.get(job_id)
+        shown = trace.tree(trace.read(path))
+        end, totals = shown["end"], shown["totals"]
+        status = (end.get("status") or "running").replace("_", " ")
+        rows.append(f'<tr><td class=muted style="white-space:nowrap">{path.stem[4:6]}/{path.stem[6:8]} '
+                    f'{path.stem[9:11]}:{path.stem[11:13]}</td>'
+                    f'<td><a href="/job/{job_id}/trace?run={path.stem}">{esc(trace.KINDS.get(shown["run"].get("kind"), ""))}'
+                    f'</a></td><td>{esc(job["title"] if job else job_id)}<div class=src>{esc(job["company"] if job else "")}'
+                    f'</div></td><td><span class="pill {esc(end.get("status") or "running")}">{esc(status)}</span></td>'
+                    f'<td class=muted>{seconds_text(end.get("seconds"))}</td>'
+                    f'<td class=muted>{totals["calls"]} model · {totals["passed"]} ✓ · {totals["caught"]} ⚑</td></tr>')
+    runs = (f'<div class=card><h2>Recent runs</h2><p class=muted>Every run on a job, step by step: open one to see '
+            f'what the model was asked, what it answered and what the checks in code decided.</p>'
+            f'<table><tr><th>When</th><th>Run</th><th>Job</th><th>Result</th><th>Took</th><th>Inside</th></tr>'
+            f'{"".join(rows)}</table></div>') if rows else ""
+    body = (f'<h1>Activity</h1>{runs}<div class=card><details{" open" if not rows else ""}><summary><b>Worker log</b> '
+            f'<span class=muted>(worker {"running" if running else "not running"}; full logs in data/logs/)</span>'
+            f'</summary><pre>{esc(text)}</pre></details></div>')
     return layout(app, "/activity", body, refresh=running)
 
 
@@ -1276,6 +1497,8 @@ def handler_for(app: Dashboard):
                 return self.send(page_jobs(app, query.get("status", "active"), flash))
             if url.path == "/activity":
                 return self.send(page_activity(app))
+            if url.path == "/how":
+                return self.send(page_how(app))
             if url.path == "/search":
                 return self.send(page_search(app, flash))
             if url.path == "/profile":
@@ -1292,7 +1515,12 @@ def handler_for(app: Dashboard):
                 return self.send(target.read_bytes(), ctype="text/csv",
                                  headers={"Content-Disposition": 'attachment; filename="applications.csv"'})
             if parts[0] == "runs" and len(parts) == 2 and re.fullmatch(r"(explore|research|people)-\d+", parts[1]):
-                return self.send(page_run(app, parts[1]))
+                start = query.get("from", "0")
+                return self.send(page_run(app, parts[1], int(start) if start.isdigit() else 0))
+            if parts[0] == "job" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "trace":
+                return self.send(page_trace(app, int(parts[1]), query.get("run", "")))
+            if url.path == "/trace.js":
+                return self.send(TRACE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))
             if url.path == "/file":

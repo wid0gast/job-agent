@@ -13,6 +13,8 @@ import re
 import threading
 import time
 
+from . import trace
+
 REQUEST_LIMIT_SECONDS = 90  # The class proxy's deadline for one broker request (LIMITS.requestMs).
 # Each step and how hard it should think (passed on where a model supports it).
 TASKS = {
@@ -52,6 +54,7 @@ class OpenRouter:
         self.spent_usd = 0.0
         self.calls = 0
         self._counting = threading.Lock()  # Match scoring calls the model from two threads.
+        self._local = threading.local()
         self._json_format = 0  # Index into _post_json's formats that this model accepts.
         self.client = httpx.Client(timeout=httpx.Timeout(180, connect=15))
 
@@ -93,9 +96,18 @@ class OpenRouter:
         return body
 
     def count(self, body: dict) -> None:
+        usage = body.get("usage") or {}
         with self._counting:
             self.calls += 1
-            self.spent_usd += float((body.get("usage") or {}).get("cost") or 0)
+            self.spent_usd += float(usage.get("cost") or 0)
+        # This thread's latest request, for the job's trace and the chat's footer.
+        self._local.usage = {"input": usage.get("prompt_tokens") or 0, "output": usage.get("completion_tokens") or 0,
+                             "cost_usd": float(usage.get("cost") or 0)}
+        self._local.model = body.get("model") or ""
+
+    @property
+    def last_usage(self) -> dict:
+        return getattr(self._local, "usage", {"input": 0, "output": 0, "cost_usd": 0.0})
 
     def choose(self, task: str) -> tuple[str, str]:
         """(model, effort) for a step: the one model, with the step's effort."""
@@ -109,11 +121,24 @@ class OpenRouter:
 
     def complete(self, messages: list[dict], tools: list[dict], task: str = "agent") -> dict:
         """One agent turn with tool declarations (used by harness.AgentRun and the chat)."""
-        body = self.post({"messages": messages, "tools": tools})
+        started = time.time()
+        try:
+            body = self.post({"messages": messages, "tools": tools})
+        except Exception as error:
+            self.record(task, started, turn=True, error=str(error))
+            raise
         choice = body["choices"][0]
+        self.record(task, started, reply=json.dumps(choice["message"], ensure_ascii=False), turn=True)
         if choice.get("finish_reason") not in ("stop", "tool_calls", "end_turn"):
             raise RuntimeError(f"Incomplete response: {choice.get('finish_reason')}")
         return choice["message"]
+
+    def record(self, task: str, started: float, system: str = "", prompt: str = "", reply: str = "",
+               turn: bool = False, error: str = "") -> None:
+        """One request, into the job's trace when one is open (trace.py)."""
+        model = getattr(self._local, "model", "") or self.choose(task)[0]
+        trace.model_call(task, model, self.choose(task)[1], time.time() - started, system, prompt, reply,
+                         self.last_usage if not error else {}, error, turn)
 
     def json(self, system: str, user: str, schema: dict, name: str = "answer") -> dict:
         """A JSON object matching `schema`, retried once if the model gets it wrong.
@@ -127,10 +152,16 @@ class OpenRouter:
             {"role": "user", "content": user},
         ]
         error = ""
-        for _ in range(2):
-            body = self._post_json(messages, schema, name)
+        for attempt in range(2):
+            started = time.time()
+            try:
+                body = self._post_json(messages, schema, name)
+            except Exception as failure:
+                self.record(name, started, system, user, error=str(failure))
+                raise
             choice = body["choices"][0]
             text = choice["message"].get("content") or ""
+            self.record(name, started, system, messages[-1]["content"] if attempt else user, text)
             if not text and choice.get("finish_reason") == "length":
                 raise RuntimeError("The model ran out of output tokens before answering "
                                    f"({body.get('model')}). Try another model.")
@@ -140,6 +171,8 @@ class OpenRouter:
                 return value
             except ValueError as problem:
                 error = str(problem)
+                trace.check("Reply has the expected shape", False,
+                            f"{error}; " + ("asked again." if not attempt else "gave up."))
                 messages += [{"role": "assistant", "content": text},
                              {"role": "user", "content": f"That was not valid: {error}. "
                               "Reply again with only the corrected JSON object."}]
