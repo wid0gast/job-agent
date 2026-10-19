@@ -19,6 +19,7 @@ and applies only after you approve.
 - **Never counts a job twice:** the same role on two boards is one job, and jobs you've already applied to (even when your job sheet says "MLE" and the posting says "Machine Learning Engineer Intern") are set aside, with the reason shown.
 - **Ranks** every job against what you're looking for: free keyword scores for all of them, then Claude scores the best 120.
 - **Prepares** an application: it reads the full posting, checks your fit requirement by requirement, tailors your resume, researches the company, and drafts every answer, each with its source.
+- **Finds people to contact** at the company (someone from your school, someone in the role, the recruiter) and drafts a short email and LinkedIn note for each, the way career advisers recommend. You send them from your own email.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.
 - **Talks with you.** The Assistant tab is a chat that can do everything the app does, and search the web too.
 
@@ -26,7 +27,7 @@ It never invents experience or numbers, ignores instructions hidden in job pages
 
 ## Just ask
 
-Use the dashboard, or just ask. "Find my 5 best matches, one per company, and prepare them." "Add my new project to my resume." "Make the Stripe cover letter shorter." The assistant uses the same tools as the dashboard. Each step shows in the chat, edits to your resume and profile can be undone, and it can only *ask* to submit: nothing is sent until you click.
+Use the dashboard, or just ask. "Find my 5 best matches, one per company, and prepare them." "Add my new project to my resume." "Make the Stripe cover letter shorter." "Who could I email at Duolingo?" The assistant uses the same tools as the dashboard. Each step shows in the chat, edits to your resume and profile can be undone, and it can only *ask* to submit: nothing is sent until you click.
 
 <p align="center"><img src="docs/screenshots/assistant.png" alt="The assistant chat: it checks an application and asks you to confirm before submitting" width="900"></p>
 

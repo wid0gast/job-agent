@@ -171,10 +171,11 @@ one per company, and prepare them", "add my new project to my resume", "make
 the Stripe cover letter shorter", "what's waiting for me?". It also searches
 and reads the web.
 
-- **Tools, not guesses.** About 20 tools cover jobs (find, open, refresh,
+- **Tools, not guesses.** About 25 tools cover jobs (find, open, refresh,
   discover, rank, reject, restore, record outcomes), applications (prepare or
   redo with a note, read a packet, edit an answer, edit the tailored resume or
-  cover letter and typeset it again), your files (master resume, profile,
+  cover letter and typeset it again, find people to contact and edit or send
+  their drafts), your files (master resume, profile,
   saved answers, story bank, writing sample), search settings and background
   tasks. Each tool call shows in the chat as one line you can expand.
 - **Slow work stays in the worker.** Preparing and submitting run as tasks;
@@ -199,10 +200,51 @@ and reads the web.
   Claude's thinking kept between turns. Sonnet 5.5 by default; the picker
   under the message box switches a chat to Haiku or Opus.
 
+### People to contact
+
+Each prepared application can include a few people at the company, each with
+a short email, a LinkedIn connection note and a follow-up, drafted for you.
+Choose who on the **Search** page (or untick all to turn it off):
+
+| Who | Why |
+| --- | --- |
+| **Shares your background** (same school or past employer) | The likeliest to reply, and a conversation with someone inside is how referrals happen. |
+| **In this role or team** | Can tell you what the work is really like. |
+| **Recruiter** | Fine to contact once you've applied. |
+| **Hiring manager** (off by default) | Advice is mixed: some welcome a specific note, some pass it to HR. |
+
+This follows what career advisers recommend (Steve Dalton's *The 2-Hour Job
+Search*, university career centers, Ask a Manager): ask for their advice, not
+a job or a referral; under 100 words; what you share first; one clear
+question; no attachments; one person per company at a time, the next after 3
+days without a reply; one follow-up after a week, then stop.
+
+- **Finding people.** An agent searches the web the way you would (LinkedIn
+  results, the company's blog and team pages). Code keeps a person only if a
+  page or search result it saw names them at the company (former employees are
+  skipped), a LinkedIn link only as a search result gave it, and a shared
+  school only if a page says so. LinkedIn itself is never opened or automated.
+  The job page links to how it searched.
+- **Email addresses.** Only addresses shown on a page, or guessed from the
+  company's format when a page shows a named employee's address (checked, and
+  marked "guessed": these can bounce). Search results rarely show addresses,
+  so many people come with a LinkedIn link and note only; paste an address in
+  if you have one.
+- **Drafts.** Written from your resume, the posting and verified company facts.
+  Code checks the length, the question and that no number is invented. Edit
+  any of it on the job's page, or ask the assistant.
+- **Sending is yours.** "Send email in Gmail" (or your mail app) opens the
+  draft in your own email, and you press Send. The app records it (undo if you
+  didn't send it), keeps to `DAILY_OUTREACH_LIMIT`, and reminds you on Today
+  when to try the next person or follow up. Mark "They replied" to stop the
+  reminders. LinkedIn notes: Copy, open their profile, Connect, Add a note.
+- **Postings that say not to contact** anyone are respected, and a redo of a
+  packet keeps the people you've already emailed.
+
 ### The agents inside the pipeline
 
 Most of the app is a fixed pipeline (find → rank → prepare → approve →
-submit). Two agents handle the parts with no fixed path. Neither can approve
+submit). Three agents handle the parts with no fixed path. Neither can approve
 or submit for you, change caps, or invent an answer; those checks are code.
 
 - **Explorer** (systems without a coded filler: iCIMS, custom career pages):
@@ -213,6 +255,8 @@ or submit for you, change caps, or invent an answer; those checks are code.
 - **Researcher** (for cover letters and "why us" answers): searches and reads
   the company's pages and keeps a fact only if its quote is visibly on a page
   it read. Letters and answers may only use those facts.
+- **People finder** (see People to contact): searches for people at the
+  company; code checks each one against what the pages and results showed.
 
 ### Your applications
 
@@ -252,7 +296,8 @@ emailed code).
 | `SPEND_CAP_USD` | `1.00` | With an API key, a run stops once spending reaches this. Claude Code usage comes from your plan. |
 | `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
 | `RESEARCH` | `auto` | Research the company for letters and "why us" answers, or `off`. |
-| `BRAVE_API_KEY` | (empty) | Search for research. Without it, a free search is tried (best effort). |
+| `DAILY_OUTREACH_LIMIT` | `10` | Emails to people at companies per day (first emails and follow-ups). |
+| `BRAVE_API_KEY` | (empty) | A search API for research and finding people. Without it, Claude's own web search is used. |
 
 ### Design principles
 
@@ -303,6 +348,7 @@ emailed code).
 | `job_agent/static/chat.js` | The chat page: sending, live updates, cards |
 | `job_agent/web.py`, `pageview.py` | The explorer agent, its page view, and the coded replay |
 | `job_agent/research.py` | The research agent: search, read, quote-checked facts |
+| `job_agent/people.py` | People to contact: the finder agent and its checks, drafts, sending and reminders |
 | `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |
 | `job_agent/documents.py` | Resume/cover letter PDFs and the invented-number check |

@@ -103,7 +103,8 @@ def load_profile() -> dict:
 
 
 SEARCH_KEYS = ("description", "roles", "fields", "job_types", "include_senior", "locations", "terms",
-               "max_posting_age_days", "exclude_companies", "exclude_title_words", "fit_threshold", "resume_pages")
+               "max_posting_age_days", "exclude_companies", "exclude_title_words", "fit_threshold", "resume_pages",
+               "people_kinds", "people_per_job")
 
 
 def load_search() -> dict:

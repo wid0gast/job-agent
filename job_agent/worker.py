@@ -141,6 +141,17 @@ def run_task(task: dict, ctx: Context, log) -> str:
         return prepare.prepare(task["job_id"], ctx, log, note=task["arg"] or "")
     if task["kind"] == "render":
         return prepare.render(task["job_id"], ctx, log)
+    if task["kind"] == "people":
+        from . import people
+
+        return people.refresh(task["job_id"], ctx, log)
+    if task["kind"] == "redraft":  # arg: {"people": [ids], "note": "what to change"}
+        import json
+
+        from . import people
+
+        request = json.loads(task["arg"] or "{}")
+        return people.redraft(task["job_id"], ctx, request.get("people") or [], request.get("note", ""), log)
     if task["kind"] == "submit":
         return submit.submit(task["job_id"], ctx, ask, log)
     raise ValueError(f"Unknown task {task['kind']!r}.")

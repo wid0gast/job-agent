@@ -40,6 +40,9 @@ TASKS = {
     "form_answers": ("best", "medium"),        # answers and essays sent to employers
     "explore": ("best", "medium"),             # agent: fills unfamiliar forms on live sites
     "discover": ("standard", "low"),           # web searches on job sites; code reads what's found
+    "people": ("standard", "medium"),          # agent: finds people to contact; code checks each one
+    "web_search": ("standard", "low"),         # one search through Claude's web search, results as given
+    "outreach": ("best", "medium"),            # emails and LinkedIn notes to people at the company
 }
 DEFAULT_TASK = ("standard", "medium")
 # Per million tokens (input, output), for the spending cap. Cache reads cost a tenth of input.
@@ -105,7 +108,7 @@ class Model:
 
     def web_json(self, system: str, user: str, schema: dict, task: str, domains: list[str],
                  max_searches: int) -> dict:
-        """Like json(), but Claude may run web searches limited to `domains` first."""
+        """Like json(), but Claude may run web searches first (limited to `domains`, if any)."""
         raise NotImplementedError
 
 
@@ -171,8 +174,9 @@ Tools:
 
     def web_json(self, system: str, user: str, schema: dict, task: str, domains: list[str],
                  max_searches: int) -> dict:
-        prompt = (f"{user}\n\nUse the WebSearch tool, at most {max_searches} times, always with "
-                  f"allowed_domains set to {json.dumps(domains)} (site: in the query is ignored).")
+        prompt = f"{user}\n\nUse the WebSearch tool, at most {max_searches} times" + (
+            f", always with allowed_domains set to {json.dumps(domains)} (site: in the query is ignored)."
+            if domains else ".")
         value = self.run(system, prompt, schema, task, tools=("WebSearch",))
         check(value, schema)
         return value
@@ -265,8 +269,8 @@ class AnthropicAPI(Model):
             response = self.client.messages.create(
                 model=model, max_tokens=16000, system=system, messages=messages,
                 output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
-                tools=[{"type": "web_search_20260209", "name": "web_search", "allowed_domains": domains,
-                        "max_uses": max_searches}])
+                tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches,
+                        **({"allowed_domains": domains} if domains else {})}])
             if response.stop_reason != "pause_turn":
                 break
             self.count(self.cost(response.usage, model))

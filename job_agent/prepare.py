@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import answers, companies, config, documents, filters, latex, packets, research, systems, web
+from . import answers, companies, config, documents, filters, latex, packets, people, research, systems, web
 from .llm import NOT_SET_UP
 from .prompts import COVER_LETTER_PROMPT, FIT_PROMPT, TAILOR_PROMPT
 
@@ -273,6 +273,19 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         packet["recording"] = recording
         packet["job"]["apply_url"] = job["url"]
     packet["checks"]["consistency"] = packets.consistency(packet, profile)
+    # People to contact, with drafts (the Search page chooses who). A redo keeps the ones
+    # you've already emailed. Agents need complete(), which test stand-ins may lack.
+    before = packets.load(job)
+    keep = [p for p in ((before or {}).get("people") or {}).get("people", []) if p.get("sent_at")]
+    if people.wanted(profile)[0] and hasattr(ctx.llm, "complete"):
+        try:
+            packet["people"] = people.find(ctx, job, description, profile, master, log, keep,
+                                           found.get("facts"))
+        except Exception as error:  # noqa: BLE001 - a bonus: the application stands without it.
+            packet["people"] = {"found_at": people.now(), "people": keep, "email_format": None,
+                                "summary": f"Stopped: {type(error).__name__}: {error}"[:300]}
+    elif keep:
+        packet["people"] = before["people"] | {"people": keep}
     return packet
 
 

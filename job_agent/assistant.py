@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import actions, companies, config, documents, latex, matching, packets, resumes, sources, systems
+from . import actions, companies, config, documents, latex, matching, packets, people, resumes, sources, systems
 from .harness import Tool, schema
 from .tracker import OUTCOMES, STATUSES
 
@@ -29,7 +29,8 @@ QUEUE = ("prepared", "needs_you", "approved")
 TASKS = {"refresh": "Refresh the job lists", "discover": "Discover companies", "score_matches": "Rank jobs",
          "prepare": "Prepare", "render": "Typeset documents", "submit": "Submit", "draft": "Draft answers",
          "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes",
-         "import_resume": "Read a resume"}
+         "import_resume": "Read a resume", "people": "Find people to contact",
+         "redraft": "Rewrite messages"}
 MAX_WAIT_MINUTES = 15
 
 
@@ -134,6 +135,7 @@ class Assistant:
             "problems": (checks.get("consistency") or []) + [f"invented number: {n}" for n in
                                                               checks.get("invented_numbers") or []],
             "reviewer_note": packet.get("reviewer_note"),
+            "people_to_contact": people_brief(packet),
         }
 
     def refresh_jobs(self):
@@ -274,6 +276,72 @@ class Assistant:
                 "next": "A confirmation card is in the chat. Nothing is sent until the user clicks it; "
                         "don't ask again in text. You'll hear what they chose on their next message."}
 
+    # ----- people to contact ------------------------------------------------
+
+    def find_people(self, job_id: int):
+        job = self.job(job_id)
+        if packets.load(job) is None:
+            raise ValueError(f"Job {job_id} has no packet yet; prepare it first.")
+        if not people.wanted(config.load_profile())[0]:
+            raise ValueError("Finding people is off. update_search people_kinds turns it on (ask the user first).")
+        return self.queue("people", job_id, note="Searches the web for people at the company and drafts messages "
+                          "(a few minutes). People already emailed are kept.")
+
+    def edit_outreach(self, job_id: int, person_id: str, subject: str | None = None, body: str | None = None,
+                      linkedin_note: str | None = None, follow_up: str | None = None, email: str | None = None):
+        packet = packets.load(self.job(job_id))
+        person = people.person_in(packet or {}, person_id)
+        if person.get("sent_at") and (subject or body):
+            raise ValueError("That email was already sent; only the follow-up can change.")
+        changes = {k: v for k, v in {"subject": subject, "body": body, "linkedin_note": linkedin_note,
+                                     "follow_up": follow_up, "email": email}.items() if v is not None}
+        if email and normalize(email) not in " ".join(normalize(m) for m in self.chat.said()):
+            raise ValueError("An email address can be set only as the user wrote it in this chat.")
+        text = " ".join(v for k, v in changes.items() if k != "email")
+        known = "\n".join([config.read_master_resume(), packet.get("description", ""), person["quote"], people.ASKS])
+        invented = documents.unsupported_numbers(text, known)
+        if invented:
+            raise ValueError(f"Numbers not in the resume, posting or person's page: {invented}. Nothing changed.")
+        person = people.edit(self.tracker, job_id, person_id, changes)
+        return {"saved": True, "draft": person.get("draft"), "email": person.get("email"),
+                "checks": person.get("checks") or None}
+
+    def redraft_outreach(self, job_id: int, note: str, person_ids: list[str] | None = None):
+        packet = packets.load(self.job(job_id))
+        for pid in person_ids or []:
+            people.person_in(packet or {}, pid)
+        return self.queue("redraft", job_id, arg=json.dumps({"people": person_ids or [], "note": note}),
+                          note="Rewrites the unsent drafts following the note (a minute).")
+
+    def request_outreach(self, job_id: int, person_id: str, follow_up: bool = False):
+        job = self.job(job_id)
+        packet = packets.load(job)
+        person = people.person_in(packet or {}, person_id)
+        if not person.get("email") or not person.get("draft"):
+            raise ValueError(f"{person['name']} has no email address or draft. Ask the user for an address, "
+                             "or give them the LinkedIn note to send themselves.")
+        if person.get("followed_up_at" if follow_up else "sent_at"):
+            raise ValueError("Already sent.")
+        if follow_up and not person.get("sent_at"):
+            raise ValueError("Send the first email before a follow-up.")
+        if self.tracker.contacted_today() >= people.daily_limit():
+            raise ValueError(f"The daily limit of {people.daily_limit()} emails is reached; suggest tomorrow.")
+        message = person["draft"]
+        card = self.chat.card("outreach", {
+            "job_id": job_id, "person": person_id, "name": person["name"], "kind": people.KINDS[person["kind"]],
+            "company": job["company"], "title": job["title"], "email": person["email"],
+            "guessed": person.get("email_status") == "guessed", "follow_up": follow_up,
+            "subject": ("Re: " if follow_up else "") + message["subject"],
+            "body": message["follow_up"] if follow_up else message["body"],
+            "gmail": people.compose_url(person, "gmail", follow_up),
+            "mail": people.compose_url(person, "mail", follow_up), "state": "pending"})
+        return {"card": card, "next": "A card with the draft is in the chat. It opens in the user's own email, and "
+                "they press Send there; nothing is sent by the app. You'll hear what they did."}
+
+    def set_contact(self, job_id: int, person_id: str, state: str):
+        people.set_state(self.tracker, job_id, person_id, state)
+        return {"saved": True}
+
     # ----- your files -------------------------------------------------------
 
     def read_file(self, file: str):
@@ -358,9 +426,9 @@ class Assistant:
             raise ValueError(f"file must be one of {', '.join(FILES)}.")
         return config.PROFILE_DIR / file
 
-    def queue(self, kind: str, note: str) -> dict:
+    def queue(self, kind: str, job_id: int | None = None, arg: str | None = None, note: str = "") -> dict:
         self.chat.start_worker()
-        return {"task_id": self.tracker.add_task(kind), "note": note}
+        return {"task_id": self.tracker.add_task(kind, job_id, arg), "note": note}
 
     def check_their_words(self, value) -> None:
         """A fact about the user may only come from what they said here or their profile."""
@@ -422,6 +490,25 @@ class Assistant:
             Tool("request_submission", "Ask the user to confirm submitting prepared applications. Shows a card "
                  "in the chat; only their click approves and sends. This is the only way to apply.",
                  schema({"job_ids": ids}), self.request_submission),
+            Tool("find_people", "Find people at the company to contact about a prepared job (who: the Search "
+                 "page's people_kinds), with a drafted email, LinkedIn note and follow-up for each (background task). "
+                 "get_packet shows them.", schema({"job_id": integer}), self.find_people),
+            Tool("edit_outreach", "Change a person's drafts: subject, body (email, under 100 words), linkedin_note "
+                 "(at most 200 characters), follow_up; or email, only as the user wrote it. Pass only what changes.",
+                 schema({"job_id": integer, "person_id": string, "subject": string, "body": string,
+                         "linkedin_note": string, "follow_up": string, "email": string}, ["job_id", "person_id"]),
+                 self.edit_outreach),
+            Tool("redraft_outreach", "Rewrite unsent drafts following a note, e.g. 'mention my robotics project' "
+                 "(background task). person_ids: [] for all unsent.",
+                 schema({"job_id": integer, "note": string, "person_ids": {"type": "array", "items": string}},
+                        ["job_id", "note"]), self.redraft_outreach),
+            Tool("request_outreach", "Show the user a card to send one person's email (or follow_up) from their own "
+                 "email account. Only their click opens it; they press Send. One person per company at a time.",
+                 schema({"job_id": integer, "person_id": string, "follow_up": boolean}, ["job_id", "person_id"]),
+                 self.request_outreach),
+            Tool("set_contact", "Record that a person replied (stops reminders) or remove them from the list.",
+                 schema({"job_id": integer, "person_id": string, "state": {"type": "string",
+                         "enum": ["replied", "removed"]}}), self.set_contact),
             Tool("set_job_status", "reject (drop a packet), restore (back to found), applied_myself (the user "
                  f"applied outside the app), or outcome (record {', '.join(OUTCOMES)}).",
                  schema({"job_ids": ids, "action": {"type": "string", "enum": ["reject", "restore", "applied_myself",
@@ -463,6 +550,18 @@ def task_brief(task: dict) -> dict:
     return {"id": task["id"], "what": TASKS.get(task["kind"], task["kind"]), "job_id": task["job_id"],
             "status": task["status"], "result": (task["result"] or "")[:300] or None,
             **({"question": task["question"]} if task["status"] == "waiting" else {})}
+
+
+def people_brief(packet: dict) -> dict | None:
+    found = packet.get("people")
+    if not found:
+        return None
+    return {"summary": found.get("summary"), "people": [
+        {"id": p["id"], "name": p["name"], "kind": p["kind"], "title": p["title"], "why": p.get("why"),
+         "email": p.get("email") or None, "email_status": p.get("email_status"), "linkedin": p.get("linkedin") or None,
+         "sent": (p.get("sent_at") or "")[:10] or None, "followed_up": (p.get("followed_up_at") or "")[:10] or None,
+         "replied": bool(p.get("replied_at")), "draft": p.get("draft"), "checks": p.get("checks") or None}
+        for p in found.get("people", []) if not p.get("removed")]}
 
 
 def answer_is_document(answer: dict) -> bool:
