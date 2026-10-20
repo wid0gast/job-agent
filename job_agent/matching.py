@@ -66,11 +66,9 @@ def terms(text: str) -> list[str]:
 NEGATION = re.compile(r"\b(?:not|no|never|except|avoid|excluding|don'?t|without)\b[^.;\n]*", re.I)
 
 
-def keyword_rank(tracker, profile: dict) -> int:
-    """Free first pass: score every found job 0-100 by how well its title fits the roles and
-    description. Words rare among job titles count more, role words triple, and the exact role
-    title a bonus; words the description rules out ("not interested in marketing") count against.
-    100 is the best job in the list. Returns how many scores changed."""
+def query_of(profile: dict) -> tuple[Counter, set, list[str]]:
+    """What a job title is scored against: words from your role titles (weighted 3) and
+    description, words the description rules out, and the role titles themselves."""
     prefs = profile.get("preferences", {})
     description = prefs.get("description", "")
     unwanted = {t for clause in NEGATION.findall(description) for t in terms(clause)}
@@ -79,13 +77,31 @@ def keyword_rank(tracker, profile: dict) -> int:
         query.update({t: 3 for t in terms(role)})
     query.update({t: 1 for t in terms(NEGATION.sub(" ", description)) if t not in query})
     unwanted -= set(query)
+    return query, unwanted, [r.lower() for r in prefs.get("roles") or [] if r.strip()]
+
+
+def relevant(profile: dict):
+    """A test for titles worth keeping at all: sharing a word with your role titles or
+    description. One sharing none would score 0, at the bottom of the list."""
+    query, _, phrases = query_of(profile)
+    if not query:
+        return lambda title: True
+    words = set(query)
+    return lambda title: bool(words & set(terms(title))) or any(p in (title or "").lower() for p in phrases)
+
+
+def keyword_rank(tracker, profile: dict) -> int:
+    """Free first pass: score every found job 0-100 by how well its title fits the roles and
+    description. Words rare among job titles count more, role words triple, and the exact role
+    title a bonus; words the description rules out ("not interested in marketing") count against.
+    100 is the best job in the list. Returns how many scores changed."""
+    query, unwanted, phrases = query_of(profile)
     jobs = tracker.with_status("found", "prepared", "needs_you")
     if not query or not jobs:
         return 0
     titles = {j["id"]: set(terms(j["title"])) for j in jobs}
     seen = Counter(t for words in titles.values() for t in words)
     idf = {t: math.log(1 + len(jobs) / (1 + seen[t])) for t in query}
-    phrases = [r.lower() for r in prefs.get("roles") or [] if r.strip()]
     bonus = max(idf.values()) * 3
 
     def raw(job) -> float:
