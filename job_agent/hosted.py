@@ -21,7 +21,8 @@ TECTONIC = APP / "bin" / "tectonic"
 TECTONIC_CACHE = APP / "bin" / "tectonic-cache.tgz"
 
 # Chromium's own sandbox stays on, as in the platform's browser image.
-CHROMIUM_ARGS = ["--disable-gpu", "--renderer-process-limit=2"]
+# The session's workspace is a 448 MiB in-memory disk (the "browser" profile), so the cache is capped.
+CHROMIUM_ARGS = ["--disable-gpu", "--renderer-process-limit=2", "--disk-cache-size=33554432"]
 # The platform proxy rejects a TLS ClientHello carrying Encrypted Client Hello (extension
 # 0xfe0d, see services/worker/src/proxy/tls-hello.ts), which Chromium sends by default.
 # Only this Local State setting turns it off; the old EncryptedClientHello feature flag no longer does.
