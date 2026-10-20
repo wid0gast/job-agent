@@ -12,7 +12,7 @@ table parsing. Downloads use ETags, so an unchanged list costs one request.
 import html
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 from . import config, filters
@@ -112,7 +112,9 @@ def simplify_jobs(client, fields: list[str]) -> list[dict]:
 
 def greenhouse_board(client, token: str) -> list[dict]:
     """Every open job on one company's Greenhouse board."""
-    response = client.get(f"{GREENHOUSE_API}/{token}/jobs", params={"content": "true"})
+    # Without content: descriptions are read when a job is prepared. Kept for tens of thousands of
+    # jobs they'd fill the class platform's workspace (and slow every refresh).
+    response = client.get(f"{GREENHOUSE_API}/{token}/jobs")
     if response.status_code == 404:
         return []
     response.raise_for_status()
@@ -124,8 +126,7 @@ def greenhouse_board(client, token: str) -> list[dict]:
             "location": (item.get("location") or {}).get("name", ""),
             "posted_at": item.get("first_published") or item.get("updated_at"),
             "active": True, "job_type": guess_job_type(item["title"]),
-            "details": {"locations": [(item.get("location") or {}).get("name", "")],
-                        "description": html_to_text(item.get("content", ""))[:20000]},
+            "details": {"locations": [(item.get("location") or {}).get("name", "")]},
             "board": token, "job_id": str(item["id"]),
         })
     return jobs
@@ -357,6 +358,12 @@ def matches_field(title: str, fields: list[str]) -> bool:
 def read_boards(client, todo: list[tuple[str, dict]], fields: list[str], counts: dict, log=print,
                 names: dict | None = None) -> list[dict]:
     """Every posting on these (ats, company row) boards that's in your fields."""
+    return [job for board_jobs in each_board(client, todo, fields, counts, log, names) for job in board_jobs]
+
+
+def each_board(client, todo: list[tuple[str, dict]], fields: list[str], counts: dict, log=print,
+               names: dict | None = None):
+    """The postings in your fields, board by board as each finishes (a slow one holds up nothing)."""
     def read(ats_row):
         ats, row = ats_row
         try:
@@ -364,25 +371,24 @@ def read_boards(client, todo: list[tuple[str, dict]], fields: list[str], counts:
         except Exception as error:  # noqa: BLE001 - one bad board shouldn't stop a refresh.
             return ats, row, [], error
 
-    jobs = []
     # Polite parallelism: a few boards at a time, each a single request. Hosted, the
     # class proxy admits four connections per visit, and model calls need one too.
     with ThreadPoolExecutor(max_workers=3 if config.HOSTED else 8) as pool:
-        for ats, row, board_jobs, error in pool.map(read, todo):
+        for future in as_completed([pool.submit(read, item) for item in todo]):
+            ats, row, board_jobs, error = future.result()
             if error:
                 log(f"  {ats} board {row['board']}: {error}")
+                yield []
                 continue
-            for job in board_jobs:
-                if matches_field(job["title"], fields):
-                    # Company names from the lists (or the company list) are better than board slugs.
-                    job["company"] = (names or {}).get((ats, row["board"]), row["name"])
-                    jobs.append(job)
             counts["boards"] += 1
-    return jobs
+            # Company names from the lists (or the company list) are better than board slugs.
+            yield [{**job, "company": (names or {}).get((ats, row["board"]), row["name"])}
+                   for job in board_jobs if matches_field(job["title"], fields)]
 
 
-def ingest(tracker, companies, jobs: list[dict], fields: list[str], counts: dict) -> None:
-    """Add new postings as found; close ones the lists show as closed; skip ones already known."""
+def ingest(tracker, companies, jobs: list[dict], fields: list[str], counts: dict, keep=None) -> None:
+    """Add new postings as found; close ones the lists show as closed; skip ones already known.
+    keep(job): False drops a new posting without storing it (see wanted)."""
     # A URL can appear twice (reposted, or on both lists); any active copy keeps it open.
     live = {job_key(j["url"]) for j in jobs if j["active"]}
     for job in jobs:
@@ -404,26 +410,64 @@ def ingest(tracker, companies, jobs: list[dict], fields: list[str], counts: dict
         if tracker.find_duplicate(job["url"], job["company"], job["title"], company_id):
             counts["seen"] += 1
             continue
+        if keep and not keep(job):
+            counts["skipped"] = counts.get("skipped", 0) + 1
+            continue
         tracker.add_lead(job.pop("url"), job.pop("site"), job.pop("company"), job.pop("title"),
                          job.pop("location"), company_id=company_id,
                          ats_board=board, **job)
         counts["new"] += 1
 
 
-def refresh(tracker, profile: dict, boards: bool = False, log=print) -> dict:
-    """Pull the lists into the tracker. New jobs are 'found'; closed ones drop out."""
+BOARD_BATCH = 50  # Company boards finished between two updates of the job list.
+
+
+def wanted(profile: dict):
+    """New postings worth storing: they pass your filters and share a word with your roles or
+    description. The rest are never shown near the top, and tens of thousands of them filled the
+    class platform's workspace, so they're dropped (changing Search refreshes again)."""
+    from . import matching
+
+    relevant = matching.relevant(profile)
+
+    def keep(job: dict) -> bool:
+        return relevant(job.get("title")) and not filters.check(job, job.get("details") or {}, profile)
+    return keep
+
+
+def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=None) -> dict:
+    """Pull the lists into the tracker in batches: the lists, then company boards a batch at a
+    time, each filtered and ranked as it lands (so Ranked jobs fills in while it runs).
+    New jobs are 'found'; closed ones drop out."""
+    from . import matching
+
     fields = chosen_fields(profile)
     companies = Companies()
-    counts = {"new": 0, "closed": 0, "seen": 0, "boards": 0}
+    counts = {"new": 0, "closed": 0, "seen": 0, "boards": 0, "skipped": 0}
+    keep = wanted(profile)
+
+    def settle(note: str) -> None:
+        apply_filters(tracker, profile)
+        matching.keyword_rank(tracker, profile)
+        if progress:
+            progress(f"{note}: {counts['new']} new jobs kept so far, {counts['skipped']} that don't fit dropped")
+
     with http() as client:
         jobs = simplify_jobs(client, [f for f in fields if f in FIELDS])
         log(f"Simplify lists: {len(jobs)} postings ({', '.join(FIELDS[f][0] if f in FIELDS else 'other roles' for f in fields)})")
+        names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}
+        ingest(tracker, companies, jobs, fields, counts, keep)
+        settle("Job lists read")
         if boards:
-            names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}
             todo = [(ats, row) for ats in BOARD_FEEDS for row in companies.boards(ats)]
-            jobs += read_boards(client, todo, fields, counts, log, names)
+            batch = []
+            for done, board_jobs in enumerate(each_board(client, todo, fields, counts, log, names), 1):
+                batch += board_jobs
+                if done % BOARD_BATCH == 0 or done == len(todo):
+                    ingest(tracker, companies, batch, fields, counts, keep)
+                    settle(f"{done} of {len(todo)} company boards read")
+                    batch = []
             log(f"Company boards read: {counts['boards']}")
-    ingest(tracker, companies, jobs, fields, counts)
     companies.save()
     reassign(tracker)  # Aliases may have changed: keep caps counting by one company ID.
     counts["filtered"] = apply_filters(tracker, profile)

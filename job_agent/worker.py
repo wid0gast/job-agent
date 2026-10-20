@@ -139,11 +139,13 @@ def run_task(task: dict, ctx: Context, log) -> str:
 
         return hosted.warm_up(ctx, log)
     if task["kind"] == "refresh":
-        counts = sources.refresh(tracker, config.load_profile(), boards=True, log=log)
+        counts = sources.refresh(tracker, config.load_profile(), boards=True, log=log,
+                                 progress=lambda text: tracker.set_task(task["id"], result=text))
         from . import matching
 
         matching.keyword_rank(tracker, config.load_profile())  # Free; the model ranks only the best of these.
-        return f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known"
+        return (f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known; "
+                f"{counts['skipped']} outside your search not kept")
     if task["kind"] == "sync_profile":
         from . import profile_sync
 

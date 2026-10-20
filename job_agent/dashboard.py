@@ -566,7 +566,12 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
                    f'{unscored} not yet ranked by the model</span>')
     else:
         scoring = '<span class=muted>Every job is ranked against your current description.</span>'
-    body = f"""<h1>Ranked jobs</h1>
+    refreshing = next((t for t in app.tracker.tasks(10) if t["kind"] == "refresh"
+                       and t["status"] in ("queued", "running")), None)
+    live = (f'<div class=flash><span class=spin></span> Refreshing the job lists: '
+            f'{esc(refreshing["result"] or "starting")}. This list fills in as each batch lands.</div>'
+            if refreshing else "")
+    body = f"""<h1>Ranked jobs</h1>{live}
     <div class=card><div class=row>{scoring}</div>
     <p class=muted style="margin:10px 0 0">Score = <b>fit</b> (read the whole posting, when prepared),
     <b>match</b> (the model on title, company and location against your description) or
@@ -577,7 +582,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>System</th><th>Status</th><th></th></tr>
     {"".join(rows) or '<tr><td colspan=6 class=muted>None.</td></tr>'}</table>
     {f'<p class=muted>Showing the top 500 of {len(jobs)}.</p>' if len(jobs) > 500 else ''}</div>"""
-    return layout(app, "/jobs", body, flash)
+    return layout(app, "/jobs", body, flash, refresh=bool(refreshing))
 
 
 def page_search(app: Dashboard, flash: str) -> bytes:

@@ -173,3 +173,51 @@ def test_scoring_has_its_own_lane(tracker):
     assert tracker.task(scoring)["status"] == "done"
     assert tracker.task(prepare)["status"] == "queued"  # Left for the main loop.
     assert tracker.claim_task(exclude=worker.OWN_LANE)["id"] == prepare
+
+
+def test_refresh_keeps_only_jobs_that_fit_and_ranks_them_batch_by_batch(tmp_path, monkeypatch):
+    """Jobs outside the search are dropped before they're stored (tens of thousands filled the
+    class platform's workspace), and each batch is filtered and ranked as it lands."""
+    from contextlib import nullcontext
+
+    import yaml
+
+    from job_agent import companies, config, sources
+    from job_agent.tracker import Tracker
+
+    (config.PROFILE_DIR / "search.yaml").write_text(yaml.safe_dump(
+        {"roles": ["Data Scientist"], "locations": ["any"], "job_types": ["internship", "full_time"],
+         "exclude_companies": ["Initech"], "max_posting_age_days": None}))
+    registry = tmp_path / "companies.csv"
+    registry.write_text("company_id,name,aliases,website,ats,board,field_tags,source,added\n"
+                        "acme,Acme,,,greenhouse,acme,,list,2026-01-01\n"
+                        "globex,Globex,,,greenhouse,globex,,list,2026-01-01\n")
+    monkeypatch.setattr(companies, "COMPANIES_FILE", registry)
+
+    def posting(company, title, n):
+        return {"site": "test", "url": f"https://job-boards.greenhouse.io/{company.lower()}/jobs/{n}",
+                "company": company, "title": title, "location": "New York, NY", "posted_at": "2026-10-01",
+                "active": True, "job_type": "internship", "details": {"locations": ["New York, NY"]}}
+
+    listed = [posting("Acme", "Data Scientist Intern", 1), posting("Acme", "Sales Associate Intern", 2),
+              posting("Initech", "Data Scientist Intern", 3)]
+    boards = {"acme": [posting("Acme", "Senior Data Scientist", 4)],
+              "globex": [posting("Globex", "Data Scientist, Growth", 5), posting("Globex", "Recruiter", 6)],
+              "initech": []}  # Registered from the lists, as every listed company's board is.
+    monkeypatch.setattr(sources, "http", lambda: nullcontext(None))
+    monkeypatch.setattr(sources, "simplify_jobs", lambda client, fields: [dict(j) for j in listed])
+    monkeypatch.setattr(sources, "BOARD_FEEDS", {"greenhouse": lambda client, board: [dict(j) for j in boards[board]]})
+    monkeypatch.setattr(sources, "BOARD_BATCH", 1)
+
+    tracker = Tracker(tmp_path / "t.db")
+    updates = []
+    counts = sources.refresh(tracker, config.load_profile(), boards=True, log=lambda *_: None,
+                             progress=updates.append)
+    titles = sorted((j["company"], j["title"]) for j in tracker.all())
+    assert titles == [("Acme", "Data Scientist Intern"), ("Acme", "Senior Data Scientist"),
+                      ("Globex", "Data Scientist, Growth")]  # Sales, Recruiter and Initech were dropped.
+    assert counts["skipped"] == 3
+    assert [u.split(":")[0] for u in updates] == ["Job lists read", "1 of 3 company boards read",
+                                                  "2 of 3 company boards read", "3 of 3 company boards read"]
+    found = tracker.with_status("found")
+    assert all("keyword" in json.loads(j["details"]) for j in found)  # Ranked as they landed.

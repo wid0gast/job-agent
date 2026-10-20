@@ -103,9 +103,14 @@ def ready_to_submit(tracker, settings, job_ids: list[int]) -> tuple[list[int], l
     return ready, problems
 
 
+# Search settings that can bring in jobs a refresh dropped (excluding more only narrows).
+WIDENING = ("roles", "description", "job_types", "include_senior", "locations", "terms", "max_posting_age_days")
+
+
 def save_search(tracker, settings, values: dict) -> tuple[str, bool]:
     """Save search settings and apply them to the jobs found. Returns (message, refresh needed)."""
     fields_before = sources.chosen_fields(config.load_profile())
+    search_before = {k: config.load_search().get(k) for k in WIDENING}
     config.save_search(values)
     profile = config.load_profile()
     before = len(tracker.with_status("found"))
@@ -118,6 +123,9 @@ def save_search(tracker, settings, values: dict) -> tuple[str, bool]:
             tracker.update(job["id"], status="found", reason="Back: above your new threshold.")
     if sources.chosen_fields(profile) != fields_before:
         return "Saved. Your fields changed, so the job lists are being refreshed.", True
+    if any(config.load_search().get(k) != search_before[k] for k in WIDENING):
+        # A refresh keeps only jobs that fit the search, so a different search reads them again.
+        return "Saved. Your search changed, so the job lists are being read again for it.", True
     if not tracker.all():  # Nothing fetched yet.
         return "Saved. No jobs yet, so the job lists are being refreshed with these filters.", True
     after = len(tracker.with_status("found"))
