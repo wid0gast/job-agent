@@ -45,7 +45,7 @@ CSS = """
 --line:#242a3a;--soft:#1a1f2e;--accent:#8b85ff;--accent-2:#b18cff;--accent-soft:#1f2147;--good:#34d399;
 --good-soft:#0f2a22;--bad:#f87171;--bad-soft:#2d1517;--warn:#fbbf24;--warn-soft:#2b2210;--info:#60a5fa;
 --info-soft:#12233a;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
-*{box-sizing:border-box}[hidden]{display:none!important}
+*{box-sizing:border-box}[hidden]{display:none!important}@view-transition{navigation:auto}
 body{margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
 font:14px/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -271,16 +271,49 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
-    auto = '<meta http-equiv="refresh" content="4">' if refresh else ""
+    # A page with work running updates itself in place (live.js), never by reloading.
+    live = ' data-live' if refresh else ""
     banner = ('<div class="flash warn">Auto-submit is on.</div>'
               if app.settings.submit_mode == "auto" else "")
     banner += start_here(app, active)
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
-            f"content='width=device-width,initial-scale=1'>{auto}<title>Job Agent</title>"
-            f"<link rel=stylesheet href=/style.css></head><body><header>"
+            f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
+            f"<title>Job Agent</title><style>{FIRST_PAINT}</style>"
+            f"<link rel=stylesheet href=/style.css></head><body{live}><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
-            f"<main>{banner}{note}{body}</main></body></html>").encode()
+            f"<main>{banner}{note}{body}</main><script src=/live.js></script></body></html>").encode()
+
+
+# The page's background before the stylesheet arrives, so moving between pages never flashes white.
+FIRST_PAINT = "html{background:#f6f7fb}@media (prefers-color-scheme:dark){html{background:#0b0d14}}"
+
+LIVE_JS = r"""// Pages with work running update in place: no reload, no flash, scroll and open sections kept.
+(() => {
+  if (!document.body.hasAttribute("data-live")) return;
+  const tick = async () => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    if (!typing && !document.hidden) {
+      try {
+        const html = await (await fetch(location.href, {cache: "no-store"})).text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const fresh = doc.querySelector("main"), now = document.querySelector("main");
+        if (fresh && now && fresh.innerHTML !== now.innerHTML) {
+          const open = [...now.querySelectorAll("details")].map((d) => d.open);
+          now.innerHTML = fresh.innerHTML;
+          now.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true; });
+          // Scripts in the page (toggles, copy buttons) bind to the new content again.
+          now.querySelectorAll("script[src]").forEach((old) => {
+            const s = document.createElement("script"); s.src = old.src; old.replaceWith(s);
+          });
+        }
+        if (!doc.body.hasAttribute("data-live")) return;  // Nothing running any more.
+      } catch (_) { /* The next tick tries again. */ }
+    }
+    setTimeout(tick, 2500);
+  };
+  setTimeout(tick, 2500);
+})();"""
 
 
 def start_here(app: Dashboard, active: str) -> str:
@@ -1480,6 +1513,8 @@ def handler_for(app: Dashboard):
             if url.path == "/assistant":
                 chat = query.get("chat", "")
                 return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
+            if url.path == "/live.js":
+                return self.send(LIVE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/people.js":
                 return self.send(PEOPLE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/assistant/chat.js":

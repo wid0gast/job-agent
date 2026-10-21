@@ -3,6 +3,7 @@
 import http.client
 import re
 import threading
+import time
 from dataclasses import replace
 from http.server import ThreadingHTTPServer
 
@@ -145,5 +146,39 @@ def test_a_prepared_job_can_be_marked_applied(tmp_path, monkeypatch):
         request(app.port, "POST", "/mark-applied", f"token={token}&job_id={job['id']}",
                 {"Origin": f"http://127.0.0.1:{app.port}"})
         assert Tracker(tmp_path / "t.db").get(job["id"])["status"] == "submitted"
+    finally:
+        server.shutdown()
+
+
+def test_pages_with_work_running_update_in_place_without_reloading(tmp_path, monkeypatch):
+    """No full-page reloads (they flash and lose your place): the content is swapped in place."""
+    from playwright.sync_api import sync_playwright
+
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    tracker = Tracker(tmp_path / "t.db")
+    task = tracker.add_task("refresh")
+    tracker.set_task(task, status="running", result="Job lists read: 10 new jobs kept so far")
+    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app.ensure_worker = lambda: None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{app.port}/")
+            assert "10 new jobs" in page.inner_text("main")
+            reloads = []
+            page.on("framenavigated", lambda frame: reloads.append(frame.url))
+            tracker.set_task(task, result="Job lists read: 42 new jobs kept so far")
+            deadline = time.time() + 8
+            while "42 new jobs" not in page.inner_text("main") and time.time() < deadline:
+                page.wait_for_timeout(250)
+            assert "42 new jobs" in page.inner_text("main")
+            assert reloads == []  # Same page: updated in place, never reloaded.
+            assert 'http-equiv="refresh"' not in page.content()
+            browser.close()
     finally:
         server.shutdown()
