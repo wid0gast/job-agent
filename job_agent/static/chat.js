@@ -13,6 +13,15 @@
   const sendButton = document.getElementById("send");
   const stopButton = document.getElementById("stop");
   const model = document.getElementById("model");
+  const effort = document.getElementById("effort");
+  // Extra high is an Opus level: offered only when an Opus model is picked.
+  const fitEffort = () => {
+    const xhigh = effort.querySelector('option[value="xhigh"]');
+    const opus = model.value.includes("opus");
+    xhigh.hidden = !opus;
+    if (!opus && effort.value === "xhigh") effort.value = "high";
+  };
+  fitEffort();
   const empty = document.getElementById("empty");
   const nodes = new Map();
   let rev = 0, running = false, timer = null, stickToBottom = true, shownTasks = "";
@@ -154,7 +163,8 @@
     } else if (item.kind === "stats") {
       const k = n => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
       const name = MODEL_NAMES[d.model] || d.model;
-      el.innerHTML = `<div class="stats-line">${esc(name)} · ${d.requests} request${d.requests === 1 ? "" : "s"} · ` +
+      const level = {low: "low", medium: "medium", high: "high", xhigh: "extra high", max: "max"}[d.effort] || "";
+      el.innerHTML = `<div class="stats-line">${esc(name)}${level ? ` (${level} effort)` : ""} · ${d.requests} request${d.requests === 1 ? "" : "s"} · ` +
                      `${d.seconds} s · ${k(d.input)} tokens in, ${k(d.output)} out</div>`;
     } else if (item.kind === "note") {
       el.innerHTML = `<div class="note">${esc(d.shown || d.text)}</div>`;
@@ -241,7 +251,7 @@
     const text = input.value.trim();
     if (!text || running) return;
     sendButton.disabled = true;
-    post("/assistant/api/send", {chat: chatId || "", text, model: model.value}).then(reply => {
+    post("/assistant/api/send", {chat: chatId || "", text, model: model.value, effort: effort.value}).then(reply => {
       sendButton.disabled = false;
       if (reply.error) return;
       input.value = "";
@@ -258,7 +268,9 @@
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
   });
   input.addEventListener("input", () => { input.style.height = ""; input.style.height = Math.min(input.scrollHeight, 220) + "px"; });
-  model.addEventListener("change", () => chatId && post("/assistant/api/model", {chat: chatId, model: model.value}));
+  const saveChoice = () => chatId && post("/assistant/api/model", {chat: chatId, model: model.value, effort: effort.value});
+  model.addEventListener("change", () => { fitEffort(); saveChoice(); });
+  effort.addEventListener("change", saveChoice);
   document.querySelectorAll("[data-prompt]").forEach(button => button.addEventListener("click", () => {
     input.value = button.dataset.prompt; input.focus();
   }));

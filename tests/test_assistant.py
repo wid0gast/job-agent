@@ -261,3 +261,24 @@ def test_tool_errors_reach_claude_and_stop_works(app):
     app.turns.stop(chat_id)
     settle(app, chat_id)
     assert app.chats.items(chat_id, kind="note")[-1]["data"]["shown"] == "You stopped Claude."
+
+
+def test_each_chat_picks_its_effort(app):
+    """Effort is chosen beside the model, kept per chat, sent with every request and shown in the footer.
+    Extra high is an Opus level: on other models it runs as high."""
+    app.api.client = FakeAPI([reply(Block(type="text", text="Done.")), reply(Block(type="text", text="Again."))])
+    assert "Pick an effort" in call(app, "POST", "/assistant/api/send", {"text": "Hi", "effort": "huge"})[1]
+    page = call(app, "GET", "/assistant")[1]
+    assert 'id=effort' in page and 'value="xhigh"' in page
+
+    chat_id = json.loads(call(app, "POST", "/assistant/api/send",
+                              {"text": "Hi", "model": "claude-opus-5-5", "effort": "max"})[1])["chat"]
+    settle(app, chat_id)
+    assert app.api.client.sent[0]["output_config"]["effort"] == "max"
+    state = json.loads(call(app, "GET", f"/assistant/api/poll?chat={chat_id}&since=0")[1])
+    assert state["items"][-1]["data"]["effort"] == "max"
+
+    call(app, "POST", "/assistant/api/model", {"chat": chat_id, "model": "claude-sonnet-5-5", "effort": "xhigh"})
+    call(app, "POST", "/assistant/api/send", {"chat": chat_id, "text": "And now?"})
+    settle(app, chat_id)
+    assert app.api.client.sent[1]["output_config"]["effort"] == "high"  # Extra high is Opus-only.

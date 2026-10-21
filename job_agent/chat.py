@@ -62,15 +62,17 @@ class ChatStore:
             );
             CREATE INDEX IF NOT EXISTS chat_items_rev ON chat_items (chat_id, rev);
             """)
+        if "effort" not in {row["name"] for row in self.db.execute("PRAGMA table_info(chats)")}:
+            self.db.execute("ALTER TABLE chats ADD COLUMN effort TEXT")  # Picked per chat, like the model.
         self.db.commit()
 
     def _rev(self) -> int:
         return (self.db.execute("SELECT MAX(rev) FROM chat_items").fetchone()[0] or 0) + 1
 
-    def create(self, model: str, title: str = "New chat") -> int:
+    def create(self, model: str, title: str = "New chat", effort: str = "") -> int:
         with self.lock:
-            cursor = self.db.execute("INSERT INTO chats (title, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                                     (title, model, now(), now()))
+            cursor = self.db.execute("INSERT INTO chats (title, model, effort, created_at, updated_at)"
+                                     " VALUES (?, ?, ?, ?, ?)", (title, model, effort or None, now(), now()))
             self.db.commit()
             return cursor.lastrowid
 
@@ -219,12 +221,16 @@ class Turns:
     def default_model(self) -> str:
         return models.Model(self.settings.model, self.settings.tier_models).choose("assistant")[0]
 
-    def send(self, chat_id: int | None, text: str, model: str = "") -> int:
+    @staticmethod
+    def default_effort() -> str:
+        return models.TASKS["assistant"][1]
+
+    def send(self, chat_id: int | None, text: str, model: str = "", effort: str = "") -> int:
         text = text.strip()
         if not text:
             raise ValueError("Type a message first.")
         if chat_id is None:
-            chat_id = self.store.create(model or self.default_model(), title=title_for(text))
+            chat_id = self.store.create(model or self.default_model(), title=title_for(text), effort=effort)
         chat = self.store.chat(chat_id)
         if chat is None:
             raise ValueError("No such chat.")
@@ -267,6 +273,7 @@ class Turns:
                                                       "shown": "You stopped Claude.", "delivered": False})
             if turn.usage["requests"]:  # What this reply took, under it.
                 self.store.add(turn.chat_id, "stats", {**turn.usage, "model": turn.chat["model"],
+                                                       "effort": effort_for(turn.chat),
                                                        "seconds": round(time.time() - turn.started, 1)})
             with self.lock:
                 self.running.pop(turn.chat_id, None)
@@ -316,7 +323,7 @@ class ClaudeCodeChat:
         server = create_sdk_mcp_server(self.SERVER, tools=[
             SdkMcpTool(t.name, t.description, t.parameters, handler(t),
                        annotations=ToolAnnotations(readOnlyHint=t.read_only)) for t in tools])
-        effort = models.TASKS["assistant"][1]
+        effort = effort_for(turn.chat)
         options = ClaudeAgentOptions(
             system_prompt=system, model=turn.chat["model"], effort=effort,
             tools=self.WEB_TOOLS, allowed_tools=[f"mcp__{self.SERVER}__{t.name}" for t in tools] + self.WEB_TOOLS,
@@ -401,7 +408,7 @@ class APIChat:
                         model=model, max_tokens=16000, system=system, messages=messages,
                         tools=declared + self.web_tools(model), thinking=api.THINKING, betas=api.AGENT_BETAS,
                         context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
-                        output_config={"effort": models.TASKS["assistant"][1]}) as stream:
+                        output_config={"effort": effort_for(turn.chat)}) as stream:
                     for event in stream:
                         if turn.stopped.is_set():
                             break
@@ -443,6 +450,17 @@ class APIChat:
 
 
 # ----- helpers ------------------------------------------------------------------------
+
+EFFORTS = {"low": "Low effort", "medium": "Medium effort", "high": "High effort",
+           "xhigh": "Extra high effort", "max": "Max effort"}
+
+
+def effort_for(chat: dict) -> str:
+    """The chat's effort: picked beside the model, else the assistant's default. Extra high is an
+    Opus level; elsewhere it runs as high."""
+    effort = chat.get("effort") or models.TASKS["assistant"][1]
+    return "high" if effort == "xhigh" and "opus" not in (chat.get("model") or "") else effort
+
 
 def title_for(text: str) -> str:
     words = " ".join(text.split())

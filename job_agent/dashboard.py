@@ -1338,6 +1338,11 @@ def page_assistant(app: Dashboard, chat_id: int | None, draft: str = "") -> byte
     names = {**{m: MODEL_NAMES.get(m, m) for m in llm_models.TIERS.values()}, model: MODEL_NAMES.get(model, model)}
     options = "".join(f'<option value="{esc(m)}"{" selected" if m == model else ""}>{esc(n)}</option>'
                       for m, n in names.items())
+    from .chat import EFFORTS, effort_for
+
+    effort = effort_for(chat) if chat else app.turns.default_effort()
+    efforts = "".join(f'<option value="{k}"{" selected" if k == effort else ""}>{v}</option>'
+                      for k, v in EFFORTS.items())
     chats = "".join(f'<a class="c{" on" if chat and c["id"] == chat["id"] else ""}" href="/assistant?chat={c["id"]}">'
                     f'<span>{esc(c["title"])}</span><button data-delete="{c["id"]}" title="Delete chat">×</button></a>'
                     for c in app.chats.chats())
@@ -1350,7 +1355,8 @@ def page_assistant(app: Dashboard, chat_id: int | None, draft: str = "") -> byte
     <nav class=chats><a class="button new" href="/assistant">+ New chat</a>{chats}</nav>
     <section class=convo><div id=tasks></div>{hello}<div id=log><div id=live></div></div>
     <div class=composer><div class=box><textarea id=message rows=1 placeholder="Message the assistant">{esc(draft)}</textarea>
-    <div class=row><select id=model title="Model for this chat">{options}</select>
+    <div class=row><span><select id=model title="Model for this chat">{options}</select>
+    <select id=effort title="How hard it thinks: higher is slower and uses more of your plan">{efforts}</select></span>
     <span><button id=stop hidden>Stop</button> <button id=send class=primary>Send</button></span></div></div></div>
     </section></div><script src="/assistant/chat.js"></script>"""
     return layout(app, "/assistant", body)
@@ -1625,15 +1631,20 @@ def handler_for(app: Dashboard):
             chat = int(one["chat"]) if one.get("chat", "").isdigit() else None
             if one.get("model") and one["model"] not in {*llm_models.TIERS.values(), app.turns.default_model()}:
                 raise ValueError("Pick a model from the list.")
+            from .chat import EFFORTS
+
+            if one.get("effort") and one["effort"] not in EFFORTS:
+                raise ValueError("Pick an effort from the list.")
             if path == "/assistant/api/send":
                 if app.llm_missing:
                     raise ValueError("Connect Claude first (the Connect page).")
-                return {"chat": app.turns.send(chat, one.get("text", ""), one.get("model", ""))}
+                return {"chat": app.turns.send(chat, one.get("text", ""), one.get("model", ""), one.get("effort", ""))}
             if path == "/assistant/api/stop" and chat:
                 app.turns.stop(chat)
                 return {"ok": True}
             if path == "/assistant/api/model" and chat:
-                app.chats.update(chat, model=one.get("model", "") or app.turns.default_model())
+                app.chats.update(chat, model=one.get("model", "") or app.turns.default_model(),
+                                 effort=one.get("effort") or None)
                 return {"ok": True}
             if path == "/assistant/api/delete" and chat:
                 app.turns.stop(chat)
