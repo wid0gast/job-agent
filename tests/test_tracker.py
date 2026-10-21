@@ -46,3 +46,28 @@ def test_invented_numbers_are_detected():
     assert unsupported_numbers("Improved F1 by 30% for 500 users.", master) == ["30%", "500"]
     # A number at the end of a line is the same number.
     assert unsupported_numbers("Graduated 2026\nnext", "In 2026 I graduated.") == []
+
+
+def test_one_posting_on_two_career_sites_is_one_job(tmp_path):
+    """Workday lists a requisition on each career site (R108261, R108261-1): that's one job. The same
+    title under another requisition (another office) is still its own posting, grouped as one role."""
+    from job_agent import matching, sources
+    from job_agent.tracker import Tracker
+
+    tracker = Tracker(tmp_path / "t.db")
+    base = "https://tencent.wd1.myworkdayjobs.com/{}/job/London/GenAI-Research-Intern_{}"
+    assert tracker.add_lead(base.format("Interns", "R108261"), "s", "Tencent", "GenAI Research Intern", "London")[0]
+    added, existing = tracker.add_lead(base.format("Careers", "R108261-1"), "s", "Tencent", "GenAI Research Intern",
+                                       "London")
+    assert not added and existing["job_key"].endswith(":R108261")
+    assert tracker.add_lead(base.format("Careers", "R109999"), "s", "Tencent", "GenAI Research Intern", "Shenzhen")[0]
+
+    # Copies stored before this rule are set aside, with the reason.
+    tracker.db.execute("INSERT INTO jobs (job_key, url, company, title, location, status, created_at, updated_at,"
+                       " match_key) SELECT 'workday:tencent/Old:R108261-2', url || '-2', company, title, location,"
+                       " 'found', created_at, updated_at, match_key FROM jobs WHERE id = 1")
+    assert sources.set_aside_reposts(tracker) == 1
+    copy = tracker.by_key("workday:tencent/Old:R108261-2")
+    assert copy["status"] == "skipped" and "Same posting as job #1" in copy["reason"]
+    [(first, others)] = matching.grouped(tracker.with_status("found"))
+    assert [o["location"] for o in others] == ["Shenzhen"] or first["location"] == "Shenzhen"

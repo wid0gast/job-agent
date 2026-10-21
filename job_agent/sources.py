@@ -484,10 +484,28 @@ def applied_reason(tracker, job: dict) -> str | None:
     return f'{APPLIED} to "{sent["title"]}"' + (f" ({when})" if when else "") + "."
 
 
+def set_aside_reposts(tracker) -> int:
+    """The same posting found twice (on two of a company's career sites): keep the first."""
+    from .tracker import same_posting
+
+    kept: dict[str, list[dict]] = {}
+    moved = 0
+    for job in sorted(tracker.with_status("found", "prepared", "needs_you", "approved", "submitted"),
+                      key=lambda j: (j["status"] == "found", j["id"])):  # Prepared or applied ones stay.
+        first = next((k for k in kept.get(job["match_key"], []) if same_posting(k["job_key"], job["job_key"])), None)
+        if first and job["status"] == "found":
+            tracker.update(job["id"], status="skipped",
+                           reason=f"Same posting as job #{first['id']}, listed on another career site.")
+            moved += 1
+        else:
+            kept.setdefault(job["match_key"], []).append(job)
+    return moved
+
+
 def apply_filters(tracker, profile: dict) -> int:
     """Re-run the hard filters on unscored jobs, so profile changes take effect, and set aside
     jobs that look like ones you've already applied to."""
-    moved = 0
+    moved = set_aside_reposts(tracker)
     for job in tracker.with_status("found", "filtered_out"):
         if job["fit_score"] is not None:  # Filtered by fit or caps, not by these rules...
             reason = applied_reason(tracker, job) if job["status"] == "found" else None
