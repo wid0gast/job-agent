@@ -261,3 +261,40 @@ def test_an_optional_letter_is_written_by_default_and_can_be_added_later(ctx):
     assert config.Settings.from_env(require_model=False).cover_letter in ("always", "required", "never")
     assert config.letter_mode({"preferences": {"cover_letter": "never"}}, ctx.settings) == "never"
     assert config.letter_mode({"preferences": {}}, replace(ctx.settings, cover_letter="always")) == "always"
+
+
+def test_one_field_that_wont_fill_never_leaves_the_rest_empty(ctx):
+    """An edited essay saved with \\r\\n line breaks still fills (it once stopped a submit), and a field
+    that really can't be filled is reported after every other field has been filled; nothing is sent."""
+    job_id = add_job(ctx, "4001")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    actions.edit_answer(ctx.tracker, job_id, "question_9003", "First line.\r\nSecond line, with a URL:\r\nhttps://x.org")
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert "\r" not in by_key(packet, "question_9003")["value"]  # Edits are saved with \n.
+    from job_agent import packets as packet_files
+
+    stored = packet_files.load(ctx.tracker.get(job_id))  # A packet saved before that, with \r\n.
+    by_key(stored, "question_9003")["value"] = "First line.\r\nSecond line, with a URL:\r\nhttps://x.org"
+    packet_files.store(stored)
+    actions.approve(ctx.tracker, ctx.settings, job_id)
+    assert submit.submit(job_id, ctx, lambda q: demo_greenhouse.LAST_CODE["value"], log=lambda *_: None) == "submitted"
+    assert demo_greenhouse.SUBMISSIONS[-1]["question_9003"].replace("\r\n", "\n") == \
+        "First line.\nSecond line, with a URL:\nhttps://x.org"
+
+    from job_agent import forms
+
+    class Page:
+        pass
+
+    filled = []
+
+    def fill_field(page, answer, value, files):
+        if answer["key"] in ("degree--0", "gender"):
+            raise forms.FillError(answer["key"], answer["label"], "no option matching")
+        filled.append(answer["key"])
+
+    try:
+        forms.fill_all(Page(), packet, {}, fill_field)
+    except forms.FillError as error:
+        assert error.label == "2 fields" and "Degree" in error.problem and "Gender" in error.problem
+    assert "first_name" in filled and "question_9003" in filled  # Everything else was still filled.

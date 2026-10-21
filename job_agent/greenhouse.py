@@ -14,7 +14,7 @@ import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from .forms import (Closed, FillError, answered, clean, norm, pick_option,  # noqa: F401
+from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, clean, norm, pick_option,  # noqa: F401
                     unexpected, wait_for_result)
 
 API = "https://boards-api.greenhouse.io/v1/boards"
@@ -293,9 +293,9 @@ def fill_field(page, field: dict, value, files: dict) -> None:
         return
     box = page.locator(f'[id="{key}"]')
     box.scroll_into_view_if_needed(timeout=5000)
-    box.fill(str(value))
+    box.fill(text_value(value))
     box.evaluate("el => el.dispatchEvent(new Event('blur', {bubbles: true}))")
-    if box.input_value().strip() != str(value).strip():
+    if not same_text(box.input_value(), value):
         raise FillError(key, field["label"], "value didn't stick")
 
 
@@ -321,8 +321,7 @@ def tick(page, field: dict, values: list[str]) -> None:
 
 
 def fill_form(page, packet: dict, files: dict) -> None:
-    for answer in answered(packet):
-        fill_field(page, answer, answer["value"], files)
+    fill_all(page, packet, files, fill_field)
 
 
 # ----- submitting -----------------------------------------------------------

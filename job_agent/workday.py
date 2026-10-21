@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 
 from . import config
 
-from .forms import (Closed, FillError, check_labeled, clean, pick_option,  # noqa: F401
+from .forms import (Closed, FillError, fill_all, same_text, text_value, check_labeled, clean, pick_option,  # noqa: F401
                     visible_text, wait_for_result)
 
 KEYCHAIN = "job-agent"
@@ -309,9 +309,9 @@ def fill_field(page, field: dict, value, files: dict) -> None:
             choose_prompt(page, holder, str(item), field)
         return
     target = holder if widget == "date" else holder.locator("textarea, input:not([type=hidden])").first
-    target.fill(str(value))
+    target.fill(text_value(value))
     target.press("Tab")
-    if widget != "date" and target.input_value().strip() != str(value).strip():
+    if widget != "date" and not same_text(target.input_value(), value):
         raise FillError(key, field["label"], "value didn't stick")
 
 

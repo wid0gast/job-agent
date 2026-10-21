@@ -9,7 +9,7 @@ is which. Widgets: text inputs, yes/no buttons, radios, checkboxes, type-ahead
 comboboxes (location, school) and month/year dropdowns (education dates).
 """
 
-from .forms import (Closed, FillError, answered, check_labeled, clean, combobox,  # noqa: F401
+from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
                     select_native, type_into, wait_for_result)
 
 GRAPHQL = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting"
@@ -223,8 +223,7 @@ def fill_field(page, field: dict, value, files: dict) -> None:
 
 def fill_form(page, packet: dict, files: dict) -> None:
     page.evaluate(TAG_JS)  # Tag the boxes on this page load.
-    for answer in answered(packet):
-        fill_field(page, answer, answer["value"], files)
+    fill_all(page, packet, files, fill_field)
 
 
 def submit(page, ask) -> dict:

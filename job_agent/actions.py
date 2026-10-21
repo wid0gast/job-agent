@@ -54,6 +54,8 @@ def edit_answer(tracker, job_id: int, key: str, value, remember: bool = False) -
             raise ValueError(f"Choose one of: {', '.join(answer['options'])}")
         chosen = [answer["options"][i] for i in indexes]
         value = chosen if answer["kind"] == "multiselect" else (chosen[0] if chosen else None)
+    if isinstance(value, str):  # A browser's text box sends line breaks as \r\n.
+        value = value.replace("\r\n", "\n").replace("\r", "\n")
     answer.update(value=value or None, source="you", note="Edited by you.")
     packet["approved_hash"] = None
     packets.store(packet)
