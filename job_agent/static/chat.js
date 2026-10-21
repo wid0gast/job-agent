@@ -278,7 +278,7 @@
     event.preventDefault();
     if (!confirm("Delete this chat? Jobs and applications aren't affected.")) return;
     post("/assistant/api/delete", {chat: button.dataset.delete}).then(() => {
-      location.href = Number(button.dataset.delete) === chatId ? "/assistant" : location.href;
+      location.href = Number(button.dataset.delete) === chatId ? "/assistant?new=1" : location.href;
     });
   }));
   input.focus();

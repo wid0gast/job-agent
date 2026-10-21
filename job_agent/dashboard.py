@@ -1352,7 +1352,7 @@ def page_assistant(app: Dashboard, chat_id: int | None, draft: str = "") -> byte
         'You confirm every submission.</p><div class=prompts>'
         + "".join(f'<button data-prompt="{esc(t)}">{esc(t)}</button>' for t in SUGGESTIONS) + "</div></div>")
     body = f"""<div class=chat id=chat data-token="{app.token}" data-chat="{chat["id"] if chat else ""}">
-    <nav class=chats><a class="button new" href="/assistant">+ New chat</a>{chats}</nav>
+    <nav class=chats><a class="button new" href="/assistant?new=1">+ New chat</a>{chats}</nav>
     <section class=convo><div id=tasks></div>{hello}<div id=log><div id=live></div></div>
     <div class=composer><div class=box><textarea id=message rows=1 placeholder="Message the assistant">{esc(draft)}</textarea>
     <div class=row><span><select id=model title="Model for this chat">{options}</select>
@@ -1518,6 +1518,10 @@ def handler_for(app: Dashboard):
                 return self.send(page_today(app, flash))
             if url.path == "/assistant":
                 chat = query.get("chat", "")
+                latest = app.chats.chats()
+                if not chat.isdigit() and "new" not in query and "q" not in query and latest:
+                    # The Assistant tab goes back to your latest chat; "+ New chat" starts one.
+                    return self.send(b"", 303, headers={"Location": f"/assistant?chat={latest[0]['id']}"})
                 return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
             if url.path == "/live.js":
                 return self.send(LIVE_JS.encode(), ctype="text/javascript; charset=utf-8")
