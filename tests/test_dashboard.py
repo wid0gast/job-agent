@@ -117,3 +117,33 @@ def test_ranked_jobs_open_before_a_resume_and_errors_show(tmp_path, monkeypatch)
         assert status == 500 and "Something went wrong" in body and "boom" in body
     finally:
         server.shutdown()
+
+
+def test_a_prepared_job_can_be_marked_applied(tmp_path, monkeypatch):
+    """Applied to a prepared job outside the app: one click records it (and it leaves the queue)."""
+    from job_agent import packets
+
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    tracker = Tracker(tmp_path / "t.db")
+    tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
+    job = tracker.all()[0]
+    folder = packets.directory(job)
+    packets.save({"job": {"company_id": "acme"}, "fit": {"score": 80, "summary": "", "requirements": [], "flags": []},
+                  "answers": [], "documents": {}, "checks": {},
+                  "tailoring": {"matched": [], "emphasized": [], "gaps": []}}, folder)
+    tracker.move(job["id"], "found", "preparing")
+    tracker.move(job["id"], "preparing", "prepared", packet_dir=str(folder))
+    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        page = request(app.port, "GET", f"/job/{job['id']}")[1]
+        assert 'action="/mark-applied"' in page
+        token = re.search(r'name=token value="([^"]+)"', page).group(1)
+        request(app.port, "POST", "/mark-applied", f"token={token}&job_id={job['id']}",
+                {"Origin": f"http://127.0.0.1:{app.port}"})
+        assert Tracker(tmp_path / "t.db").get(job["id"])["status"] == "submitted"
+    finally:
+        server.shutdown()

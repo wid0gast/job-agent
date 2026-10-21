@@ -740,6 +740,8 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         for outcome, label in (("submitted", "It went through"), ("prepared", "Back to queue"),
                                ("failed", "Mark failed")):
             buttons.append(form(app, "/resolve", label, {"job_id": job_id, "outcome": outcome}))
+    if job["status"] in ("prepared", "approved", "needs_you", "rejected"):  # Applied outside the app.
+        buttons.append(form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id}))
     if trace.runs(job_id):
         docs = f'<a class="button primary" href="/job/{job_id}/trace">How this was made</a> ' + docs
     t = packet["tailoring"]
