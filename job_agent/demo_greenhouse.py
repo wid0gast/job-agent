@@ -64,7 +64,7 @@ COMPLIANCE = [{"type": "eeoc", "description": "&lt;p&gt;Voluntary.&lt;/p&gt;", "
 COUNTRIES = ["United States +1", "United Kingdom +44", "Canada +1", "India +91"] + [
     f"Country {n} +{n}" for n in range(100, 170)]
 SCHOOLS = ["New York University", "Polytechnic Institute of New York University",
-           "Columbia University", "Cornell University"]
+           "Columbia University", "Cornell University", "Other"]
 DEGREES = ["Associate's Degree", "Bachelor's Degree", "Master's Degree",
            "Doctor of Philosophy (Ph.D.)", "High School"]
 EXTRA = {"label": "Are you able to work onsite in New York three days a week?",

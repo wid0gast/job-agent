@@ -244,6 +244,15 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
         return None
     if key.startswith("degree--") and value:
         value = degree_option(str(value), field["options"] or DEGREE_NAMES) or value
+    if row and value:  # Your school or field may not be in the form's list: "Other" if offered.
+        options = field["options"] or []
+        missing = field.get("unlisted") or (
+            {"value": value, "instead": next((o for o in options if norm(o) == "other"), None)}
+            if options and pick_option(options, str(value), loose=True) is None else None)
+        if missing:
+            if missing.get("instead"):
+                return missing["instead"], f"profile: “{missing['value']}” isn't in this form's list"
+            return None
     if field["kind"] in ("select", "multiselect") and field["options"]:
         index = pick_option(field["options"], str(value), loose=True)
         if index is None and str(value).lower() in ("yes", "no"):

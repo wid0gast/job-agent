@@ -298,3 +298,22 @@ def test_one_field_that_wont_fill_never_leaves_the_rest_empty(ctx):
     except forms.FillError as error:
         assert error.label == "2 fields" and "Degree" in error.problem and "Gender" in error.problem
     assert "first_name" in filled and "question_9003" in filled  # Everything else was still filled.
+
+
+def test_a_school_the_form_doesnt_list_becomes_other_before_you_approve(ctx):
+    """Greenhouse's school list may not have yours (BITS Pilani wasn't on a real form): found while
+    preparing, so the packet says "Other" with the reason, and submit types exactly that."""
+    import yaml
+
+    path = config.PROFILE_DIR / "resume-profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    profile["education"][0]["school"] = "Birla Institute of Technology and Science"
+    path.write_text(yaml.safe_dump(profile))
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    school = by_key(packet, "school--0")
+    assert school["value"] == "Other" and "isn't in this form's list" in school["source"]
+    actions.approve(ctx.tracker, ctx.settings, job_id)
+    assert submit.submit(job_id, ctx, lambda q: demo_greenhouse.LAST_CODE["value"], log=lambda *_: None) == "submitted"
+    assert demo_greenhouse.SUBMISSIONS[-1]["school--0"] == "Other"
