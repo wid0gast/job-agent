@@ -247,3 +247,24 @@ def test_dashboard_shows_people_and_opens_your_email(ctx, tmp_path, monkeypatch)
         assert request(app.port, "GET", f"/runs/people-{job_id}")[0] == 200
     finally:
         server.shutdown()
+
+
+def test_headline_only_people_are_flagged_and_removed_people_stay_removed(ctx, monkeypatch):  # noqa: F811
+    """A search headline can be months old (someone who has left still shows the company), so it's
+    marked; and someone you remove is never suggested again for that company."""
+    monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
+    ctx.llm = PeopleModel(scout_steps())
+    job_id = add_job(ctx, "4001")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    maria = packets.load(ctx.tracker.get(job_id))["people"]["people"][0]
+    assert maria["evidence"] == "search result"
+
+    people.set_state(ctx.tracker, job_id, maria["id"], "removed")
+    assert people.removed_names("Contoso AI") == {"maria gomez"}
+    again = PeopleModel([step for step in scout_steps() if step[0] != "save_person" or "Leo" in step[1]["name"]
+                         or step[1].get("kind") == "background"][:])
+    ctx.llm = again
+    people.refresh(job_id, ctx, log=lambda *_: None)
+    names = [p["name"] for p in packets.load(ctx.tracker.get(job_id))["people"]["people"] if not p.get("removed")]
+    assert "Maria Gomez" not in names
+    assert any("removed this person before" in (r.get("error") or "") for r in again.results)

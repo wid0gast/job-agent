@@ -830,6 +830,9 @@ def person_block(app: Dashboard, job: dict, person: dict, applied: bool) -> str:
     else:
         timing = ""
     hint = f'<p class=muted style="margin:4px 0">{timing}</p>' if timing and not person.get("sent_at") else ""
+    if person.get("evidence", "search result") == "search result" and not person.get("sent_at"):
+        hint += ('<p class=warn style="margin:4px 0;font-size:13px">Found from a LinkedIn search headline, which '
+                 'can be months out of date: check their profile shows they still work there before sending.</p>')
     message = person.get("draft") or {}
     checks = "".join(f'<div class="flash warn">Check: {esc(c)}</div>' for c in person.get("checks") or [])
     state, buttons = "", []
@@ -850,7 +853,8 @@ def person_block(app: Dashboard, job: dict, person: dict, applied: bool) -> str:
         if person.get("linkedin"):
             buttons.append(f'<a class=button href="{esc(person["linkedin"])}" target=_blank rel=noopener>Open LinkedIn</a>')
     if not person.get("sent_at"):
-        buttons.append(form(app, "/people/state", "Remove", {"job_id": job_id, "person": pid, "state": "removed"}))
+        buttons.append(form(app, "/people/state", "Remove (left, or not right)",
+                            {"job_id": job_id, "person": pid, "state": "removed"}))
     draft = ""
     if message:
         disabled = " disabled" if person.get("sent_at") and person.get("followed_up_at") else ""
@@ -1694,7 +1698,8 @@ def handler_for(app: Dashboard):
                 return "Marked as not sent.", back
             if path == "/people/state":
                 people.set_state(tracker, int(one["job_id"]), one["person"], one.get("state", ""))
-                return "Saved.", back
+                return ("Removed. They won't be suggested again for this company." if one.get("state") == "removed"
+                        else "Saved."), back
             if path == "/letter":
                 app.ensure_worker()
                 tracker.add_task("letter", int(one["job_id"]))
