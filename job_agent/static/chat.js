@@ -89,7 +89,7 @@
     read_file: "Read a file", edit_file: "Edited a file", update_search: "Updated your search",
     list_tasks: "Checked tasks", wait_for_tasks: "Waiting for tasks", cancel_task: "Cancelled a task",
     find_people: "Finding people to contact", edit_outreach: "Edited a message", redraft_outreach: "Rewriting messages",
-    request_outreach: "Asked you to send an email", set_contact: "Updated a contact",
+    request_outreach: "Asked you to send an email", write_cover_letter: "Writing a cover letter", set_contact: "Updated a contact",
     WebSearch: "Searched the web", WebFetch: "Read a web page", web_search: "Searched the web", web_fetch: "Read a web page",
   };
 

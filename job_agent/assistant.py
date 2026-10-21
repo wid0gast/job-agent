@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import actions, companies, config, documents, latex, matching, packets, people, resumes, sources, systems
+from . import actions, answers, companies, config, documents, latex, matching, packets, people, resumes, sources, systems
 from .harness import Tool, schema
 from .tracker import OUTCOMES, STATUSES
 
@@ -29,7 +29,7 @@ QUEUE = ("prepared", "needs_you", "approved")
 TASKS = {"refresh": "Refresh the job lists", "discover": "Discover companies", "score_matches": "Rank jobs",
          "prepare": "Prepare", "render": "Typeset documents", "submit": "Submit", "draft": "Draft answers",
          "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes",
-         "import_resume": "Read a resume", "people": "Find people to contact",
+         "import_resume": "Read a resume", "people": "Find people to contact", "letter": "Write a cover letter",
          "redraft": "Rewrite messages"}
 MAX_WAIT_MINUTES = 15
 
@@ -77,12 +77,14 @@ class Assistant:
             if coded_only and job["ats"] not in systems.SUPPORTED:
                 continue
             rows.append(job)
-        rows.sort(key=matching.rank_key)
+        roles = matching.grouped(rows)  # One entry per role; its other listings (offices, reposts) inside.
         limit = max(1, min(limit, 50))
-        page = rows[offset:offset + limit]
-        result = {"total": len(rows), "jobs": [brief(j) for j in page]}
-        if offset + limit < len(rows):
-            result["more"] = f"{len(rows) - offset - limit} more: pass offset={offset + limit}, or narrow the query."
+        page = roles[offset:offset + limit]
+        result = {"total": len(roles), "jobs": [{**brief(j), **({"also_listed": [
+            {"id": o["id"], "location": (o["location"] or "")[:60]} for o in others]} if others else {})}
+            for j, others in page]}
+        if offset + limit < len(roles):
+            result["more"] = f"{len(roles) - offset - limit} more: pass offset={offset + limit}, or narrow the query."
         return result
 
     def get_job(self, job_id: int, include_posting: bool = False):
@@ -314,6 +316,16 @@ class Assistant:
         return self.queue("redraft", job_id, arg=json.dumps({"people": person_ids or [], "note": note}),
                           note="Rewrites the unsent drafts following the note (a minute).")
 
+    def write_cover_letter(self, job_id: int):
+        job = self.job(job_id)
+        packet = packets.load(job)
+        if packet is None:
+            raise ValueError(f"Job {job_id} has no packet yet; prepare it first.")
+        if not any(answers.is_cover_letter(a) for a in packet["answers"]):
+            raise ValueError("This application form has no place for a cover letter.")
+        return self.queue("letter", job_id, note="Writes and typesets a tailored letter (a minute or two); "
+                          "edit it with edit_document afterwards. The packet needs approving again.")
+
     def request_outreach(self, job_id: int, person_id: str, follow_up: bool = False):
         job = self.job(job_id)
         packet = packets.load(job)
@@ -488,6 +500,8 @@ class Assistant:
                  "then typeset the PDF again. Numbers must come from the master resume.",
                  schema({"job_id": integer, "document": {"type": "string", "enum": ["resume", "cover_letter"]},
                          "edits": edits}), self.edit_document),
+            Tool("write_cover_letter", "Write a cover letter for a prepared application whose form has a "
+                 "place for one (background task).", schema({"job_id": integer}), self.write_cover_letter),
             Tool("request_submission", "Ask the user to confirm submitting prepared applications. Shows a card "
                  "in the chat; only their click approves and sends. This is the only way to apply.",
                  schema({"job_ids": ids}), self.request_submission),

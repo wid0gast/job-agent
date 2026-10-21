@@ -316,7 +316,7 @@ emailed code).
 | `CLAUDE_MODEL_LIGHT`, `_STANDARD`, `_BEST` | (empty) | Swap the model for a tier (Haiku, Sonnet, Opus by default). Use full model IDs. |
 | `ANTHROPIC_API_KEY` | (empty) | For the `anthropic` backend (or use `ant auth login`). |
 | `SPEND_CAP_USD` | `1.00` | With an API key, a run stops once spending reaches this. Claude Code usage comes from your plan. |
-| `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
+| `COVER_LETTER` | `always` | Write a cover letter whenever the form has a place for one (`always`), only when it's required, or `never`. The Search page's choice overrides this. |
 | `RESEARCH` | `auto` | Research the company for letters and "why us" answers, or `off`. |
 | `DAILY_OUTREACH_LIMIT` | `10` | Emails to people at companies per day (first emails and follow-ups). |
 | `BRAVE_API_KEY` | (empty) | A search API for research and finding people. Without it, Claude's own web search is used. |

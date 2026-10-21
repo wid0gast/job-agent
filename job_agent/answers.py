@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 
-from . import config
+from . import config, trace
 from .forms import norm, pick_option
 
 APPROVED_BANK = config.DATA_DIR / "approved-answers.json"
@@ -119,6 +119,23 @@ def sponsorship_answer(label: str, auth: dict) -> str | None:
     return yes_no(bool(now) or bool(later))
 
 
+EDUCATION_ROW = re.compile(r"^(school|degree|discipline|start-year|end-year|start-month|end-month)--(\d+)$")
+
+
+ROW_NOTE = "Not in your resume (or profile.yaml's education): enter it yourself."
+
+
+def education_value(profile: dict, part: str, index: int):
+    """One part of your degree number `index` (in your resume's order), or None."""
+    degrees = profile.get("education") or []
+    if index >= len(degrees):
+        return None
+    degree = degrees[index]
+    start, end = month_year(degree.get("start")), month_year(degree.get("graduation"))
+    return {"school": degree.get("school"), "degree": degree.get("degree"), "discipline": degree.get("major"),
+            "start-month": start[0], "start-year": start[1], "end-month": end[0], "end-year": end[1]}[part]
+
+
 def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | None:
     """A value from profile.yaml for questions with a known meaning, or None."""
     contact = profile.get("contact", {})
@@ -135,10 +152,6 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
         "phone": contact.get("phone"), "preferred_name": contact.get("preferred_name"),
         "country": contact.get("country", "United States"),
         "candidate-location": (contact.get("location") or "").split(",")[0].strip(),
-        "school--0": education.get("school"), "degree--0": education.get("degree"),
-        "discipline--0": education.get("major"),
-        "end-month--0": month, "end-year--0": year,
-        "start-month--0": start_month, "start-year--0": start_year,
         "resume": "resume",
         "gender": eeo.get("gender"), "race": eeo.get("race_ethnicity"),
         "hispanic_ethnicity": eeo.get("hispanic_latino"),
@@ -171,6 +184,9 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
         "resume-upload": "resume",
     }
     value = by_key.get(key)
+    row = EDUCATION_ROW.match(key)
+    if row:  # Greenhouse's education rows: --0 is your first degree, --1 the next.
+        value = education_value(profile, row.group(1), int(row.group(2)))
     if is_cover_letter(field) or key == "cover_letter":
         return None
     if value is None and is_resume(field):
@@ -226,7 +242,7 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
         return ([decline] if field["kind"] == "multiselect" else decline, "profile: declined") if decline else None
     if value in (None, ""):
         return None
-    if key == "degree--0" and value:
+    if key.startswith("degree--") and value:
         value = degree_option(str(value), field["options"] or DEGREE_NAMES) or value
     if field["kind"] in ("select", "multiselect") and field["options"]:
         index = pick_option(field["options"], str(value), loose=True)
@@ -254,6 +270,9 @@ def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[li
         hit = from_profile(field, profile, job)
         if hit:
             answer["value"], answer["source"] = hit
+        elif EDUCATION_ROW.match(field["key"]):
+            # One row per degree: only your resume knows which degree's dates these are.
+            answer["note"] = ROW_NOTE
         elif norm(field["label"]) in saved_by_label:
             answer["value"], answer["source"] = saved_by_label[norm(field["label"])], "saved"
         elif answer["fingerprint"] in bank:
@@ -290,10 +309,28 @@ ANSWER_SCHEMA = {
 }
 
 
+DATE_FIELD = re.compile(r"\b(year|month|date|when)\b", re.I)
+
+
+def is_date(field: dict) -> bool:
+    """A typed date, month or year (choices like "Yes" to "available on this date?" aren't dates)."""
+    return field["kind"] in ("text", "search") and bool(
+        DATE_FIELD.search(f"{field['label']} {field['key']}".replace("-", " ")))
+
+
+def stated(value, profile: dict, resume: str) -> bool:
+    """Is this short answer written in your resume or profile (a year, a month, a date)?"""
+    material = (json.dumps(profile, ensure_ascii=False, default=str) + " " + resume).lower()
+    return all(part.lower() in material for part in re.findall(r"\w+", str(value)))
+
+
 def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dict,
               description: str, stories: str | None, writing: str | None,
               facts: list[dict] | None = None) -> None:
     """Fill open_fields in place from one model call."""
+    for field in [f for f in open_fields if EDUCATION_ROW.match(f["key"])]:
+        field["note"] = ROW_NOTE  # Never the model's guess.
+    open_fields = [f for f in open_fields if not EDUCATION_ROW.match(f["key"])]
     if not open_fields:
         return
     from .prompts import ANSWERS_PROMPT
@@ -323,6 +360,12 @@ def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dic
             value = field["options"][index] if index is not None else None
         else:
             value = got["value"].strip() or None
+        if value is not None and is_date(field) and not stated(value, profile, resume):
+            field["note"] = (f"The model suggested {value!r}, but your resume and profile don't state it: "
+                             "dates are left for you.")
+            trace.check("Dates come only from your resume or profile", False,
+                        f"{field['label']}: dropped {value!r}, which your material doesn't state.")
+            continue
         if value is None:
             field["note"] = f"Model answered {got['value']!r}, which isn't an option."
             continue

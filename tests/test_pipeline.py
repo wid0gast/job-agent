@@ -176,3 +176,88 @@ def test_approval_blocks_missing_and_edits_reset_approval(ctx):
     actions.approve(ctx.tracker, ctx.settings, job_id)
     actions.edit_answer(ctx.tracker, job_id, "question_9004", "https://linkedin.com/in/jane")
     assert ctx.tracker.get(job_id)["status"] == "prepared"  # approval covers exact content
+
+
+def test_every_degree_gets_its_own_education_row(ctx):
+    """Greenhouse shows one education row; "Add another" is clicked for each further degree,
+    and each row is filled from that degree (dates never come from the model)."""
+    import yaml
+
+    path = config.PROFILE_DIR / "resume-profile.yaml"
+    profile = yaml.safe_load(path.read_text())
+    profile["education"] = [
+        {"school": "Columbia University", "degree": "Master of Science", "major": "Data Science",
+         "graduation": "May 2028"},
+        *profile["education"]]
+    path.write_text(yaml.safe_dump(profile))
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert by_key(packet, "school--0")["value"] == "Columbia University"
+    assert by_key(packet, "degree--0")["value"] == "Master's Degree"
+    assert by_key(packet, "school--1")["value"] == "New York University"
+    assert by_key(packet, "degree--1")["value"] == "Bachelor's Degree"
+
+    actions.approve(ctx.tracker, ctx.settings, job_id)
+    assert submit.submit(job_id, ctx, lambda q: demo_greenhouse.LAST_CODE["value"], log=lambda *_: None) == "submitted"
+    sent = demo_greenhouse.SUBMISSIONS[-1]
+    assert (sent["school--0"], sent["school--1"]) == ("Columbia University", "New York University")
+    assert sent["degree--1"] == "Bachelor's Degree"
+
+
+def test_the_model_never_supplies_dates_your_material_lacks():
+    from job_agent import answers
+
+    class Model:
+        asked = []
+
+        def json(self, system, user, schema, name):
+            self.asked += [q["key"] for q in json.loads(user)["questions"]]
+            return {"answers": [{"key": "available_from", "value": "June 2026", "values": [], "supported": True,
+                                 "evidence": "guess"},
+                                {"key": "graduation_date", "value": "May 2027", "values": [], "supported": True,
+                                 "evidence": "resume"}]}
+
+    def field(key, label):
+        return {"key": key, "label": label, "kind": "text", "required": True, "options": [], "description": ""}
+
+    fields = [field("start-year--0", "Start date year"), field("available_from", "Start date (month and year)"),
+              field("graduation_date", "Graduation date")]
+    model = Model()
+    answers.ask_model(model, fields, {"education": [{"graduation": "May 2027"}]}, "B.S., May 2027",
+                      {"company": "Acme", "title": "Intern"}, "", None, None)
+    assert "start-year--0" not in model.asked and "enter it yourself" in fields[0]["note"]  # Education rows: never asked.
+    assert fields[1].get("value") is None and "dates are left for you" in fields[1]["note"]  # Not in the resume.
+    assert fields[2]["value"] == "May 2027"  # Stated in the resume: allowed.
+
+
+def test_an_optional_letter_is_written_by_default_and_can_be_added_later(ctx):
+    """COVER_LETTER defaults to "always": an optional letter field gets a letter. With "required",
+    the timeline says why there is none, and "Write a cover letter" adds one to the packet."""
+    from dataclasses import replace
+
+    from job_agent import trace
+
+    class Letters(ScriptedModel):
+        def json(self, system, user, schema, name):
+            if name == "cover_letter":
+                self.seen.append((name, user))
+                return {"letter_markdown": "Dear Contoso team,\\n\\nI build evaluation tools.\\n\\nJane Doe"}
+            return super().json(system, user, schema, name)
+
+    ctx.llm = Letters()
+    ctx.settings = replace(ctx.settings, cover_letter="required", research="off")
+    job_id = add_job(ctx, "4001")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert not packet["documents"]["cover_letter"]
+    notes = [e["text"] for e in trace.read(trace.runs(job_id)[0]) if e["type"] == "note"]
+    assert any("No cover letter" in n and "optional" in n for n in notes)
+
+    assert prepare.add_letter(job_id, ctx, log=lambda *_: None).startswith("Cover letter written")
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert packet["documents"]["cover_letter"] and by_key(packet, "cover_letter")["value"] == "cover_letter"
+
+    assert config.Settings.from_env(require_model=False).cover_letter in ("always", "required", "never")
+    assert config.letter_mode({"preferences": {"cover_letter": "never"}}, ctx.settings) == "never"
+    assert config.letter_mode({"preferences": {}}, replace(ctx.settings, cover_letter="always")) == "always"

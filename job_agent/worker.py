@@ -143,6 +143,8 @@ def run_task(task: dict, ctx: Context, log) -> str:
         return prepare.prepare(task["job_id"], ctx, log, note=task["arg"] or "")
     if task["kind"] == "render":
         return prepare.render(task["job_id"], ctx, log)
+    if task["kind"] == "letter":
+        return prepare.add_letter(task["job_id"], ctx, log)
     if task["kind"] == "people":
         from . import people
 

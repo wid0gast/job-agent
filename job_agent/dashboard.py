@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from email.parser import BytesParser
 from email.policy import default as email_policy
 
-from . import actions, claude_login, config, history, matching, packets, people, resumes, sources, systems, trace
+from . import actions, answers, claude_login, config, history, matching, packets, people, resumes, sources, systems, trace
 from . import llm as llm_models
 from .chat import ChatStore, Turns
 from .tracker import OUTCOMES, Tracker
@@ -488,11 +488,11 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     wanted = ACTIVE if status == "active" else tuple(ORDER) if status == "all" else (status,)
     jobs = app.tracker.with_status(*wanted)
 
-    jobs.sort(key=matching.rank_key)
+    roles = matching.grouped(jobs)
     unscored = len(matching.stale(app.tracker, profile, config.read_optional("resume.md") or "")) \
         if (profile.get("preferences", {}).get("description") or profile.get("preferences", {}).get("roles")) else None
     rows = []
-    for job in jobs[:500]:
+    for job, others in roles[:500]:
         score, kind = matching.ranking_score(job)
         why = json.loads(job["details"] or "{}").get("match", {}).get("why", "") if kind == "match" else ""
         if job["status"] == "found":
@@ -509,7 +509,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
         rows.append(f'<tr class="{"below" if below else ""}"><td>{badge}</td>'
                     f'<td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])}</div>'
-                    f'{f"<div class=src>{esc(why)}</div>" if why else ""}</td>'
+                    f'{f"<div class=src>{esc(why)}</div>" if why else ""}{also_listed(others)}</td>'
                     f'<td class=muted style="white-space:nowrap">{esc((job["posted_at"] or "")[:10])}</td>'
                     f'<td>{esc(job["ats"])}</td>'
                     f'<td><span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span>'
@@ -539,8 +539,20 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     <div class="tabs">{tabs}</div>
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>System</th><th>Status</th><th></th></tr>
     {"".join(rows) or '<tr><td colspan=6 class=muted>None.</td></tr>'}</table>
-    {f'<p class=muted>Showing the top 500 of {len(jobs)}.</p>' if len(jobs) > 500 else ''}</div>"""
+    {f'<p class=muted>Showing the top 500 of {len(roles)} roles.</p>' if len(roles) > 500 else ''}</div>"""
     return layout(app, "/jobs", body, flash, refresh=bool(refreshing))
+
+
+def also_listed(others: list[dict]) -> str:
+    """The same role's other listings (other offices, or posted again), folded under the row."""
+    if not others:
+        return ""
+    places = sorted({(o["location"] or "").split(";")[0].strip() for o in others} - {""})
+    items = "".join(f'<li><a href="/job/{o["id"]}">{esc(o["location"] or o["title"])}</a> '
+                    f'<span class=muted>· {esc((o["posted_at"] or "")[:10])} · {o["status"].replace("_", " ")}</span></li>'
+                    for o in others)
+    return (f'<details class=src><summary>Also listed {len(others)} more time{"s" if len(others) > 1 else ""}'
+            f'{": " + esc(", ".join(places[:3])) if places else ""}</summary><ul style="margin:4px 0">{items}</ul></details>')
 
 
 def page_search(app: Dashboard, flash: str) -> bytes:
@@ -599,6 +611,7 @@ def page_search(app: Dashboard, flash: str) -> bytes:
       <option value="1"{" selected" if str(prefs.get("resume_pages") or 1) == "1" else ""}>One page</option>
       <option value="2"{" selected" if str(prefs.get("resume_pages") or 1) == "2" else ""}>Two pages</option>
     </select></div>
+    {letter_settings(app, prefs)}
     {people_settings(prefs)}
     <button class=primary>Save</button></form>"""
     return layout(app, "/search", body, flash)
@@ -608,6 +621,17 @@ PEOPLE_HINTS = {"background": "same school or past employer: the likeliest to re
                 "peer": "someone in this role or on the team",
                 "recruiter": "best contacted once you've applied",
                 "hiring_manager": "advice is mixed: some welcome it, some pass it to HR"}
+
+
+def letter_settings(app: Dashboard, prefs: dict) -> str:
+    from .prepare import LETTER_MODES
+
+    mode = config.letter_mode({"preferences": prefs}, app.settings)
+    options = "".join(f'<option value="{k}"{" selected" if k == mode else ""}>{label[0].upper() + label[1:]}</option>'
+                      for k, label in LETTER_MODES.items())
+    return (f'<div class=card><h2>Cover letters</h2><p class=muted>A tailored letter (about 250 words, your '
+            f'real experience, company facts quoted from its pages) when an application has a place for one.</p>'
+            f'<select name=cover_letter style="width:auto">{options}</select></div>')
 
 
 def people_settings(prefs: dict) -> str:
@@ -736,6 +760,9 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         buttons.append(form(app, "/reject", "Reject", {"job_id": job_id}))
     if job["status"] in ("needs_you", "prepared") and packets.missing(packet):
         buttons.append(form(app, "/draft", "Draft missing answers with the model", {"job_id": job_id}))
+    letter = next((a for a in packet["answers"] if answers.is_cover_letter(a)), None)
+    if letter and not packet["documents"].get("cover_letter") and job["status"] in ("prepared", "approved", "needs_you"):
+        buttons.append(form(app, "/letter", "Write a cover letter", {"job_id": job_id}))
     if job["status"] == "needs_you":
         for outcome, label in (("submitted", "It went through"), ("prepared", "Back to queue"),
                                ("failed", "Mark failed")):
@@ -1615,8 +1642,7 @@ def handler_for(app: Dashboard):
             if path == "/prepare-top":
                 count = max(1, min(20, int(one.get("count") or 3)))
                 found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
-                found.sort(key=matching.rank_key)
-                picks = found[:count]
+                picks = [job for job, _ in matching.grouped(found)][:count]  # One per role.
                 app.ensure_worker()
                 for job in picks:
                     tracker.add_task("prepare", job["id"])
@@ -1647,6 +1673,8 @@ def handler_for(app: Dashboard):
                     "resume_pages": 2 if one.get("resume_pages") == "2" else 1,
                     "people_kinds": [k for k in fields.get("people_kinds", []) if k in people.KINDS],
                     "people_per_job": int(one.get("people_per_job") or people.DEFAULT_PER_JOB),
+                    "cover_letter": one.get("cover_letter") if one.get("cover_letter") in ("always", "required", "never")
+                    else None,
                 })
                 if refresh:
                     app.ensure_worker()
@@ -1667,6 +1695,10 @@ def handler_for(app: Dashboard):
             if path == "/people/state":
                 people.set_state(tracker, int(one["job_id"]), one["person"], one.get("state", ""))
                 return "Saved.", back
+            if path == "/letter":
+                app.ensure_worker()
+                tracker.add_task("letter", int(one["job_id"]))
+                return "Writing a cover letter. It appears here when ready; then approve again.", back
             if path == "/draft":
                 app.ensure_worker()
                 tracker.add_task("draft", int(one["job_id"]))

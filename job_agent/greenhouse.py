@@ -157,8 +157,23 @@ PAGE_FIELDS_JS = r"""
 """
 
 
+def education_rows(page) -> None:
+    """One education row per degree in your profile: "Add another" until there are enough."""
+    from . import config
+
+    wanted = len(config.load_profile().get("education") or [])
+    button = page.locator(".education--container button.add-another-button").first
+    for _ in range(4):
+        rows = page.locator('[id^="school--"][role="combobox"]').count()
+        if not rows or rows >= wanted or not button.count():
+            return
+        button.click()
+        page.locator(f'[id="school--{rows}"]').wait_for(timeout=5000)
+
+
 def page_fields(page) -> list[dict]:
     """Visible fields on the open form, with combobox options read by opening each."""
+    education_rows(page)
     fields = page.evaluate(PAGE_FIELDS_JS)
     for field in fields:
         if field["kind"] == "select":
