@@ -297,7 +297,7 @@ def fill_field(page, field: dict, value, files: dict) -> None:
         index = pick_option(texts, str(value), loose=True)
         if index is None:
             close_popups(page)
-            raise FillError(key, field["label"], f"no option {value!r}")
+            raise FillError(key, field["label"], f"no option {value!r}", [t for t in texts if t.lower() != "select one"])
         options.nth(index).click()
         page.wait_for_timeout(300)
         if pick_option([clean(button.inner_text())], texts[index], loose=False) is None:
@@ -315,30 +315,68 @@ def fill_field(page, field: dict, value, files: dict) -> None:
         raise FillError(key, field["label"], "value didn't stick")
 
 
+# "How did you hear" answers that mean the company's own site, as Workday sites word it.
+OWN_SITE = re.compile(r"career|company (web)?site|company page|corporate site|website", re.I)
+
+
+def match_choice(texts: list[str], value: str) -> int | None:
+    """The choice that means `value`: same words, or for "company careers page" and the
+    like, the site's own careers or website choice."""
+    index = pick_option(texts, value, loose=True)
+    if index is None and OWN_SITE.search(value):
+        for pattern in (r"career", r"(company|corporate)? ?web ?site|company page"):
+            index = next((i for i, t in enumerate(texts) if re.search(pattern, t, re.I)), None)
+            if index is not None:
+                break
+    return index
+
+
 def choose_prompt(page, holder, value: str, field: dict) -> None:
-    """Prompt fields search as you type; Enter runs the search, then pick the match."""
-    if value.lower() in clean(holder.locator('[data-automation-id="selectedItemList"]').inner_text()
-                              if holder.locator('[data-automation-id="selectedItemList"]').count() else "").lower():
+    """Prompt fields: a list that may have two levels ("Job Board" opens "LinkedIn", "Indeed").
+    `value` is a final choice, a category, or "Category > Choice". Tries the visible list
+    first, then the site's search; a category's own choices are picked from in turn."""
+    parts = [p.strip() for p in value.split(">") if p.strip()] or [value]
+    selected = holder.locator('[data-automation-id="selectedItemList"]')
+    if selected.count() and parts[-1].lower() in clean(selected.inner_text()).lower():
         return
+    options = page.locator('[data-automation-id="promptOption"]:visible')
     box_input = holder.locator("input").first
     box_input.click()
-    box_input.fill(value)
-    box_input.press("Enter")
-    page.wait_for_timeout(1200)
-    options = page.locator('[data-automation-id="promptOption"]:visible')
+    page.wait_for_timeout(900)
     texts = [clean(t) for t in options.all_inner_texts()]
-    index = pick_option(texts, value, loose=True)
+    index = match_choice(texts, parts[0]) if texts else None
+    if index is None:  # Not in the top level: search the final choices.
+        close_popups(page)
+        box_input.click()
+        box_input.fill(parts[-1])
+        box_input.press("Enter")
+        page.wait_for_timeout(1200)
+        texts = [clean(t) for t in options.all_inner_texts()]
+        index = match_choice(texts, parts[-1])
     if index is None:
         close_popups(page)
-        raise FillError(field["key"], field["label"], f"no choice matching {value!r}")
+        raise FillError(field["key"], field["label"], f"no choice matching {value!r}", field.get("options"))
+    picked = texts[index]
     options.nth(index).click()
-    page.wait_for_timeout(700)
+    page.wait_for_timeout(900)
+    if not holder.locator('[data-automation-id="selectedItem"]').count():
+        # A category: its own choices are showing now.
+        inner = [clean(t) for t in options.all_inner_texts()]
+        target = parts[1] if len(parts) > 1 else parts[0]
+        pick = match_choice(inner, target) if inner else None
+        if pick is None and len(inner) == 1:
+            pick = 0
+        if pick is None and len(parts) == 1 and value != picked:
+            pick = match_choice(inner, value)
+        if pick is None:
+            close_popups(page)
+            raise FillError(field["key"], field["label"], f"{picked!r} needs a more specific choice",
+                            [f"{picked} > {t}" for t in inner if t])
+        options.nth(pick).click()
+        page.wait_for_timeout(700)
     close_popups(page)
-    chosen = holder.locator('[data-automation-id="selectedItem"]')
-    if not chosen.count() or value.lower().split()[0] not in clean(chosen.first.inner_text()).lower():
-        # A category with sub-choices ("Job Board" → "LinkedIn") needs the specific one.
-        raise FillError(field["key"], field["label"],
-                        f"{texts[index]!r} needs a more specific choice; pick it in the Chrome window")
+    if not holder.locator('[data-automation-id="selectedItem"]').count():
+        raise FillError(field["key"], field["label"], f"choosing {picked!r} didn't stick", field.get("options"))
 
 
 # ----- signing in -------------------------------------------------------------
@@ -477,7 +515,9 @@ def walk(page, packet: dict, files: dict, ask, *, email: str, tracker, before_fi
                 fill_field(page, field, value, files)
             except FillError as error:
                 # The approved answer isn't possible on this site (e.g. not an option).
-                new.append({**field, "section": name, "note": f"Couldn't use {value!r}: {error.problem}"})
+                new.append({**field, "section": name, "note": f"Couldn't use {value!r}: {error.problem}",
+                            "rejected": value, **({"options": error.options, "kind": "select"}
+                                                  if error.options else {})})
         if new:
             return {"status": "new_questions", "fields": new,
                     "detail": f"{len(new)} new question(s) on “{name}”."}
