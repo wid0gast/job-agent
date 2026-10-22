@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from . import config, llm as models
+from . import llm as models
 from .assistant import Assistant, Chat
 from .prompts import ASSISTANT_PROMPT
 
@@ -493,8 +493,16 @@ def summarize(result, ok: bool) -> str:
     if isinstance(result, dict):
         if "card" in result:
             return "Waiting for your click below"
+        if "writing_problems" in result:
+            return "Saved; fixing the wording: " + ", ".join(result["writing_problems"])[:140]
         if "diff" in result:
             return "Saved" + (", typesetting again" if "task_id" in result else "")
+        if "saved" in result:
+            blank = len(result.get("needs_you") or [])
+            return "Saved" + (f"; {blank} required answer(s) still blank" if blank else "; nothing else missing")
+        if "jobs_by_status" in result:
+            return (f"{sum(result['jobs_by_status'].values())} jobs; "
+                    f"{len(result.get('waiting_on_you') or [])} waiting on you")
         if "total" in result and "jobs" in result:
             return f"{result['total']} job(s)"
         if "task_id" in result:
@@ -510,4 +518,5 @@ def summarize(result, ok: bool) -> str:
             return f"{result['title']} at {result['company']}"
         if "file" in result:
             return f"{len(result.get('text') or '')} characters"
+        return "Done"  # Never a raw dict in the chat.
     return str(result)[:160]

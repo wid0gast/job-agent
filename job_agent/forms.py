@@ -200,20 +200,25 @@ def suggestions(page, box):
 
 # ----- after submit ------------------------------------------------------------
 
-def wait_for_result(page, ask, *, done_url: tuple[str, ...] = (), errors: str = "",
+def wait_for_result(page, ask, *, before: str, done_url: tuple[str, ...] = (), errors: str = "",
                     resubmit=None, timeout: float = 45) -> dict:
     """Wait for a confirmation, handing codes and human checks to you.
 
     `ask(question)` returns your answer (the dashboard shows the question).
+    `before` is the page's text just before submit was clicked.
     `resubmit()` clicks submit again after a code is entered.
     Returns {"status": "submitted" | "needs_you", "detail": ...}.
     """
+    # Postings often say "Thank you for your interest" above the form itself, so only a
+    # confirmation that wasn't on the page before submit was clicked counts.
+    already = set(confirmations(before))
     deadline = time.time() + timeout
     while time.time() < deadline:
         page.wait_for_timeout(1000)
         text = visible_text(page)
-        if any(part in page.url for part in done_url) or CONFIRMED.search(text):
-            return {"status": "submitted", "detail": first_line(CONFIRMED, text) or page.url}
+        new = [line for line in confirmations(text) if line not in already]
+        if any(part in page.url for part in done_url) or new:
+            return {"status": "submitted", "detail": (new or [page.url])[0]}
         if LIMIT_REACHED.search(text):
             return {"status": "needs_you", "limit": True,
                     "detail": f"The site says: {first_line(LIMIT_REACHED, text)}"}
@@ -236,6 +241,10 @@ def wait_for_result(page, ask, *, done_url: tuple[str, ...] = (), errors: str = 
                         "detail": "The form showed errors: " + "; ".join(messages[:5])}
     return {"status": "needs_you",
             "detail": "Clicked submit but saw no confirmation. Check your email or the site."}
+
+
+def confirmations(text: str) -> list[str]:
+    return [line.strip()[:200] for line in text.splitlines() if CONFIRMED.search(line)]
 
 
 def enter_code(page, code: str) -> None:

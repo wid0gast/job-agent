@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import actions, answers, companies, config, documents, latex, matching, packets, people, resumes, sources, systems
+from . import actions, answers, companies, config, documents, latex, matching, packets, people, resumes, sources, style, systems
 from .harness import Tool, schema
 from .tracker import OUTCOMES, STATUSES
 
@@ -62,7 +62,21 @@ class Assistant:
             "tasks": [task_brief(t) for t in self.tracker.tasks(8)],
             "search": {k: prefs.get(k) for k in config.SEARCH_KEYS if prefs.get(k) not in (None, "", [])},
             "has_master_resume": (config.PROFILE_DIR / "resume.md").exists(),
+            "waiting_on_you": self.waiting_on_you(),
         }
+
+    def waiting_on_you(self) -> list[dict]:
+        """Applications the user must act on: needs_you ones, and prepared ones whose required
+        answers are blank (these can't be approved yet)."""
+        out = []
+        for job in self.tracker.with_status("needs_you", "prepared"):
+            packet = packets.load(job)
+            blank = [a["label"][:80] for a in packets.missing(packet)] if packet else []
+            if job["status"] == "needs_you" or blank:
+                out.append({"id": job["id"], "title": job["title"], "company": job["company"],
+                            "status": job["status"], **({"blank_required_answers": blank} if blank else {}),
+                            **({"reason": job["reason"]} if job["status"] == "needs_you" else {})})
+        return out
 
     def find_jobs(self, status: str = "found", query: str = "", limit: int = 20, offset: int = 0,
                   coded_only: bool = False):
@@ -215,9 +229,13 @@ class Assistant:
                     a.update(source="model-essay", note="Rewritten in the assistant chat.")
             packets.store(packet)
         job = self.tracker.get(job_id)
+        problems = style.problems(str(value)) + (
+            [long] if (long := answers.too_long(answer, str(value))) else []) if essay else []
         return {"saved": key, "status": job["status"], "needs_you": [a["key"] for a in packets.missing(packets.load(job))],
                 **({"note": "It was approved; the edit sent it back for the user's approval."}
-                   if was == "approved" else {})}
+                   if was == "approved" else {}),
+                **({"writing_problems": problems, "fix": "Saved, but it breaks the writing rules: edit it "
+                    "again to fix these before telling the user it's done."} if problems else {})}
 
     def edit_document(self, job_id: int, document: str, edits: list[dict]):
         job = self.job(job_id)
@@ -252,7 +270,10 @@ class Assistant:
             self.tracker.move(job_id, "approved", "prepared", reason="Edited after approval.")
         self.chat.start_worker()
         task_id = self.tracker.add_task("render", job_id)
+        problems = style.problems(after, letter=True) if document == "cover_letter" else []
         return {"diff": diff(before, after), "task_id": task_id,
+                **({"writing_problems": problems, "fix": "Saved, but it breaks the writing rules: edit "
+                    "again to fix these."} if problems else {}),
                 "next": "Typesetting the PDF again (under a minute)." + (
                     " It was approved; the edit sent it back for approval." if job["status"] == "approved" else "")}
 

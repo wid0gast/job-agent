@@ -259,21 +259,26 @@ class Tracker:
         return True, None
 
     @locked
-    def likely_applied(self, job: dict) -> dict | None:
+    def applied_index(self) -> dict[str, list[tuple[set, dict]]]:
+        """Applications you sent, by company, with each title's words: built once per pass
+        over the jobs (asking per job re-read every application each time)."""
+        index: dict[str, list[tuple[set, dict]]] = {}
+        for row in self.db.execute("SELECT * FROM jobs WHERE status = 'submitted' OR applied_via IS NOT NULL"):
+            theirs = set(title_tokens(row["title"]))
+            if len(theirs) >= 2:
+                index.setdefault(normalize(row["company_id"] or row["company"]), []).append((theirs, dict(row)))
+        return index
+
+    def likely_applied(self, job: dict, index: dict | None = None) -> dict | None:
         """An application you already sent at the same company for what looks like this role:
         one title's words contain the other's ("MLE" and "Machine Learning Engineer Intern")."""
         mine = set(title_tokens(job.get("title")))
         if len(mine) < 2:
             return None
-        company = normalize(job.get("company_id") or job.get("company"))
-        for row in self.db.execute(
-                "SELECT * FROM jobs WHERE id != ? AND (status = 'submitted' OR applied_via IS NOT NULL)",
-                (job["id"],)):
-            if normalize(row["company_id"] or row["company"]) != company:
-                continue
-            theirs = set(title_tokens(row["title"]))
-            if len(theirs) >= 2 and (theirs <= mine or mine <= theirs):
-                return dict(row)
+        index = self.applied_index() if index is None else index
+        for theirs, row in index.get(normalize(job.get("company_id") or job.get("company")), []):
+            if row["id"] != job["id"] and (theirs <= mine or mine <= theirs):
+                return row
         return None
 
     @locked
@@ -454,6 +459,10 @@ class Tracker:
             f" (status IN ({marks}) OR (status = 'submitted' AND submitted_at >= ?))",
             (company_id, exclude_job or -1, *RESERVED, utc_days_ago(days)),
         ).fetchone()[0]
+
+    @locked
+    def status_counts(self) -> dict[str, int]:
+        return {r[0]: r[1] for r in self.db.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")}
 
     @locked
     def all(self) -> list[dict]:

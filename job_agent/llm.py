@@ -54,6 +54,10 @@ PRICES = {"claude-fable-5-1": (10, 50), "claude-opus-5-5": (4, 20), "claude-opus
           "claude-sonnet-5-5": (2, 10), "claude-haiku-5-5": (0.1, 0.5)}
 
 
+TRANSIENT = re.compile(r"overloaded|\b5\d\d\b|timed? ?out|took more than|connection|network|"
+                       r"temporar|ECONNRESET|socket|try again", re.I)
+
+
 class SpendCapReached(RuntimeError):
     pass
 
@@ -159,10 +163,19 @@ Tools:
             turn: bool = False) -> dict:
         """One headless request; recorded in the job's trace (trace.py) when one is open."""
         model, effort = self.choose(task)
-        with recorded(self, task, model, effort, system, prompt, turn) as done:
-            value = self._run(system, prompt, schema, model, effort, tools)
-            done.update(text=json.dumps(value, ensure_ascii=False))
-        return value
+        for attempt in range(2):
+            try:
+                with recorded(self, task, model, effort, system, prompt, turn) as done:
+                    value = self._run(system, prompt, schema, model, effort, tools)
+                    done.update(text=json.dumps(value, ensure_ascii=False))
+                return value
+            except RuntimeError as error:
+                # A momentary failure (overloaded, network, timeout) gets one more try; a usage
+                # limit or a sign-in problem won't fix itself in seconds, so those go straight back.
+                if attempt or not TRANSIENT.search(str(error)):
+                    raise
+                time.sleep(8)
+        raise AssertionError("unreachable")
 
     def _run(self, system: str, prompt: str, schema: dict, model: str, effort: str, tools: tuple[str, ...]) -> dict:
         allowed = ",".join(tools)  # Claude Code's own tools: none, except web search for discovery.
@@ -190,7 +203,6 @@ Tools:
                            + (usage.get("cache_creation_input_tokens") or 0),
                            "output": usage.get("output_tokens") or 0,
                            "cost_usd": float(reply.get("total_cost_usd") or 0), "plan": True}
-        self.last_models = list(reply.get("modelUsage") or {})  # Which models answered (for checks).
         if reply.get("is_error") or reply.get("subtype") != "success":
             message = str(reply.get("result") or reply.get("subtype"))[:400]
             if re.search(r"log ?in|auth|credential", message, re.I):

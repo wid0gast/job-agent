@@ -76,3 +76,58 @@ def test_no_ligatures_in_body_text_but_headings_stay_whole():
     assert latex.escape("fine-tuned workflow") == "f{}ine-tuned workf{}low"
     assert r"\section{Certifications}" in latex.section(
         {"title": "Certifications", "kind": "list", "items": ["PL-300"]})
+
+
+class FakePage:
+    """Enough of a Playwright page for wait_for_result: text that changes after some ticks."""
+
+    def __init__(self, texts, url="https://boards.example.com/apply"):
+        self.texts, self.url, self.ticks = texts, url, 0
+        self.frames = []
+
+    def evaluate(self, script):
+        return self.texts[min(self.ticks, len(self.texts) - 1)]
+
+    def wait_for_timeout(self, ms):
+        self.ticks += 1
+
+    def locator(self, selector):
+        class Empty:
+            def all_inner_texts(self):
+                return []
+
+            def count(self):
+                return 0
+        return Empty()
+
+
+def test_a_thank_you_line_already_on_the_form_is_not_a_confirmation():
+    from job_agent import forms
+
+    form = "Data Intern\nThank you for your interest in Acme!\nFirst name"
+    stuck = FakePage([form])  # The click didn't go through: the same page stays.
+    assert forms.wait_for_result(stuck, ask=None, before=form, timeout=2)["status"] == "needs_you"
+    done = FakePage(["Thank you for applying to Acme."])  # Even when it loads before the wait starts.
+    assert forms.wait_for_result(done, ask=None, before=form, timeout=5)["status"] == "submitted"
+
+
+def test_filters_survive_odd_dates_and_match_excluded_company_names():
+    from job_agent import filters
+
+    profile = {"preferences": {"max_posting_age_days": 30, "exclude_companies": ["Meta"]}}
+    assert filters.check({"title": "Data Intern", "posted_at": "last Tuesday"}, {}, profile) is None
+    assert filters.check({"title": "Data Intern", "company": "Meta Platforms, Inc."}, {}, profile) == "Excluded company."
+    assert filters.check({"title": "Data Intern", "company": "Metabase"}, {}, profile) is None
+
+
+def test_us_authorization_isnt_used_for_another_country():
+    from job_agent import answers
+
+    profile = {"work_authorization": {"authorized_in_us": True, "requires_sponsorship_now": False,
+                                      "requires_sponsorship_future": False}, "contact": {"name": "Jane Doe"}}
+    ask = lambda label: answers.from_profile(  # noqa: E731
+        {"key": "q", "label": label, "kind": "select", "options": ["Yes", "No"], "section": ""}, profile, {})
+    assert ask("Are you legally authorized to work in the United States?") == ("Yes", "profile")
+    assert ask("Are you legally authorized to work in Canada?") is None
+    assert ask("Will you require visa sponsorship to work in the UK?") is None
+    assert ask("Will you now or in the future require sponsorship?") == ("No", "profile")

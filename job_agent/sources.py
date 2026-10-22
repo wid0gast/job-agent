@@ -473,11 +473,12 @@ def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=No
 APPLIED = "Looks like your application"  # The reason given when a job matches one you sent.
 
 
-def applied_reason(tracker, job: dict) -> str | None:
-    """'Looks like your application to "MLE" (2026-09-12)': the same role at the same company."""
+def applied_reason(tracker, job: dict, index: dict | None = None) -> str | None:
+    """'Looks like your application to "MLE" (2026-09-12)': the same role at the same company.
+    `index`: tracker.applied_index(), when checking many jobs."""
     if job.get("reason") == "Requeued by you.":
         return None  # You said it's a different job.
-    sent = tracker.likely_applied(job)
+    sent = tracker.likely_applied(job, index)
     if not sent:
         return None
     when = (sent.get("submitted_at") or "")[:10]
@@ -506,15 +507,16 @@ def apply_filters(tracker, profile: dict) -> int:
     """Re-run the hard filters on unscored jobs, so profile changes take effect, and set aside
     jobs that look like ones you've already applied to."""
     moved = set_aside_reposts(tracker)
+    applied = tracker.applied_index()
     for job in tracker.with_status("found", "filtered_out"):
         if job["fit_score"] is not None:  # Filtered by fit or caps, not by these rules...
-            reason = applied_reason(tracker, job) if job["status"] == "found" else None
+            reason = applied_reason(tracker, job, applied) if job["status"] == "found" else None
             if reason:  # ...but an application you already sent counts whatever the score.
                 tracker.update(job["id"], status="filtered_out", reason=reason)
                 moved += 1
             continue
         reason = (filters.check(job, json.loads(job["details"] or "{}"), profile)
-                  or applied_reason(tracker, job))
+                  or applied_reason(tracker, job, applied))
         if reason and job["status"] == "found":
             tracker.update(job["id"], status="filtered_out", reason=reason)
             moved += 1

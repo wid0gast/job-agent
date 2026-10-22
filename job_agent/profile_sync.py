@@ -53,12 +53,15 @@ SCHEMA = {
 # Status stated on a resume → how application questions are answered.
 # (pattern, authorized now, needs sponsorship now, needs sponsorship later, rule)
 STATUS_RULES = [
-    (r"u\.?s\.? citizen|citizenship", True, False, False, "U.S. citizen"),
+    (r"u\.?s\.?a?\.? citizen|american citizen|citizen of the united states|united states citizen",
+     True, False, False, "U.S. citizen"),
     (r"green card|permanent resident", True, False, False, "U.S. permanent resident"),
     (r"\b(f-?1|cpt|opt|stem opt)\b", True, False, True,
      "F-1 student: may work through CPT/OPT now; long-term employment needs sponsorship (H-1B)"),
-    (r"\bh-?1b\b", True, True, True, "H-1B: a new employer must sponsor a transfer"),
-    (r"\bj-?1\b", True, False, True, "J-1: work tied to the program; later employment needs sponsorship"),
+    (r"\b(on|hold\w*|current\w*)\s+(an?\s+)?h-?1b\b|\bh-?1b\s+(visa\s+)?holder",
+     True, True, True, "H-1B: a new employer must sponsor a transfer"),
+    (r"\b(on|hold\w*|current\w*)\s+(an?\s+)?j-?1\b|\bj-?1\s+(visa\s+)?holder|\bj-?1 (student|scholar|visa)\b",
+     True, False, True, "J-1: work tied to the program; later employment needs sponsorship"),
     (r"\b(ead|work permit|authorized to work)\b", True, False, False, "Stated as authorized to work"),
 ]
 
@@ -72,16 +75,42 @@ def squash(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
 
 
+# A status is only stated if it isn't negated just before it ("not a U.S. citizen").
+NEGATED = re.compile(r"\b(not|non|no longer|isn'?t|aren'?t|never)\b[\s-]*(an?\s+)?$", re.I)
+# Sentences about sponsorship itself outrank what the status implies.
+NO_SPONSOR = re.compile(r"\b(no|not|without|never|don'?t|do not|does not|won'?t|will not)\s+(need|require)\w*\s+"
+                        r"(any\s+)?(visa\s+|employer\s+|h-?1b\s+)?sponsorship|sponsorship\s+(is\s+)?not\s+(needed|required)",
+                        re.I)
+NEEDS_SPONSOR = re.compile(r"\b(need|require)\w*\s+(visa\s+|employer\s+|h-?1b\s+)?sponsorship", re.I)
+
+
+def stated(pattern: str, text: str) -> bool:
+    return any(not NEGATED.search(text[:m.start()]) for m in re.finditer(pattern, text, re.I))
+
+
 def work_authorization(text: str, country: str) -> dict:
-    """Answers implied by the resume's own status sentence, by fixed rules."""
-    for pattern, authorized, now, later, rule in STATUS_RULES:
-        if re.search(pattern, text, re.I):
-            return {"status": text, "authorized_in_us": authorized,
-                    "requires_sponsorship_now": now, "requires_sponsorship_future": later,
-                    "rule": rule}
-    if not text and country == "United States":
+    """Answers implied by the resume's own status sentence, by fixed rules. A sentence
+    about sponsorship outranks the status; anything unclear assumes nothing (the forms'
+    questions then come to you)."""
+    if not text:
         return {"status": "", "rule": "No status on the resume; nothing assumed."}
-    return {"status": text, "rule": "Status not recognized; nothing assumed."}
+    out = {"status": text}
+    for pattern, authorized, now, later, rule in STATUS_RULES:
+        if stated(pattern, text):
+            out.update(authorized_in_us=authorized, requires_sponsorship_now=now,
+                       requires_sponsorship_future=later, rule=rule)
+            break
+    if NO_SPONSOR.search(text):
+        out.update(requires_sponsorship_now=False, requires_sponsorship_future=False)
+        out["rule"] = (out.get("rule", "Status") + "; the resume says no sponsorship is needed")
+    elif NEEDS_SPONSOR.search(text):
+        out["requires_sponsorship_future"] = True  # "Now" stays as the status implies, or unknown.
+        if re.search(r"\b(now|currently|immediately|to start)\b", text, re.I):
+            out["requires_sponsorship_now"] = True
+        out["rule"] = (out.get("rule", "Status") + "; the resume says sponsorship is needed")
+    if "rule" not in out:
+        out["rule"] = "Status not recognized; nothing assumed."
+    return out
 
 
 def links(resume: str) -> dict:

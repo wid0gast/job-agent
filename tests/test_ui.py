@@ -77,8 +77,9 @@ def test_whole_flow_in_the_dashboard(env, tmp_path, monkeypatch):  # noqa: F811
             # Edit an answer, then approve from the job page.
             row = page.locator("tr").filter(has_text="Why do you want to work at Contoso AI?")
             row.locator("textarea").fill("I want to build evaluation tools for document models.")
-            row.get_by_role("button", name="Save").click()
-            expect(page.locator(".flash")).to_contain_text("Saved")
+            page.get_by_role("button", name="Save changes").click()
+            # One form for every answer; only the one you changed is saved.
+            expect(page.locator(".flash")).to_contain_text("Saved 1 change(s).")
             page.get_by_role("button", name="Approve").click()
             expect(page.locator(".pill").first).to_have_text("approved")
 

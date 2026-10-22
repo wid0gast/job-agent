@@ -92,3 +92,21 @@ def test_gpa_and_graduation_questions_get_their_own_answers():
     assert answer("Cumulative grade point average") == "3.7"
     assert answer("What is your expected graduation date?") == "May 2027"
     assert answer("When do you graduate?") == "May 2027"
+
+
+def test_work_authorization_reads_negation_and_sponsorship_sentences():
+    from job_agent.profile_sync import work_authorization as auth
+
+    citizen = auth("U.S. citizen", "United States")
+    assert citizen["authorized_in_us"] and not citizen["requires_sponsorship_future"]
+    not_citizen = auth("Not a U.S. citizen; F-1 student on OPT", "United States")
+    assert not_citizen["requires_sponsorship_future"] is True        # The F-1 rule, not the citizen one.
+    later = auth("Authorized to work in the US; will require sponsorship in the future", "United States")
+    assert later["authorized_in_us"] and later["requires_sponsorship_future"] is True
+    none = auth("Green card holder; no sponsorship required", "United States")
+    assert none["requires_sponsorship_now"] is False and none["requires_sponsorship_future"] is False
+    other = auth("Indian citizenship; will need H-1B sponsorship", "United States")
+    assert "authorized_in_us" not in other and other["requires_sponsorship_future"] is True
+    assert auth("Currently on an H-1B", "United States")["requires_sponsorship_now"] is True
+    unclear = auth("Non-citizen", "United States")
+    assert "requires_sponsorship_now" not in unclear and "nothing assumed" in unclear["rule"]

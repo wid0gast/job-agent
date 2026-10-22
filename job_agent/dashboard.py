@@ -194,6 +194,10 @@ border-radius:10px;border:1px solid var(--line);background:var(--card);color:var
 .totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 16px}
 .totals div{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
 .totals b{display:block;font-size:20px}.totals span{font-size:12px;color:var(--muted)}
+.save{position:sticky;bottom:0;display:flex;gap:12px;align-items:center;padding:12px 0 2px;background:var(--card)}
+tr[id^="a-"]{scroll-margin-top:84px}tr[id^="a-"]:target td{background:var(--warn-soft)}
+button.quiet{font-weight:500;color:var(--muted);border-color:transparent;background:transparent}
+button.quiet:hover{color:var(--text);border-color:var(--line)}
 .diff .add{background:color-mix(in srgb,var(--good) 18%,transparent)}
 .diff .del{background:color-mix(in srgb,var(--bad) 18%,transparent);text-decoration:line-through}
 """
@@ -264,11 +268,17 @@ class Dashboard:
 
 
 
-def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False) -> bytes:
-    links = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jobs", "Ranked jobs"),
-             ("/queue", "Approval queue"), ("/applications", "Applications"),
-             ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
-    nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
+NAV = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jobs", "Ranked jobs"),
+       ("/queue", "Approval queue"), ("/applications", "Applications"),
+       ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
+
+
+def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False,
+           title: str = "") -> bytes:
+    """A page: the header with `active` highlighted, then `body`. `title` names the browser tab
+    (default: the page's name in the menu)."""
+    nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in NAV)
+    title = title or dict(NAV).get(active, "")
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
     # A page with work running updates itself in place (live.js), never by reloading.
@@ -279,7 +289,7 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
             f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
-            f"<title>Job Agent</title><style>{FIRST_PAINT}</style>"
+            f"<title>{esc(title + ' · ' if title else '')}Job Agent</title><style>{FIRST_PAINT}</style>"
             f"<link rel=stylesheet href=/style.css></head><body{live}><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
             f"<main>{banner}{note}{body}</main><script src=/live.js></script></body></html>").encode()
@@ -328,6 +338,11 @@ def start_here(app: Dashboard, active: str) -> str:
                      '<a href="/search">Search</a>. Optional: import your job sheet on '
                      '<a href="/applications">Applications</a>.</div>')
     return "".join(parts)
+
+
+def quiet(html_form: str) -> str:
+    """A secondary action drawn as a quiet button."""
+    return html_form.replace("<button class=\"\">", '<button class="quiet">', 1)
 
 
 def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
@@ -417,12 +432,33 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
     Job Agent is a personal tool: use your own account or key on your own computer.</p></div>"""
     return layout(app, "/connect", body, flash)
 
+# What each background task is, in words (tasks are stored by kind).
+TASK_NAMES = {
+    "refresh": "Refresh job lists", "discover": "Discover companies", "score_matches": "Rank jobs",
+    "prepare": "Prepare", "draft": "Draft missing answers", "render": "Typeset again", "letter": "Write a cover letter",
+    "people": "Find people to contact", "redraft": "Redraft messages", "submit": "Submit",
+    "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes", "import_resume": "Read a resume PDF",
+}
+
+
+def waiting_on_you(app: Dashboard) -> list[dict]:
+    """Applications that need you: needs_you ones, and prepared ones with required answers blank."""
+    out = []
+    for job in app.tracker.with_status("needs_you", "prepared"):
+        packet = packets.load(job) if job["status"] == "prepared" else None
+        if job["status"] == "needs_you" or (packet and packets.missing(packet)):
+            out.append(job)
+    return out
+
+
 def page_today(app: Dashboard, flash: str) -> bytes:
     jobs = app.tracker.all()
     counts = {s: 0 for s in ORDER}
     for job in jobs:
         counts[job["status"]] = counts.get(job["status"], 0) + 1
-    stats = "".join(f'<a class="stat st-{s}" href="/jobs?status={s}" style="text-decoration:none;color:inherit">'
+    counts["needs_you"] = len(waiting_on_you(app))  # Incl. prepared packets with blank required answers.
+    stats = "".join(f'<a class="stat st-{s}" href="{"/queue" if s == "needs_you" else f"/jobs?status={s}"}" '
+                    'style="text-decoration:none;color:inherit">'
                     f'<b>{counts[s]}</b><span class="muted">{s.replace("_", " ")}</span></a>'
                     for s in ("found", "prepared", "needs_you", "approved", "submitted", "filtered_out")
                     if s in counts)
@@ -430,7 +466,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     # Reload while the worker is busy, but not while it waits for you to type.
     waiting = any(t["status"] == "waiting" for t in tasks)
     running = not waiting and any(t["status"] in ("queued", "running") for t in tasks)
-    rows = []
+    rows, explained = [], set()
     for task in tasks:
         reply = ""
         if task["status"] == "waiting":
@@ -438,10 +474,17 @@ def page_today(app: Dashboard, flash: str) -> bytes:
                      + form(app, "/reply", "Send", {"task_id": task["id"]}, True,
                             '<input type=text name=answer autofocus style="max-width:260px;margin-right:8px">')
                      + "</div>")
-        job = f' <a href="/job/{task["job_id"]}">job {task["job_id"]}</a>' if task["job_id"] else ""
-        rows.append(f'<tr><td>{task["id"]}</td><td>{esc(task["kind"])}{job}</td>'
+        about = app.tracker.get(task["job_id"]) if task["job_id"] else None
+        job = (f'<br><a href="/job/{about["id"]}">{esc(about["title"])} at {esc(about["company"])}</a>'
+               if about else "")
+        result = (task["result"] or "")[:160]
+        if task["kind"] == "prepare" and re.fullmatch(r"[a-z_]+", result):  # A status: say why,
+            latest = about and about["id"] not in explained  # with the job's reason for its newest run only.
+            result = result.replace("_", " ") + (f": {about['reason']}" if latest and about["reason"] else "")
+            explained.add(task["job_id"])
+        rows.append(f'<tr><td>{task["id"]}</td><td>{esc(TASK_NAMES.get(task["kind"], task["kind"]))}{job}</td>'
                     f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
-                    f'<td class="muted">{esc((task["result"] or "")[:160])}</td></tr>')
+                    f'<td class="muted">{esc(result[:220])}</td></tr>')
     body = f"""
     <h1>Today</h1>
     <div class="stats">{stats}</div>
@@ -489,9 +532,11 @@ def outreach_card(app: Dashboard) -> str:
 
 def page_queue(app: Dashboard, flash: str) -> bytes:
     rows = []
+    blank = {j["id"] for j in waiting_on_you(app)}
     for job in app.tracker.with_status(*QUEUE, order="fit_score DESC, id"):
+        # Only complete packets can be approved; the others link to what's missing.
         box = (f'<input type=checkbox name=ids value="{job["id"]}">'
-               if job["status"] == "prepared" else "")
+               if job["status"] == "prepared" and job["id"] not in blank else "")
         rows.append(f'<tr><td>{box}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
                     f'<td>{esc(job["fit_score"])}</td><td><span class="pill {job["status"]}">'
@@ -511,25 +556,40 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
 ACTIVE = ("found", "prepared", "needs_you", "approved")
 
 
-def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
-    """Jobs ranked by score: the fit score once prepared, else the quick match score."""
+PER_PAGE = 50
+
+
+def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: int = 1) -> bytes:
+    """Jobs ranked by score: the fit score once prepared, else the quick match score.
+    `query` narrows by title, company or location; 50 roles a page."""
     profile = config.load_profile()
     threshold = config.fit_threshold(profile, app.settings)
-    views = [("active", "To apply"), *[(s, s.replace("_", " ")) for s in ORDER if s != "working"], ("all", "all")]
-    tabs = "".join(f'<a class="tab{" on" if key == status else ""}" href="/jobs?status={key}">{name}</a>'
-                   for key, name in views)
+    counts = app.tracker.status_counts()
+    # Tabs only for statuses that have jobs, each with its count.
+    views = [("active", "To apply", sum(counts.get(s, 0) for s in ACTIVE)),
+             *[(s, s.replace("_", " "), counts[s]) for s in ORDER if s != "working" and counts.get(s)],
+             ("all", "all", sum(counts.values()))]
+    keep = f"&q={quote(query)}" if query else ""
+    tabs = "".join(f'<a class="tab{" on" if key == status else ""}" href="/jobs?status={key}{keep}">{name} '
+                   f'<span class=muted>{n}</span></a>' for key, name, n in views)
     wanted = ACTIVE if status == "active" else tuple(ORDER) if status == "all" else (status,)
     jobs = app.tracker.with_status(*wanted)
+    words = query.lower().split()
+    if words:
+        jobs = [j for j in jobs if all(w in f"{j['title']} {j['company']} {j['location']}".lower() for w in words)]
 
     roles = matching.grouped(jobs)
+    pages = max(1, -(-len(roles) // PER_PAGE))
+    page = max(1, min(page, pages))
     unscored = len(matching.stale(app.tracker, profile, config.read_optional("resume.md") or "")) \
         if (profile.get("preferences", {}).get("description") or profile.get("preferences", {}).get("roles")) else None
     rows = []
-    for job, others in roles[:500]:
+    for job, others in roles[(page - 1) * PER_PAGE:page * PER_PAGE]:
         score, kind = matching.ranking_score(job)
         why = json.loads(job["details"] or "{}").get("match", {}).get("why", "") if kind == "match" else ""
         if job["status"] == "found":
-            act = prepare_button(app, job)
+            act = (prepare_button(app, job) + " "
+                   + quiet(form(app, "/skip", "Not interested", {"job_id": job["id"], "back": f"/jobs?status={status}{keep}&page={page}"})))
         elif job["status"] in ("failed", "rejected", "skipped", "closed", "filtered_out"):
             act = form(app, "/requeue", "Back to found", {"job_id": job["id"]})
         else:
@@ -543,10 +603,16 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
                     f'<td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])}</div>'
                     f'{f"<div class=src>{esc(why)}</div>" if why else ""}{also_listed(others)}</td>'
-                    f'<td class=muted style="white-space:nowrap">{esc((job["posted_at"] or "")[:10])}</td>'
-                    f'<td>{esc(job["ats"])}</td>'
+                    f'<td class=muted style="white-space:nowrap">{esc((job["posted_at"] or "")[:10])}'
+                    f'<div class=src>{esc(job["ats"] or "")}</div></td>'
                     f'<td><span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span>'
-                    f'<div class=muted>{esc((job["reason"] or "")[:120])}</div></td><td>{act}</td></tr>')
+                    f'<div class=muted>{esc((job["reason"] or "")[:120])}</div></td><td><div class=row>{act}</div></td></tr>')
+    pager = ""
+    if pages > 1:
+        link = lambda n, text: f'<a class=button href="/jobs?status={status}{keep}&page={n}">{text}</a>'  # noqa: E731
+        pager = (f'<div class=row style="margin-top:12px">{link(page - 1, "Previous") if page > 1 else ""}'
+                 f'<span class=muted>Page {page} of {pages} · {len(roles)} roles</span>'
+                 f'{link(page + 1, "Next") if page < pages else ""}</div>')
     if unscored is None:
         scoring = '<a href="/search">Describe what you\'re looking for</a> to rank jobs.'
     elif unscored:
@@ -570,9 +636,12 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     model scores). Greyed rows are below your
     threshold of <b>{threshold}</b> (<a href="/search">change</a>); jobs whose fit falls below it aren't prepared.</p></div>
     <div class="tabs">{tabs}</div>
-    <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>System</th><th>Status</th><th></th></tr>
-    {"".join(rows) or '<tr><td colspan=6 class=muted>None.</td></tr>'}</table>
-    {f'<p class=muted>Showing the top 500 of {len(roles)} roles.</p>' if len(roles) > 500 else ''}</div>"""
+    <form method=get action="/jobs" class=row style="margin:0 0 14px"><input type=hidden name=status value="{esc(status)}">
+    <input type=text name=q value="{esc(query)}" placeholder="Search title, company or location" style="max-width:420px">
+    <button>Search</button>{'<a href="/jobs?status=' + esc(status) + '">Clear</a>' if query else ''}</form>
+    <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>Status</th><th></th></tr>
+    {"".join(rows) or '<tr><td colspan=5 class=muted>' + ('No jobs match “' + esc(query) + '”.' if query else 'None.') + '</td></tr>'}</table>
+    {pager}</div>"""
     return layout(app, "/jobs", body, flash, refresh=bool(refreshing))
 
 
@@ -684,13 +753,14 @@ def people_settings(prefs: dict) -> str:
     <select name=people_per_job style="width:auto">{options}</select></div>"""
 
 
-def answer_input(app: Dashboard, job_id: int, answer: dict, editable: bool) -> str:
+def answer_input(answer: dict, editable: bool) -> str:
+    """One answer's field inside the packet's single answers form (named by its key)."""
     value = answer.get("value")
     if not editable:
         return esc(", ".join(value) if isinstance(value, list) else value)
-    name = 'name=value'
     if answer["kind"] == "file":
         return esc(value or "—")
+    name = f'name="v:{esc(answer["key"])}"'
     if answer["kind"] in ("select", "multiselect") and answer["options"]:
         chosen = value if isinstance(value, list) else [value]
         multiple = " multiple" if answer["kind"] == "multiselect" else ""
@@ -701,17 +771,17 @@ def answer_input(app: Dashboard, job_id: int, answer: dict, editable: bool) -> s
         field = f"<textarea {name}>{esc(value)}</textarea>"
     else:
         field = f'<input type=text {name} value="{esc(value)}">'
-    remember = '<label class=muted style="font-size:12px"><input type=checkbox name=remember value=1> remember</label>'
-    return (f'<form method=post action="/edit"><input type=hidden name=token value="{app.token}">'
-            f'<input type=hidden name=job_id value="{job_id}"><input type=hidden name=key value="{esc(answer["key"])}">'
-            f'{field}<div class=row style="margin-top:4px"><button>Save</button>{remember}</div></form>')
+    remember = (f'<label class=muted style="font-size:12px"><input type=checkbox name="r:{esc(answer["key"])}" '
+                'value=1> remember for other applications</label>')
+    return f'{field}<div class=row style="margin-top:4px">{remember}</div>'
 
 
 def prepare_button(app: Dashboard, job: dict) -> str:
     """Coded systems prepare directly; others are filled by the browser agent (slower)."""
     if job["ats"] in systems.SUPPORTED:
         return form(app, "/prepare", "Prepare", {"job_id": job["id"]})
-    return form(app, "/prepare", "Prepare (agent fills the form)", {"job_id": job["id"]})
+    return form(app, "/prepare", "Prepare (agent)", {"job_id": job["id"]}).replace(
+        "<button", '<button title="No coded filler for this site: a browser agent fills the form"', 1)
 
 
 def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
@@ -746,7 +816,8 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     warn = []
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
-             + "".join(f"<li>{esc(a['label'])}</li>" for a in problems) + "</ul></div>") if problems else ""
+             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(a["label"])}</a></li>' for a in problems)
+             + "</ul></div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
     if checks.get("resume_pages", 1) > 1:
         warn.append(f"The resume is {checks['resume_pages']} pages.")
@@ -758,10 +829,15 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
     rows = "".join(
-        f'<tr><td><b>{esc(a["label"])}</b>{" *" if a["required"] else ""}'
+        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(a["label"])}</b>{" *" if a["required"] else ""}'
         f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
-        f'<td style="width:50%">{answer_input(app, job_id, a, editable)}</td></tr>'
+        f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
         for a in packet["answers"])
+    answers_card = (f'<form method=post action="/edit-all" class=card><input type=hidden name=token value="{app.token}">'
+                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table>{rows}</table>'
+                    '<div class=save><button class=primary>Save changes</button>'
+                    '<span class=muted>Only answers you changed are saved.</span></div></form>'
+                    if editable else f'<div class=card><h2>Answers</h2><table>{rows}</table></div>')
     tail = packet.get("submission")
     proof = ""
     if packet.get("research"):  # Company facts the letter and "why us" answers could use.
@@ -815,9 +891,9 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     <table><tr><th>Requirement</th><th>Met</th><th>Evidence</th></tr>{reqs}</table></div>
     <div class=card><h2>Tailoring</h2><p><b>Matched:</b> {esc("; ".join(t["matched"]))}</p>
     <p><b>Emphasized:</b> {esc("; ".join(t["emphasized"]))}</p><p><b>Gaps:</b> {esc("; ".join(t["gaps"]))}</p></div>
-    <div class=card><h2>Answers</h2><table>{rows}</table></div>
+    {answers_card}
     {people_card(app, job, packet)}"""
-    return layout(app, "/queue", body, flash)
+    return layout(app, "/queue", body, flash, title=f"{job['title']} at {job['company']}")
 
 
 EMAIL_STATUS = {"published": "shown on a page", "yours": "you entered it",
@@ -1062,7 +1138,19 @@ OUTCOME_NAMES = {"applied": "applied, no answer yet", "oa": "online assessment",
 
 
 def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
+    quiet = history.mark_quiet(app.tracker)
+    if quiet:
+        flash = (flash + " " if flash else "") + (f"{quiet} application(s) marked no response: no reply in "
+                                                  f"{history.QUIET_DAYS} days.")
     stats = history.summary(app.tracker)
+    lines = history.breakdown(app.tracker) if stats["total"] >= 5 else []
+    table = "".join(f'<tr><td class=muted>{esc(r["group"]) if i == 0 or lines[i - 1]["group"] != r["group"] else ""}</td>'
+                    f'<td>{esc(r["value"])}</td><td>{r["n"]}</td><td>{r["heard"]}%</td><td>{r["positive"]}%</td></tr>'
+                    for i, r in enumerate(lines))
+    rates = (f'<div class=card><h2>What gets answers</h2><table><tr><th></th><th></th><th>Applications</th>'
+             f'<th>Heard back</th><th>Assessment, interview or offer</th></tr>{table}</table>'
+             f'<p class=muted style="margin-top:8px">Small groups swing a lot: read these as hints, not proof.</p></div>'
+             if lines else "")
     tiles = "".join(f'<a class="stat" href="/applications?outcome={o}" style="text-decoration:none;color:inherit">'
                     f'<b>{stats["counts"][o]}</b><span class=muted>{OUTCOME_NAMES[o]}</span></a>'
                     for o in OUTCOMES if stats["counts"][o] or o in ("applied", "interview", "offer"))
@@ -1089,6 +1177,7 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
     <p class=muted>{stats["total"]} applications · {stats["response_rate"]}% heard back ·
     {stats["positive_rate"]}% reached an assessment, interview or offer.
     {'<a href="/applications">Show all</a>' if show else ''}</p>
+    {rates}
     <div class=card><table><tr><th>Applied</th><th>Job</th><th>How</th><th>Outcome</th></tr>
     {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Import your job sheet below.</td></tr>'}
     </table><p class=muted style="margin-top:10px"><span class=warn>?</span> = date unknown (imported
@@ -1234,7 +1323,7 @@ def page_trace(app: Dashboard, job_id: int, run_id: str) -> bytes:
     <span class=muted>Checks are rules in code, not the model: ✓ passed, ⚑ caught something and acted on it.</span></div>
     <ul class=tl id=timeline>{timeline(shown["root"]["children"])}</ul></div>
     <script src="/trace.js"></script>"""
-    return layout(app, "/queue", body, refresh=live)
+    return layout(app, "/queue", body, refresh=live, title=f"How it was made: {job['title']}")
 
 
 HOW_MD = Path(__file__).parent / "static" / "how-it-works.md"
@@ -1536,7 +1625,9 @@ def handler_for(app: Dashboard):
             if url.path == "/queue":
                 return self.send(page_queue(app, flash))
             if url.path == "/jobs":
-                return self.send(page_jobs(app, query.get("status", "active"), flash))
+                page = query.get("page", "1")
+                return self.send(page_jobs(app, query.get("status", "active"), flash, query.get("q", "").strip(),
+                                           int(page) if page.isdigit() else 1))
             if url.path == "/activity":
                 return self.send(page_activity(app))
             if url.path == "/how":
@@ -1772,6 +1863,24 @@ def handler_for(app: Dashboard):
                 for job_id in ids:
                     tracker.add_task("submit", job_id)
                 return f"Submitting {len(ids)}. Watch the Chrome window and this page.", "/"
+            if path == "/edit-all":
+                job_id = int(one["job_id"])
+                packet = packets.load(tracker.get(job_id))
+                current = {a["key"]: a.get("value") for a in packet["answers"]} if packet else {}
+                changed = 0
+                for key, before in current.items():
+                    if f"v:{key}" not in fields:
+                        continue
+                    sent = [v.replace("\r\n", "\n") for v in fields[f"v:{key}"]]  # Browsers send \r\n.
+                    value = sent if len(sent) > 1 else sent[0]
+                    same = (value or None) == (before or None) or (
+                        isinstance(before, list) and [value] == before)
+                    remember = bool(one.get(f"r:{key}"))
+                    if same and not remember:
+                        continue
+                    actions.edit_answer(tracker, job_id, key, value, remember=remember)
+                    changed += 1
+                return (f"Saved {changed} change(s)." if changed else "Nothing changed."), back
             if path == "/edit":
                 value = fields.get("value", [""])
                 value = value if len(value) > 1 else value[0]
@@ -1784,6 +1893,11 @@ def handler_for(app: Dashboard):
             if path == "/resolve":
                 actions.resolve(tracker, int(one["job_id"]), one["outcome"])
                 return "Updated.", back
+            if path == "/skip":
+                actions.skip(tracker, int(one["job_id"]))
+                where = one.get("back", "")
+                return ("Set aside: not interested. “Back to found” on the Skipped tab undoes it.",
+                        where if where.startswith("/jobs?") else back)
             if path == "/requeue":
                 actions.requeue(tracker, int(one["job_id"]))
                 return "Back in found.", back

@@ -15,7 +15,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, clean, norm, pick_option,  # noqa: F401
-                    unexpected, wait_for_result)
+                    unexpected, visible_text, wait_for_result)
 
 API = "https://boards-api.greenhouse.io/v1/boards"
 BOARDS = "https://job-boards.greenhouse.io"
@@ -379,9 +379,10 @@ def fill_form(page, packet: dict, files: dict) -> None:
 def submit(page, ask) -> dict:
     """Click submit and wait for the confirmation (or a security code to ask you for)."""
     button = page.locator('button[type="submit"]').filter(has_text=re.compile("submit", re.I)).first
+    before = visible_text(page)
     button.click()
     return wait_for_result(
-        page, ask, done_url=("confirmation",),
+        page, ask, before=before, done_url=("confirmation",),
         errors=".helper-text--error, [role='alert'] .error, .error-message",
         resubmit=lambda: page.locator('button[type="submit"]').first.click())
 
