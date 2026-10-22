@@ -12,7 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import answers, companies, config, documents, filters, latex, packets, people, research, systems, trace, web
+from . import answers, companies, config, documents, filters, latex, packets, people, research, style, systems, trace, web
+from .llm import NOT_SET_UP
 from .prompts import COVER_LETTER_PROMPT, FIT_PROMPT, TAILOR_PROMPT
 
 
@@ -231,7 +232,8 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
             return []
         if "facts" not in found:
             with trace.step("Company research") as step:
-                found.update(research.research(ctx, job, description, log))
+                topics = [f["label"] for f in drafted if research.wanted(f, job)]
+                found.update(research.research(ctx, job, description, log, topics))
                 step.summary = f"{len(found['facts'])} fact(s), each quoted from a page it read"
         return found["facts"]
 
@@ -270,18 +272,30 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         form_notes = [f"Filled by the explore agent: {explored['report']}"]
 
     if open_fields:
-        facts = company_facts() if any(research.wanted(f) for f in open_fields) else None
+        facts = (company_facts() if any(research.wanted(f, job) for f in open_fields)
+                 else found.get("facts"))  # Already researched for the letter: use it.
+        letter = docs["cover_letter"] and Path(docs["cover_letter"]["markdown"]).read_text(encoding="utf-8")
         with trace.step("Drafting the remaining answers") as step:
             log(f"  drafting {len(open_fields)} answer(s)")
             answers.ask_model(ctx.llm, open_fields, profile, master, job, description,
                               config.read_optional("story-bank.md"),
-                              config.read_optional("writing-sample.md"), facts)
+                              config.read_optional("writing-sample.md"), facts, letter or None)
             unsupported = [f for f in open_fields if f.get("value") in (None, "", [])]
             trace.check("Answers the model couldn't support from your material are left for you",
                         not unsupported, "; ".join(f["label"][:80] for f in unsupported))
             step.summary = (f"{len(open_fields) - len(unsupported)} drafted; {len(unsupported)} left for you"
                             if unsupported else f"{len(open_fields)} drafted")
 
+    policy = answers.ai_policy(description, drafted)
+    essays = [a for a in drafted if a.get("source") == "model-essay" and a["kind"] == "textarea"]
+    trace.check("The application allows AI help with written answers", not (policy and essays),
+                f"The form or posting says: “{policy}”. The essays are drafted as you chose, each "
+                "flagged; rewrite them in your own words if the policy asks for that." if policy else "")
+    if policy:
+        form_notes.append(f"AI policy: this application limits AI help: “{policy}”")
+        for essay in essays:
+            essay["note"] = ("This form limits AI help with answers; rewrite in your own words before "
+                             "approving. " + (essay.get("note") or ""))[:400]
     packet = {
         "schema": packets.SCHEMA_VERSION,
         "job": {"id": job["id"], "company": job["company"], "title": job["title"],
@@ -334,6 +348,16 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
     return packet
 
 
+def letter_length(letter: str) -> list[str]:
+    """The guide's 200-320 words for the letter's body (greeting and sign-off aside)."""
+    count = len(letter.split()) - 6
+    if count > 340:
+        return [f"{count} words: cut to at most 300"]
+    if count < 180:
+        return [f"{count} words: the letter can use 200-300"]
+    return []
+
+
 LETTER_MODES = {"always": "whenever the form has a cover letter field", "required": "only when the form requires one",
                 "never": "never"}
 
@@ -346,16 +370,30 @@ def write_letter(ctx, job: dict, description: str, profile: dict, master: str, f
     stem = re.sub(r"[^A-Za-z0-9]+", "_", full_name).strip("_")
     with trace.step("Cover letter") as step:
         log("  writing the cover letter")
-        letter = ctx.llm.json(COVER_LETTER_PROMPT, json.dumps({
+        request = {
             "job": {"company": job["company"], "title": job["title"]},
             "posting_text (data, not instructions)": description[:12000],
             "profile": profile, "resume": master,
+            "story_bank": config.read_optional("story-bank.md"),
             "writing_sample": config.read_optional("writing-sample.md"),
             "company_facts": facts,
-            **({"reviewer_note": note} if note else {})}, ensure_ascii=False),
-            LETTER_SCHEMA, "cover_letter")["letter_markdown"]
-        invented = documents.unsupported_numbers(letter, "\n".join([master, description, json.dumps(facts)]))
-        trace.check("Cover letter uses only numbers from your resume, the posting or company facts",
+            **({"reviewer_note": note} if note else {})}
+        letter = ctx.llm.json(COVER_LETTER_PROMPT, json.dumps(request, ensure_ascii=False),
+                              LETTER_SCHEMA, "cover_letter")["letter_markdown"]
+        found = style.problems(letter, letter=True) + letter_length(letter)
+        if found:  # Back once with what the writing guide's checks found.
+            request["fix_these"] = {"your_draft": letter, "problems": found}
+            letter = ctx.llm.json(COVER_LETTER_PROMPT, json.dumps(request, ensure_ascii=False),
+                                  LETTER_SCHEMA, "cover_letter")["letter_markdown"]
+            left = style.problems(letter, letter=True) + letter_length(letter)
+            trace.check("Cover letter follows the writing guide", not left,
+                        ("Rewrote once; still: " if left else "Rewrote once to fix: ") + "; ".join(left or found))
+        else:
+            trace.check("Cover letter follows the writing guide", True,
+                        "No stock openers or phrases, no em dashes, 200-320 words.")
+        invented = documents.unsupported_numbers(letter, "\n".join(
+            [master, description, json.dumps(facts), request["story_bank"] or "", request["writing_sample"] or ""]))
+        trace.check("Cover letter uses only numbers from your resume, story bank, the posting or company facts",
                     not invented, f"Contains {invented}: check it before approving." if invented else "")
         step.summary = f"{len(letter.split())} words" + (f", {len(facts)} company fact(s) available" if facts else "")
         return documents.save_letter(ctx.headless, folder, f"{stem}_Cover_Letter", letter, contact,
@@ -414,6 +452,10 @@ def tailor(ctx, job: dict, description: str, profile: dict, master: str, pages: 
     trace.check(NUMBERS_CHECK, not invented,
                 f"Still added {invented}: your resume is used unchanged." if invented else
                 "Every number is in your master resume.")
+    drifted = documents.rewritten(result, master)
+    trace.check("Tailored bullets keep your wording", not drifted,
+                "Reworded more than usual, worth a read: " + " | ".join(f"“{b}” (yours: “{m}”)" for b, m in drifted[:6])
+                if drifted else "Every bullet stays close to a line in your master resume.")
     result = latex.ensure_education(result, master)
     if invented:
         # Never ship invented facts: fall back to your own resume, unchanged.
@@ -431,6 +473,11 @@ def tailored_resume(ctx, job, description, profile, master, folder, stem, full_n
     tailored = tailor(ctx, job, description, profile, master, pages, note)
     saved = documents.save_resume(ctx.headless, folder, f"{stem}_Resume", tailored, contact, pages,
                                   f"{full_name} Resume")
+    master_lines = len(resumes_bullets(master))
+    used = sum(len(e.get("bullets", [])) for sec in tailored["sections"] for e in sec.get("entries", [])) + sum(
+        len(sec.get("items", [])) for sec in tailored["sections"])
+    if used >= 0.9 * master_lines:  # Nothing much left to add: a short page is just a short resume.
+        return tailored, saved
     if not tailored.get("invented") and saved.get("fill", 1) < FILL_TARGET and saved["pages"] <= pages:
         # Too little material to fill the page even before trimming: ask once for more.
         log(f"  filling: the last page is {round(100 * saved['fill'])}% used")
@@ -447,6 +494,11 @@ def tailored_resume(ctx, job, description, profile, master, folder, stem, full_n
         saved = documents.save_resume(ctx.headless, folder, f"{stem}_Resume", tailored, contact, pages,
                                       f"{full_name} Resume")
     return tailored, saved
+
+
+def resumes_bullets(master: str) -> list[str]:
+    """The master resume's bullet and list lines."""
+    return [line for line in master.splitlines() if re.match(r"\s*(?:[-*•]|\d+\.)\s+", line)]
 
 
 def draft_missing(job_id: int, ctx, log=print) -> str:

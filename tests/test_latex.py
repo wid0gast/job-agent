@@ -41,7 +41,7 @@ def test_master_markdown_becomes_sections_in_order():
     assert r"\expSubheading{Software Engineer}{}{Example Corp}{June 2025 -- Aug 2025}" in tex
     assert r"\resumeSubheading{New York University}{New York, USA}" in tex
     assert r"\textbf{Languages:} Python, SQL, C++" in tex
-    assert r"\faGithub\ \href{https://github.com/jane}{jane}" in tex
+    assert r"\jaQuiet{\faGithub}\ \href{https://github.com/jane}{jane}" in tex
 
 
 @pytest.mark.skipif(not latex.available(), reason="no LaTeX engine")
@@ -53,7 +53,7 @@ def test_compiles_to_one_page(tmp_path):
 
 
 def test_lookalike_characters_survive():
-    assert latex.escape("peer\u2011reviewed fine\u2010tuned 3\u00a0weeks") == "peer-reviewed fine-tuned 3 weeks"
+    assert latex.escape("peer\u2011reviewed fine\u2010tuned 3\u00a0weeks") == "peer-reviewed f{}ine-tuned 3 weeks"  # f{}: no "ﬁ" ligature
     assert latex.escape("a • b … c") == r"a \textbullet{} b \ldots{} c"
 
 

@@ -184,7 +184,7 @@ class Explorer:
                 answers.ask_model(self.ctx.llm, open_fields, self.profile, config.read_master_resume(),
                                   self.job, self.description, config.read_optional("story-bank.md"),
                                   config.read_optional("writing-sample.md"),
-                                  self.facts() if wanted(field) else None)
+                                  self.facts() if wanted(field, self.job) else None)
             self.answers.append(answer)
         value = answer.get("value")
         action = {"choice": "choose", "check": "check"}.get(field["widget"], "fill" if field["kind"] != "select" else "select")

@@ -56,7 +56,9 @@ SYMBOLS = {"–": "--", "—": "---", "•": r"\textbullet{}", "·": r"\textperi
 
 def escape(text: str) -> str:
     text = "".join(LOOKALIKES.get(c, c) for c in text)
-    return "".join(SYMBOLS.get(c) or SPECIAL.get(c, c) for c in text)
+    # f{}i: no "ﬁ"/"ﬂ"/"ﬀ" ligature glyphs, which resume parsers read as one odd character
+    # ("classiﬁcation" no longer matches a search for "classification").
+    return re.sub(r"f(?=[fil])", "f{}", "".join(SYMBOLS.get(c) or SPECIAL.get(c, c) for c in text))
 
 
 def inline(text: str) -> str:
@@ -79,20 +81,20 @@ def inline(text: str) -> str:
 def header(contact: dict, note: str = "") -> str:
     parts = []
     if contact.get("email"):
-        parts.append(rf"\faEnvelope\ \href{{mailto:{contact['email']}}}{{{escape(contact['email'])}}}")
+        parts.append(rf"\jaQuiet{{\faEnvelope}}\ \href{{mailto:{contact['email']}}}{{{escape(contact['email'])}}}")
     if contact.get("phone"):
-        parts.append(rf"\faPhone\ {escape(contact['phone'])}")
+        parts.append(rf"\jaQuiet{{\faPhone}}\ {escape(contact['phone'])}")
     if contact.get("linkedin"):
         handle = [p for p in urlsplit(contact["linkedin"]).path.split("/") if p][-1:] or ["LinkedIn"]
-        parts.append(rf"\faLinkedin\ \href{{{contact['linkedin']}}}{{{escape(handle[0])}}}")
+        parts.append(rf"\jaQuiet{{\faLinkedin}}\ \href{{{contact['linkedin']}}}{{{escape(handle[0])}}}")
     if contact.get("scholar"):
-        parts.append(rf"\aiGoogleScholar\ \href{{{contact['scholar']}}}{{Scholar}}")
+        parts.append(rf"\jaQuiet{{\aiGoogleScholar}}\ \href{{{contact['scholar']}}}{{Scholar}}")
     if contact.get("github"):
         handle = [p for p in urlsplit(contact["github"]).path.split("/") if p][:1] or ["GitHub"]
-        parts.append(rf"\faGithub\ \href{{{contact['github']}}}{{{escape(handle[0])}}}")
+        parts.append(rf"\jaQuiet{{\faGithub}}\ \href{{{contact['github']}}}{{{escape(handle[0])}}}")
     if contact.get("website"):
         site = urlsplit(contact["website"]).netloc or contact["website"]
-        parts.append(rf"\faGlobe\ \href{{{contact['website']}}}{{{escape(site.removeprefix('www.'))}}}")
+        parts.append(rf"\jaQuiet{{\faGlobe}}\ \href{{{contact['website']}}}{{{escape(site.removeprefix('www.'))}}}")
     lines = [r"\begin{center}", r"\thispagestyle{empty}",
              rf"{{\Huge\bfseries\MakeUppercase{{{escape(contact.get('name', ''))}}}}}\\[5pt]",
              r"\small " + " ~|~\n".join(parts) + (r"\\[4pt]" if note else "")]
@@ -127,7 +129,7 @@ def unique_skills(skills: list[dict]) -> list[dict]:
 
 
 def section(sec: dict, name: str = "") -> str:
-    title, kind = escape(sec["title"]), sec["kind"]
+    title, kind = escape(sec["title"]).replace("f{}", "f"), sec["kind"]  # Uppercased: no ligatures.
     out = [rf"\section{{{title}}}"]
     if kind == "paragraph":
         out.append(r"\small " + inline(sec.get("text", "")))
@@ -135,8 +137,11 @@ def section(sec: dict, name: str = "") -> str:
         out.append(r"\resumeSubHeadingListStart")
         for i, entry in enumerate(sec.get("entries", [])):
             lead = r"\vspace{4pt}" if i else ""
-            out.append(rf"{lead}\expSubheading{{{inline(entry['title'])}}}{{}}"
-                       rf"{{{inline(entry.get('organization', ''))}}}{{{inline(entry.get('dates', ''))}}}")
+            if entry.get("organization"):
+                out.append(rf"{lead}\expSubheading{{{inline(entry['title'])}}}{{}}"
+                           rf"{{{inline(entry['organization'])}}}{{{inline(entry.get('dates', ''))}}}")
+            else:  # A project: no ", <organization>" after the title.
+                out.append(rf"{lead}\item \textbf{{{inline(entry['title'])}}} \hfill \textit{{{inline(entry.get('dates', ''))}}}")
             if entry.get("bullets"):
                 out.append(r"\resumeItemListStart")
                 out += [rf"\item\small{{{inline(b)}}}" for b in entry["bullets"]]
@@ -149,6 +154,9 @@ def section(sec: dict, name: str = "") -> str:
                        rf"{{{inline(entry.get('location', ''))}}}"
                        rf"{{{inline(entry['title'] if entry.get('organization') else '')}}}"
                        rf"{{{inline(entry.get('dates', ''))}}}")
+            if entry.get("bullets"):  # GPA, honors, thesis, coursework
+                out += [r"\resumeItemListStart", *[rf"\item\small{{{inline(b)}}}" for b in entry["bullets"]],
+                        r"\resumeItemListEnd"]
         out.append(r"\resumeSubHeadingListEnd")
     elif kind == "list":
         style = "[leftmargin=1em, labelsep=0.4em]" if "publication" in sec["title"].lower() else "[leftmargin=*]"
@@ -164,9 +172,20 @@ def section(sec: dict, name: str = "") -> str:
     return "\n".join(out)
 
 
+# Added after any template's preamble so the PDF's text layer reads cleanly in resume
+# parsers (tested with pdftotext, pdfminer and pypdf): letter-spaced headings keep their
+# look with tighter spacing (wide gaps extract as "E D U C A T I O N"), and icons are
+# marked as having no text where the reader supports it.
+CLEAN_TEXT = r"""
+\usepackage{accsupp}
+\makeatletter\@ifpackageloaded{soul}{\sodef\so{}{.08em}{.5em plus .1em minus .05em}{.3em}}{}\makeatother
+\newcommand{\jaQuiet}[1]{\BeginAccSupp{method=pdfstringdef,ActualText={}}#1\EndAccSupp{}}
+"""
+
+
 def resume_tex(doc: dict, contact: dict, pages: int = 1) -> str:
     body = "\n\n".join(section(s, contact.get("name", "")) for s in doc["sections"] if s_has_content(s))
-    return (preamble(pages) + "\n\n\\begin{document}\n\n" + header(contact, doc.get("header_note", ""))
+    return (preamble(pages) + CLEAN_TEXT + "\n\\begin{document}\n\n" + header(contact, doc.get("header_note", ""))
             + "\n\n" + body + "\n\n\\end{document}\n")
 
 
@@ -174,7 +193,7 @@ def letter_tex(text: str, contact: dict) -> str:
     """A cover letter in the same style: your header, then the letter's paragraphs."""
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
     body = "\n\n".join(r"\noindent " + inline(" ".join(p.splitlines())) for p in paragraphs)
-    return (preamble(1) + "\n\n\\begin{document}\n\n" + header(contact) + "\n\n\\vspace{10pt}\n"
+    return (preamble(1) + CLEAN_TEXT + "\n\\begin{document}\n\n" + header(contact) + "\n\n\\vspace{10pt}\n"
             r"\setlength{\parskip}{8pt}" + "\n" + body + "\n\n\\end{document}\n")
 
 

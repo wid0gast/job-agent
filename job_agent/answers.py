@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 
-from . import config, trace
+from . import config, style, trace
 from .forms import norm, pick_option
 
 APPROVED_BANK = config.DATA_DIR / "approved-answers.json"
@@ -330,13 +330,81 @@ def is_date(field: dict) -> bool:
 def stated(value, profile: dict, resume: str) -> bool:
     """Is this short answer written in your resume or profile (a year, a month, a date)?"""
     material = (json.dumps(profile, ensure_ascii=False, default=str) + " " + resume).lower()
-    return all(part.lower() in material for part in re.findall(r"\w+", str(value)))
+    words = re.findall(r"\w+", str(value).lower())
+    # The date itself must be stated; words around it ("after my degree") needn't be.
+    months = {m.lower() for m in MONTHS} | {m[:3].lower() for m in MONTHS}
+    dates = [w for w in words if w.isdigit() or w in months]
+    return all(part in material for part in (dates or words))
+
+
+# Forms and postings that limit AI help with the application (Anthropic: "write your own
+# first draft"; others: "confirm these answers are your own").
+AI_POLICY = re.compile(
+    r"\b(do not|don't|please don't|refrain from|without|avoid)\b[^.]{0,40}\b(use|using|help of)\b[^.]{0,30}"
+    r"\b(ai|a\.i\.|artificial intelligence|chatgpt|llms?|generative|ai assistants?|ai tools?)\b|"
+    r"\bai (policy|partnership|guidance|guidelines|usage)\b|candidate-ai-guidance|"
+    r"\b(answers|responses|writing|application) (are|is) (entirely |all )?(your|my) own\b|in your own words", re.I)
+
+
+def ai_policy(description: str, fields: list[dict]) -> str | None:
+    """The sentence where the posting or form limits AI help, if it does."""
+    for text in [description] + [f"{f.get('label', '')}. {f.get('description', '')}" for f in fields]:
+        if (match := AI_POLICY.search(text or "")):
+            start = max(text.rfind(".", 0, match.start()) + 1, match.start() - 160)
+            end = text.find(".", match.end())
+            return " ".join(text[start:end + 1 if end > 0 else match.end() + 160].split())[:300]
+    return None
+
+
+RANGE = re.compile(r"(\d{2,4})\s*(?:-|–|to)\s*(\d{2,4})\s*words", re.I)
+CAP = re.compile(r"(?:(?:up to|under|max(?:imum)?|limit(?:ed)? (?:of|to)|no more than|at most|less than)\s*(\d{2,4})"
+                 r"\s*(words|characters|chars)|(\d{2,4})\s*(words|characters|chars)\s*(?:or less|or fewer|max(?:imum)?))",
+                 re.I)
+
+
+def length_limit(field: dict) -> dict:
+    """What the form says about an essay's length: {"max_words"} or {"max_chars"} (hard caps)
+    and {"range"} (what good answers run to, e.g. "often 200-400 words")."""
+    text = f"{field.get('label', '')} {field.get('description', '')}"
+    out = {}
+    if (cap := CAP.search(text)):
+        number, unit = (cap[1], cap[2]) if cap[1] else (cap[3], cap[4])
+        out["max_chars" if unit.lower().startswith("char") else "max_words"] = int(number)
+    if field.get("max_chars"):
+        out["max_chars"] = min(out.get("max_chars", 10**6), int(field["max_chars"]))
+    if (span := RANGE.search(text)) and "max_words" not in out:
+        out["range"] = (int(span[1]), int(span[2]))
+    return out
+
+
+def target_words(field: dict) -> str:
+    """The length to ask the model for, in words."""
+    limit = length_limit(field)
+    if "max_words" in limit:
+        return f"at most {limit['max_words']} (hard limit); aim for {round(limit['max_words'] * .75)}-{limit['max_words']}"
+    if "max_chars" in limit:
+        words = limit["max_chars"] // 6.5
+        return f"at most {limit['max_chars']} characters including spaces (about {int(words)} words; hard limit)"
+    if "range" in limit:
+        low, high = limit["range"]
+        return f"{low}-{high} (the form says good answers run to this)"
+    return "as the question needs (see Essays)"
+
+
+def too_long(field: dict, value: str) -> str | None:
+    limit = length_limit(field)
+    if "max_words" in limit and len(value.split()) > limit["max_words"]:
+        return f"{len(value.split())} words; the form allows {limit['max_words']}."
+    if "max_chars" in limit and len(value) > limit["max_chars"]:
+        return f"{len(value)} characters; the form allows {limit['max_chars']}."
+    return None
 
 
 def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dict,
               description: str, stories: str | None, writing: str | None,
-              facts: list[dict] | None = None) -> None:
-    """Fill open_fields in place from one model call."""
+              facts: list[dict] | None = None, letter: str | None = None) -> None:
+    """Fill open_fields in place from one model call. `letter`: the cover letter, if one was
+    written, so the essays tell other stories."""
     for field in [f for f in open_fields if EDUCATION_ROW.match(f["key"])]:
         field["note"] = ROW_NOTE  # Never the model's guess.
     open_fields = [f for f in open_fields if not EDUCATION_ROW.match(f["key"])]
@@ -344,7 +412,8 @@ def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dic
         return
     from .prompts import ANSWERS_PROMPT
 
-    questions = [{k: f[k] for k in ("key", "label", "kind", "required", "options", "description")}
+    questions = [{**{k: f[k] for k in ("key", "label", "kind", "required", "options", "description")},
+                  **({"target_words": target_words(f)} if f["kind"] == "textarea" else {})}
                  for f in open_fields]
     user = json.dumps({
         "job": {"company": job["company"], "title": job["title"]},
@@ -352,8 +421,39 @@ def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dic
         "questions": questions,
         "profile": profile, "resume": resume, "story_bank": stories, "writing_sample": writing,
         **({"company_facts": facts} if facts else {}),
+        **({"used_elsewhere": {"cover_letter": letter}} if letter else {}),
     }, ensure_ascii=False)
     reply = llm.json(ANSWERS_PROMPT, user, ANSWER_SCHEMA, "form_answers")
+    apply_reply(open_fields, reply, profile, resume)
+    # Essays that break the writing guide or the form's length limit go back once.
+    essays = [f for f in open_fields if f.get("source") == "model-essay" and isinstance(f.get("value"), str)]
+    flagged = {f["key"]: found for f in essays
+               if (found := style.problems(f["value"]) + ([long] if (long := too_long(f, f["value"])) else []))}
+    if not essays:
+        return
+    if not flagged:
+        trace.check("Essays follow the writing guide and the form's length limits", True,
+                    "No stock phrases, em dashes or over-long answers.")
+        return
+    redo = [f for f in open_fields if f["key"] in flagged]
+    retry = json.loads(user) | {
+        "questions": [q for q in questions if q["key"] in flagged],
+        "fix_these": [{"key": f["key"], "your_draft": f["value"], "problems": flagged[f["key"]]} for f in redo]}
+    apply_reply(redo, llm.json(ANSWERS_PROMPT, json.dumps(retry, ensure_ascii=False), ANSWER_SCHEMA,
+                               "form_answers"), profile, resume)
+    left = {f["label"][:60]: found for f in redo
+            if (found := style.problems(f.get("value") or "") + ([long] if (long := too_long(f, f.get("value") or "")) else []))}
+    for field in redo:
+        if field["label"][:60] in left:
+            field["note"] = (f"Check the wording: {'; '.join(left[field['label'][:60]])}. " + (field.get("note") or ""))[:400]
+    trace.check("Essays follow the writing guide and the form's length limits", not left,
+                ("Rewrote once; still: " + " | ".join(f"{k}: {', '.join(v)}" for k, v in left.items())) if left else
+                f"Rewrote {len(redo)} essay(s) once to fix: " + " | ".join(
+                    f"{f['label'][:60]}: {', '.join(flagged[f['key']])}" for f in redo))
+
+
+def apply_reply(open_fields: list[dict], reply: dict, profile: dict, resume: str) -> None:
+    """Put the model's answers into the fields, keeping only valid options and stated dates."""
     by_key = {a["key"]: a for a in reply["answers"]}
     for field in open_fields:
         got = by_key.get(field["key"])

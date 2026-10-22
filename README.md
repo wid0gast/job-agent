@@ -285,6 +285,12 @@ emailed code).
   CAPTCHAs, and asks you for one-time codes. Account passwords are generated
   and stored in the macOS Keychain (`job-agent:<site>`). The model never sees
   them.
+- **Writes like you, not like AI.** Resumes, letters, answers and outreach
+  follow a [writing guide](docs/writing-guide.md) built from hiring research.
+  Code checks every draft for stock phrases, em dashes and the form's length
+  limits, and asks for one rewrite when it finds any. The prompts were tuned on
+  real postings ([eval](docs/writing-eval.md)). Resume PDFs keep your style and
+  read cleanly in applicant tracking systems.
 - **Quality over volume.** Tailored applications get roughly 3–4x the
   response rate of mass ones, and sites restrict accounts that behave like
   bots. Hence the daily cap and the review step.
