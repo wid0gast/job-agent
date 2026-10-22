@@ -26,9 +26,10 @@ class Closed(Exception):
 
 
 class FillError(Exception):
-    def __init__(self, key: str, label: str, problem: str):
+    def __init__(self, key: str, label: str, problem: str, options: list[str] | None = None):
         super().__init__(f"{label or key}: {problem}")
         self.key, self.label, self.problem = key, label, problem
+        self.options = options or []  # The site's real choices, when known, for you to pick from.
 
 
 def clean(text: str) -> str:

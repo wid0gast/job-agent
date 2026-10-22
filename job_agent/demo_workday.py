@@ -27,7 +27,9 @@ DESCRIPTION = ("<p>Build perception models for warehouse robots.</p><ul><li>Pyth
 
 PAGES = [
     ("My Information", [
-        ("source", "How Did You Hear About Us?", True, "prompt", ["Job Board", "Company Careers Page", "Referral"]),
+        # Two levels, as on real Workday sites: a category opens its own choices.
+        ("source", "How Did You Hear About Us?", True, "prompt",
+         {"Job Board": ["LinkedIn", "Indeed"], "Company Website": [f"{COMPANY} Careers Site"], "Referral": []}),
         ("candidateIsPreviousWorker", f"Have you been employed by {COMPANY} in the past?", True, "radio", ["Yes", "No"]),
         ("country", "Country", True, "dropdown", ["United States of America", "Canada", "India"]),
         ("legalName--firstName", "First Name", True, "text", []),
@@ -35,6 +37,7 @@ PAGES = [
         ("emailAddress", "Email", True, "text", []),
         ("phoneType", "Phone Device Type", True, "dropdown", ["Mobile", "Personal"]),
         ("phoneNumber", "Phone Number", True, "text", []),
+        ("phoneExtension", "Phone Extension", False, "text", []),
     ]),
     ("My Experience", [("resume", "Resume/CV", True, "file", [])]),
     ("Application Questions", [
@@ -138,13 +141,13 @@ document.querySelectorAll('button.dropdown').forEach((button) => button.addEvent
   }
   button.parentElement.appendChild(list);
 }));
-document.querySelectorAll('input.prompt').forEach((input) => input.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter') return;
-  e.preventDefault(); closeLists();
+const showChoices = (input, items, tree) => {
+  closeLists();
   const list = document.createElement('div'); list.className = 'wd-list';
-  for (const o of JSON.parse(input.dataset.options).filter((o) => o.toLowerCase().includes(input.value.toLowerCase()))) {
+  for (const o of items) {
     const d = document.createElement('div'); d.setAttribute('data-automation-id', 'promptOption'); d.textContent = o;
     d.addEventListener('click', () => {
+      if ((tree[o] || []).length) { showChoices(input, tree[o], tree); return; }  // A category: its choices.
       const box = input.closest('[data-automation-id=multiSelectContainer]');
       box.querySelector('[data-automation-id=selectedItemList]').innerHTML =
         `<li><div data-automation-id="selectedItem" role="option">${o}</div></li>`;
@@ -153,7 +156,19 @@ document.querySelectorAll('input.prompt').forEach((input) => input.addEventListe
     list.appendChild(d);
   }
   input.parentElement.appendChild(list);
-}));
+};
+const treeOf = (input) => { const o = JSON.parse(input.dataset.options);
+  return Array.isArray(o) ? Object.fromEntries(o.map((x) => [x, []])) : o; };
+document.querySelectorAll('input.prompt').forEach((input) => {
+  input.addEventListener('click', () => { const tree = treeOf(input); showChoices(input, Object.keys(tree), tree); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const tree = treeOf(input);
+    const leaves = Object.entries(tree).flatMap(([k, v]) => v.length ? v : [k]);  // Search finds final choices.
+    showChoices(input, leaves.filter((o) => o.toLowerCase().includes(input.value.toLowerCase())), tree);
+  });
+});
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLists(); });
 const upload = document.querySelector('[data-automation-id=file-upload-input-ref]');
 if (upload) upload.addEventListener('change', () => {

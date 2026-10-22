@@ -167,11 +167,21 @@ def walk_submit(job_id, ctx, ask, log, system, packet, page, back_to_you) -> str
     if tracker.get(job_id)["status"] == "submitting":
         return finish(job_id, ctx, packet, page, result, log)
     if result["status"] == "new_questions":
-        drafted, _ = answers.draft(result["fields"], profile, job, saved)
+        by_key = {a["key"]: a for a in packet["answers"]}
+        fresh = []
+        for field in result["fields"]:
+            answer = by_key.get(field["key"])
+            if answer is not None and "rejected" in field:
+                # An answer you have, which this site won't take (e.g. not one of its choices):
+                # clear it and show why, with the site's real choices to pick from.
+                answer.update(value=None, note=field["note"], source="blank", section=field["section"],
+                              **({"options": field["options"], "kind": "select"} if field.get("options") else {}))
+            elif answer is None:
+                fresh.append(field)
+        drafted, _ = answers.draft(fresh, profile, job, saved)
         for answer in drafted:
             answer["note"] = answer.get("note") or f"New on “{answer['section']}”."
-        have = {a["key"] for a in packet["answers"]}
-        packet["answers"] += [a for a in drafted if a["key"] not in have]
+        packet["answers"] += drafted
         packet["approved_hash"] = None
         packets.store(packet)
         return back_to_you(result["detail"] + " Answer them (or have the model draft them), "
