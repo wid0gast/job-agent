@@ -474,8 +474,13 @@ TASK_NAMES = {
     "refresh": "Refresh job lists", "discover": "Discover companies", "score_matches": "Rank jobs",
     "prepare": "Prepare", "draft": "Draft missing answers", "render": "Typeset again", "letter": "Write a cover letter",
     "people": "Find people to contact", "redraft": "Redraft messages", "submit": "Submit",
-    "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes", "import_resume": "Read a resume PDF", "warmup": "Check the platform",
+    "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes", "import_resume": "Read a resume PDF", "warmup": "Prepare resume typesetting",
 }
+
+
+def quiet_task(task: dict) -> bool:
+    """Background housekeeping you needn't see unless it failed (the session's typesetting warm-up)."""
+    return task["kind"] == "warmup" and task["status"] != "failed"
 
 
 def waiting_on_you(app: Dashboard) -> list[dict]:
@@ -499,7 +504,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
                     f'<b>{counts[s]}</b><span class="muted">{s.replace("_", " ")}</span></a>'
                     for s in ("found", "prepared", "needs_you", "approved", "submitted", "filtered_out")
                     if s in counts)
-    tasks = app.tracker.tasks(12)
+    tasks = [t for t in app.tracker.tasks(12) if not quiet_task(t)]
     # Reload while the worker is busy, but not while it waits for you to type.
     waiting = any(t["status"] == "waiting" for t in tasks)
     running = not waiting and any(t["status"] in ("queued", "running") for t in tasks)
@@ -518,14 +523,14 @@ def page_today(app: Dashboard, flash: str) -> bytes:
         about = app.tracker.get(task["job_id"]) if task["job_id"] else None
         job = (f'<br><a href="/job/{about["id"]}">{esc(about["title"])} at {esc(about["company"])}</a>'
                if about else "")
-        result = (task["result"] or "")[:2000 if task["kind"] == "warmup" else 160]
+        result = (task["result"] or "")[:160]
         if task["kind"] == "prepare" and re.fullmatch(r"[a-z_]+", result):  # A status: say why,
             latest = about and about["id"] not in explained  # with the job's reason for its newest run only.
             result = result.replace("_", " ") + (f": {about['reason']}" if latest and about["reason"] else "")
             explained.add(task["job_id"])
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(TASK_NAMES.get(task["kind"], task["kind"]))}{job}</td>'
                     f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
-                    f'<td class="muted">{esc(result[:2000 if task["kind"] == "warmup" else 220])}</td></tr>')
+                    f'<td class="muted">{esc(result[:220])}</td></tr>')
     body = f"""
     <h1>Today</h1>
     <div class="stats">{stats}</div>

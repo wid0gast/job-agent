@@ -143,10 +143,10 @@ def _discover(task, ctx, log) -> str:
             f"{c['new']} new jobs, {c['seen']} already known")
 
 
-def _warmup(task, ctx, log) -> str:
+def _warm_latex(task, ctx, log) -> str:
     from . import hosted
 
-    return hosted.warm_up(ctx, log)
+    return hosted.warm_latex(ctx, log)
 
 
 def _refresh(task, ctx, log) -> str:
@@ -197,7 +197,7 @@ def step(module: str, name: str):
 
 # Every kind of task the dashboard and the assistant queue, and what runs it.
 HANDLERS = {
-    "discover": _discover, "warmup": _warmup, "refresh": _refresh, "sync_profile": _sync_profile,
+    "discover": _discover, "warmup": _warm_latex, "refresh": _refresh, "sync_profile": _sync_profile,
     "merge_resumes": _merge_resumes, "import_resume": _import_resume, "redraft": _redraft,
     "score_matches": lambda task, ctx, log: score_matches(ctx, log),
     # arg: a note on what to change, for a redo.
@@ -223,7 +223,7 @@ def score_matches(ctx: Context, log) -> str:
 
 # Tasks with their own lane: they only call the model, so they run alongside the others
 # (a prepare needn't wait for a long ranking), one at a time.
-OWN_LANE = ("score_matches",)
+OWN_LANE = ("score_matches", "warmup")
 
 
 def lane(ctx: Context, log, stop: threading.Event) -> None:
@@ -234,7 +234,7 @@ def lane(ctx: Context, log, stop: threading.Event) -> None:
             continue
         log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
         try:
-            ctx.tracker.set_task(task["id"], status="done", result=score_matches(ctx, log)[:2000])
+            ctx.tracker.set_task(task["id"], status="done", result=HANDLERS[task["kind"]](task, ctx, log)[:2000])
         except Exception as error:  # noqa: BLE001 - reported on the task, like any other.
             log(traceback.format_exc())
             ctx.tracker.set_task(task["id"], status="failed", result=f"{type(error).__name__}: {error}"[:2000])

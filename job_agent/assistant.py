@@ -59,7 +59,8 @@ class Assistant:
             "jobs_by_status": counts,
             "submitted_today": self.tracker.submitted_today(),
             "daily_submit_limit": self.settings.daily_submit_limit,
-            "tasks": [task_brief(t) for t in self.tracker.tasks(8)],
+            "tasks": [task_brief(t) for t in self.tracker.tasks(8)
+                      if t["kind"] != "warmup" or t["status"] == "failed"],
             "search": {k: prefs.get(k) for k in config.SEARCH_KEYS if prefs.get(k) not in (None, "", [])},
             "has_master_resume": (config.PROFILE_DIR / "resume.md").exists(),
             "waiting_on_you": self.waiting_on_you(),

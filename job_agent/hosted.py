@@ -126,52 +126,21 @@ def launch_chromium(playwright):
     return playwright.chromium.launch_persistent_context(str(profile), **chromium_options()).browser
 
 
-def free_mb() -> int:
-    try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemAvailable"):
-                return int(line.split()[1]) // 1024
-    except OSError:
-        pass
-    return -1
-
-
-def warm_up(ctx, log) -> str:
-    """First task of every session: prove the browser reaches job sites and LaTeX compiles."""
+def warm_latex(ctx, log) -> str:
+    """Typeset a one-line page at the start of a session, beside your first tasks, so Tectonic
+    fetches its packages now rather than during the first tailored resume."""
     from . import config, latex, netrelay
 
-    notes = [f"Memory free: {free_mb()} MB."]
-    start, browser = time.time(), None
-    try:
-        browser = launch_chromium(ctx.playwright)
-        page = browser.new_page()
-        response = page.goto("https://job-boards.greenhouse.io/anthropic", wait_until="load", timeout=60000)
-        links = page.locator('a[href*="/jobs/"]').count()
-        notes.append(f"Browser: HTTP {response.status if response else '?'}, {len(page.content()) // 1024} KB, "
-                     f"{links} job links, {time.time() - start:.0f}s, memory free {free_mb()} MB.")
-        if not links:
-            notes.append("Browser can't load job sites.")
-    except Exception as error:  # noqa: BLE001
-        notes.append(f"Browser failed: {str(error).splitlines()[0][:200]}")
-    finally:
-        if browser:
-            try:
-                browser.close()
-            except Exception:  # noqa: BLE001
-                pass
-    if netrelay.recent_errors():
-        notes.append(f"Relay: {netrelay.recent_errors()}")
     start = time.time()
+    tex = latex.preamble(1) + "\n\\begin{document}\n\\section{Warm-up}\nReady.\n\\end{document}\n"
     try:
-        tex = latex.preamble(1) + "\n\\begin{document}\n\\section{Warm-up}\nReady.\n\\end{document}\n"
         latex.compile_pdf(tex, config.DATA_DIR / "warm-up.pdf")
-        notes.append(f"Resume typesetting OK ({time.time() - start:.0f}s).")
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         mirror = netrelay._mirror
-        notes.append(f"Resume typesetting failed: {str(error)[:300]}"
-                     + (f" · mirror: {mirror.errors[-2:]}" if mirror and mirror.errors else ""))
-    log(" ".join(notes))
-    return " ".join(notes)
+        raise RuntimeError(f"Resume typesetting isn't ready: {str(error)[:300]}"
+                           + (f" · mirror: {mirror.errors[-2:]}" if mirror and mirror.errors else "")) from None
+    log(f"Resume typesetting ready ({time.time() - start:.0f}s).")
+    return f"Resume typesetting ready ({time.time() - start:.0f}s)."
 
 
 def main() -> None:
