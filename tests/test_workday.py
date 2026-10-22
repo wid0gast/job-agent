@@ -30,6 +30,8 @@ def ctx(env, site, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(workday, "PASSWORDS", Passwords())
     demo_workday.ACCOUNTS.clear()
     demo_workday.SUBMISSIONS.clear()
+    demo_workday.PRESELECTED.clear()
+    demo_workday.ERROR_PAGES["left"] = 0
     settings, tracker = env
     context = Context(settings, tracker, profile_dir=tmp_path / "chrome", headless_window=True)
     context.llm = Model()
@@ -82,7 +84,7 @@ def test_workday_account_walk_new_question_then_submit(ctx):
     # Second walk: signs in with the stored password and submits on Review.
     assert submit.submit(job, ctx, ask, log=print) == "submitted", ctx.tracker.get(job)["reason"]
     sent = demo_workday.SUBMISSIONS[-1]
-    assert sent["legalName--firstName"] == "Jane" and sent["source"] == "Contoso Robotics Careers Site"
+    assert sent["legalName--firstName"] == "Jane" and sent["source"] == "Contoso Robotics Careers Website"
     assert sent["country"] == "United States of America" and sent["phoneType"] == "Mobile"
     assert sent["candidateIsPreviousWorker"] == "No" and sent["q-sponsor"] == "No"
     assert "retrieval" in sent["q-why"] and sent["acceptTerms"] == "yes"
@@ -115,5 +117,40 @@ def test_workday_choice_the_site_lacks_comes_back_with_its_real_choices(ctx):
     packet = json.loads(open(path).read())
     source = next(a for a in packet["answers"] if a["key"] == "formField-source")
     assert source["value"] is None and "Podcast" in source["note"]
-    assert source["options"] == ["Job Board", "Company Website", "Referral"]
+    assert source["options"] == ["External Career Site Sources", "On Campus Event", "Referral"]
     assert demo_workday.SUBMISSIONS == []
+
+
+def test_workday_salesforce_style_saved_choice_error_page_and_other_menus(ctx):
+    """What stopped a real Salesforce application: a wrong choice saved from an earlier
+    visit ("Alumni Network"), Workday's "Something went wrong" page after signing in, and
+    another menu's choices (Country Phone Code) showing next to this one's."""
+    url = f"{ctx.site}/wd/{demo_workday.SITE}/{demo_workday.JOB_PATH}"
+    ctx.tracker.add_lead(url, "test", demo_workday.COMPANY, demo_workday.TITLE, "New York, NY",
+                         ats="workday", job_type="internship",
+                         details={"locations": ["NYC"], "terms": ["Summer 2027"]})
+    job = ctx.tracker.leads(10)[-1]["id"]
+    assert prepare.prepare(job, ctx, log=print) == "prepared"
+    path = ctx.tracker.get(job)["packet_dir"] + "/packet.json"
+    packet = json.loads(open(path).read())
+    for answer in packet["answers"]:
+        if answer["key"] == "formField-source":
+            assert answer["value"] == "Company careers page"
+    packet["answers"].append({"key": "formField-q-why", "label": "Why do you want to work at Contoso Robotics?",
+                              "kind": "textarea", "required": True, "options": [], "section": "",
+                              "description": "", "value": "Your robots.", "source": "you"})
+    open(path, "w").write(json.dumps(packet))
+    actions.approve(ctx.tracker, ctx.settings, job)
+    demo_workday.PRESELECTED["source"] = "Alumni Network"
+    demo_workday.ERROR_PAGES["left"] = 1
+
+    def ask(question):
+        if "verif" in question.lower():
+            urllib.request.urlopen(ctx.site + demo_workday.LAST_LINK["value"]).read()
+        return "done"
+
+    assert submit.submit(job, ctx, ask, log=print) == "submitted", ctx.tracker.get(job)["reason"]
+    sent = demo_workday.SUBMISSIONS[-1]
+    assert sent["source"] == "Contoso Robotics Careers Website"
+    assert sent["countryPhoneCode"] == "United States of America (+1)"
+    assert demo_workday.ERROR_PAGES["left"] == 0

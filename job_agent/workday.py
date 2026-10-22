@@ -200,15 +200,70 @@ def dropdown_options(page, key: str) -> list[str]:
     return [o for o in options if o and o.lower() != "select one"]
 
 
+CHOICES = """(wid) => {
+  document.querySelectorAll('[data-agent-choice]').forEach((e) => e.removeAttribute('data-agent-choice'));
+  const open = [...document.querySelectorAll('[data-automation-id="promptOption"]')]
+    .filter((e) => (e.offsetWidth || e.offsetHeight) && !e.closest('[data-automation-id="selectedItemList"]'));
+  // Workday draws the open list apart from its field, tied to it by data-associated-widget;
+  // other menus' chosen items can show as options too, so keep only this field's list.
+  const mine = wid ? open.filter((e) => e.closest(`[data-associated-widget="${wid}"]`)) : [];
+  (mine.length ? mine : open.filter((e) => !e.closest('[data-associated-widget]')))
+    .forEach((e) => e.setAttribute('data-agent-choice', ''));
+}"""
+
+
+def choices(page, holder):
+    """The choices showing in this prompt field's open list (not other menus', not chosen pills)."""
+    widget = holder.locator("[data-uxi-multiselect-id]").first
+    wid = widget.get_attribute("data-uxi-multiselect-id") if widget.count() else None
+    page.evaluate(CHOICES, wid)
+    return page.locator("[data-agent-choice]")
+
+
+def find_choice(page, holder, value: str, wait: float = 5) -> tuple[list[str], int | None]:
+    """Read this field's open list and find `value` in it. Long lists only draw the
+    choices in view (Salesforce shows 9 of 14), so scroll down until it appears or the list
+    ends. Waits for a list that's still loading (a category's choices come from the server)."""
+    texts: list[str] = []
+    deadline = time.time() + wait
+    while not texts and time.time() < deadline:
+        texts = [clean(t) for t in choices(page, holder).all_inner_texts()]
+        if not texts:
+            page.wait_for_timeout(300)
+    seen = list(texts)
+    for _ in range(15):
+        index = match_choice(seen, value) if seen else None
+        if index is not None or not seen:
+            return seen, index
+        choices(page, holder).last.scroll_into_view_if_needed()
+        page.mouse.wheel(0, 300)
+        page.wait_for_timeout(500)
+        more = [t for t in (clean(t) for t in choices(page, holder).all_inner_texts()) if t not in seen]
+        if not more:
+            break
+        seen += more
+    return seen, None
+
+
+def click_choice(page, holder, text: str) -> None:
+    """Click the choice with exactly this text in this field's open list."""
+    options = choices(page, holder)
+    texts = [clean(t) for t in options.all_inner_texts()]
+    target = options.nth(texts.index(text))
+    target.scroll_into_view_if_needed()
+    target.click()
+
+
 def prefilled_prompt(page, field) -> bool:
     return bool(box(page, field["key"]).locator('[data-automation-id="selectedItem"]').count())
 
 
 def prompt_options(page, key: str) -> list[str]:
     try:
-        box(page, key).locator("input").first.click(timeout=4000)
+        holder = box(page, key)
+        holder.locator("input").first.click(timeout=4000)
         page.wait_for_timeout(900)
-        options = [clean(o) for o in page.locator('[data-automation-id="promptOption"]:visible').all_inner_texts()]
+        options = [clean(o) for o in choices(page, holder).all_inner_texts()]
     except Exception:  # noqa: BLE001
         options = []
     close_popups(page)
@@ -239,6 +294,20 @@ def read_form(page, board: str, job_path: str, data: dict) -> tuple[list[dict], 
                     "read when applying; new ones come back to you before anything is submitted."]
 
 
+ERROR_PAGE = re.compile(r"something went wrong", re.I)
+
+
+def recover(page, tries: int = 3) -> None:
+    """Workday sometimes shows "Something went wrong. Please refresh the page" (often right
+    after signing in); a refresh clears it."""
+    for _ in range(tries):
+        heading = page.get_by_text(ERROR_PAGE)
+        if not heading.count() or page.locator('[data-automation-id^="formField-"]:visible').count():
+            return
+        page.reload(wait_until="domcontentloaded")
+        settle(page)
+
+
 def settle(page, timeout: float = 20) -> None:
     deadline = time.time() + timeout
     page.wait_for_timeout(1200)
@@ -249,6 +318,8 @@ def settle(page, timeout: float = 20) -> None:
         ready = page.locator(f'[data-automation-id^="formField-"]:visible, {GATE}, '
                              '[data-automation-id="file-upload-input-ref"], '
                              '[data-automation-id="applyFlowReviewPage"]:visible')
+        if page.get_by_text(ERROR_PAGE).count():
+            return  # recover() refreshes it.
         if not busy.count() and ready.count():
             page.wait_for_timeout(800)
             return
@@ -320,62 +391,79 @@ OWN_SITE = re.compile(r"career|company (web)?site|company page|corporate site|we
 
 
 def match_choice(texts: list[str], value: str) -> int | None:
-    """The choice that means `value`: same words, or for "company careers page" and the
-    like, the site's own careers or website choice."""
-    index = pick_option(texts, value, loose=True)
-    if index is None and OWN_SITE.search(value):
-        for pattern in (r"career", r"(company|corporate)? ?web ?site|company page"):
+    """The choice that means `value`. "Company careers page" and the like mean the site's own
+    careers choice ("Salesforce Careers Website", or the "External Career Site Sources"
+    category that holds it), tried before loose word matching, which can land on any choice
+    sharing a word."""
+    exact = pick_option(texts, value, loose=False)
+    if exact is not None:
+        return exact
+    if OWN_SITE.search(value):
+        for pattern in (r"careers? (web ?site|site|page)", r"career", r"(company|corporate) (web ?site|page)|web ?site"):
             index = next((i for i, t in enumerate(texts) if re.search(pattern, t, re.I)), None)
             if index is not None:
-                break
-    return index
+                return index
+    return pick_option(texts, value, loose=True)
+
+
+def chosen(holder) -> str:
+    items = holder.locator('[data-automation-id="selectedItem"]')
+    return " | ".join(clean(t) for t in items.all_inner_texts()) if items.count() else ""
 
 
 def choose_prompt(page, holder, value: str, field: dict) -> None:
     """Prompt fields: a list that may have two levels ("Job Board" opens "LinkedIn", "Indeed").
-    `value` is a final choice, a category, or "Category > Choice". Tries the visible list
-    first, then the site's search; a category's own choices are picked from in turn."""
+    `value` is a final choice, a category, or "Category > Choice". A different choice saved
+    from an earlier visit is removed first. Tries the visible list, then the site's search;
+    a category's own choices are picked from in turn."""
     parts = [p.strip() for p in value.split(">") if p.strip()] or [value]
-    selected = holder.locator('[data-automation-id="selectedItemList"]')
-    if selected.count() and parts[-1].lower() in clean(selected.inner_text()).lower():
+    now = chosen(holder)
+    if now and (parts[-1].lower() in now.lower() or pick_option([now], parts[-1], loose=False) is not None):
         return
-    options = page.locator('[data-automation-id="promptOption"]:visible')
+    for _ in range(3):  # A saved draft's choice: remove it (Workday keeps drafts between visits).
+        charm = holder.locator('[data-automation-id="selectedItem"] [data-automation-id="DELETE_charm"]')
+        if not charm.count():
+            break
+        charm.first.click(force=True)
+        page.wait_for_timeout(500)
     box_input = holder.locator("input").first
     box_input.click()
     page.wait_for_timeout(900)
-    texts = [clean(t) for t in options.all_inner_texts()]
-    index = match_choice(texts, parts[0]) if texts else None
+    texts, index = find_choice(page, holder, parts[0], wait=2)
     if index is None:  # Not in the top level: search the final choices.
         close_popups(page)
         box_input.click()
         box_input.fill(parts[-1])
         box_input.press("Enter")
         page.wait_for_timeout(1200)
-        texts = [clean(t) for t in options.all_inner_texts()]
-        index = match_choice(texts, parts[-1])
+        texts, index = find_choice(page, holder, parts[-1], wait=3)
     if index is None:
         close_popups(page)
-        raise FillError(field["key"], field["label"], f"no choice matching {value!r}", field.get("options"))
+        raise FillError(field["key"], field["label"], f"no choice matching {value!r}", texts or field.get("options"))
     picked = texts[index]
-    options.nth(index).click()
+    click_choice(page, holder, picked)
     page.wait_for_timeout(900)
-    if not holder.locator('[data-automation-id="selectedItem"]').count():
-        # A category: its own choices are showing now.
-        inner = [clean(t) for t in options.all_inner_texts()]
+    if not chosen(holder):
+        # A category: its own choices load and show in the same list.
         target = parts[1] if len(parts) > 1 else parts[0]
-        pick = match_choice(inner, target) if inner else None
+        deadline = time.time() + 6
+        inner: list[str] = []
+        while time.time() < deadline:  # Wait for the category's list to replace the top level.
+            inner = [clean(t) for t in choices(page, holder).all_inner_texts()]
+            if inner and picked not in inner:
+                break
+            page.wait_for_timeout(300)
+        inner, pick = find_choice(page, holder, target)
         if pick is None and len(inner) == 1:
             pick = 0
-        if pick is None and len(parts) == 1 and value != picked:
-            pick = match_choice(inner, value)
         if pick is None:
             close_popups(page)
             raise FillError(field["key"], field["label"], f"{picked!r} needs a more specific choice",
                             [f"{picked} > {t}" for t in inner if t])
-        options.nth(pick).click()
+        click_choice(page, holder, inner[pick])
         page.wait_for_timeout(700)
     close_popups(page)
-    if not holder.locator('[data-automation-id="selectedItem"]').count():
+    if not chosen(holder):
         raise FillError(field["key"], field["label"], f"choosing {picked!r} didn't stick", field.get("options"))
 
 
@@ -498,6 +586,7 @@ def walk(page, packet: dict, files: dict, ask, *, email: str, tracker, before_fi
         if at_gate(page):
             sign_in_or_create(page, email, ask, tracker, log)
             settle(page)
+        recover(page)
         name = step(page) or f"page {len(seen_steps) + 1}"
         seen_steps.append(name)
         fields = page_fields(page)
