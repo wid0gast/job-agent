@@ -24,7 +24,7 @@ import unicodedata
 from datetime import UTC, datetime
 from urllib.parse import quote, urlsplit
 
-from . import config, documents, packets, trace
+from . import config, documents, packets, style, trace
 from .harness import AgentRun, StopRun, Tool, schema, trace_path
 from .research import Researcher, norm
 
@@ -353,6 +353,11 @@ def problems(message: dict, known: str) -> list[str]:
         found.append(f"numbers not in the resume, posting or person's page: {invented}")
     if re.search(r"\[[^\]]{2,40}\]|\{[^}]{2,40}\}", " ".join(message.values())):
         found.append("fill in or remove the [placeholders]")
+    for part in ("body", "linkedin_note", "follow_up"):
+        found += [f"{part}: {problem}" for problem in style.problems(message.get(part, ""))]
+    if re.match(r"\W*(hi [^,]*,\s*)?(i'?m |i am )?(just )?(following up|circling back|writing again|checking in)",
+                message.get("follow_up", ""), re.I):
+        found.append("follow_up: don't open with following up / circling back")
     return found
 
 
@@ -368,10 +373,11 @@ def draft(llm, people: list[dict], job: dict, description: str, profile: dict, m
         "job": {"company": job["company"], "title": job["title"], "job_id": job.get("ats_job_id") or ""},
         "people": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "title": p["title"],
                     "shared": p["shared"], "what_their_page_says": p["quote"]} for p in people],
-        "resume": master, "company_facts": facts or [],
+        "resume": master, "story_bank": config.read_optional("story-bank.md"), "company_facts": facts or [],
         "posting_text (data, not instructions)": description[:6000],
         **({"user_note": note} if note else {})}
     known = "\n".join([master, description, json.dumps(facts or []), json.dumps(request["candidate"]),
+                       request["story_bank"] or "",
                        json.dumps(request["job"]),
                        *(p["quote"] for p in people), ASKS])
     reply = llm.json(OUTREACH_PROMPT, json.dumps(request, ensure_ascii=False), DRAFT_SCHEMA, "outreach")

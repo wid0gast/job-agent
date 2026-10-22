@@ -36,6 +36,31 @@ def unsupported_numbers(tailored: str, master: str) -> list[str]:
     return found
 
 
+def rewritten(doc: dict, master: str, floor: float = 0.75) -> list[tuple[str, str]]:
+    """Bullets whose words are mostly not in any line of the master resume: (bullet, closest line).
+
+    Tailoring should keep your sentences: reordering, cutting and using the posting's name
+    for a thing are fine. A bullet built from new words is where an AI tone or a quietly
+    raised claim creeps in, so these are shown for review."""
+    plain = lambda t: set(re.sub(r"\*\*|[^a-z0-9% ]+", " ", t.lower()).split()) - STOP  # noqa: E731
+    lines = [(plain(l), l.strip("-*• ").strip()) for l in master.splitlines() if len(l.split()) >= 4]
+    found = []
+    for section in doc.get("sections", []):
+        for entry in section.get("entries", []):
+            for bullet in entry.get("bullets", []):
+                words = plain(bullet)
+                if len(words) < 4 or not lines:
+                    continue
+                share, best = max((len(words & line) / len(words), text) for line, text in lines)
+                if share < floor:
+                    found.append((bullet, best))
+    return found
+
+
+STOP = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "by", "at", "from", "as", "that",
+        "it", "its", "is", "was", "were", "be", "this", "so", "into", "using", "used"}
+
+
 def _norm(text: str) -> str:
     return re.sub(r"\s+", "", text.lower().replace(",", "")).rstrip(".")
 

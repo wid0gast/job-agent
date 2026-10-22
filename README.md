@@ -21,6 +21,7 @@ and applies only after you approve.
 - **Prepares** an application: it reads the full posting, checks your fit requirement by requirement, tailors your resume, researches the company, and drafts every answer, each with its source.
 - **Finds people to contact** at the company (someone from your school, someone in the role, the recruiter) and drafts a short email and LinkedIn note for each, the way career advisers recommend. You send them from your own email.
 - **Applies** only after you approve, on Greenhouse, Lever, Ashby and Workday, typing exactly the answers you approved.
+- **Writes like you, not like AI.** Resumes, letters, answers and outreach follow a [writing guide](docs/writing-guide.md) built from hiring research, checked in code for stock phrases and length limits, and tested on real postings ([eval](docs/writing-eval.md)). Resume PDFs keep your style and read cleanly in applicant tracking systems.
 - **Talks with you.** The Assistant tab is a chat that can do everything the app does, and search the web too.
 - **Shows its work.** Every application has a "How this was made" timeline: each step, which model did it, what it was asked and answered, and every check in code that passed or caught something. The How it works tab explains each design choice.
 
