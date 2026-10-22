@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from email.parser import BytesParser
 from email.policy import default as email_policy
 
-from . import actions, config, history, matching, packets, people, resumes, sources, systems, trace
+from . import actions, answers, config, history, matching, packets, people, resumes, sources, systems, trace
 from . import llm as llm_models
 from .chat import ChatStore, Turns
 from .tracker import OUTCOMES, Tracker
@@ -45,7 +45,7 @@ CSS = """
 --line:#242a3a;--soft:#1a1f2e;--accent:#8b85ff;--accent-2:#b18cff;--accent-soft:#1f2147;--good:#34d399;
 --good-soft:#0f2a22;--bad:#f87171;--bad-soft:#2d1517;--warn:#fbbf24;--warn-soft:#2b2210;--info:#60a5fa;
 --info-soft:#12233a;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
-*{box-sizing:border-box}[hidden]{display:none!important}
+*{box-sizing:border-box}[hidden]{display:none!important}@view-transition{navigation:auto}
 body{margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
 font:14px/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -292,7 +292,8 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     nav = "".join(f'<a href="{h}" class="{"on" if h == active else ""}">{t}</a>' for h, t in links)
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
-    auto = '<meta http-equiv="refresh" content="4">' if refresh else ""
+    # A page with work running updates itself in place (live.js), never by reloading.
+    live = ' data-live' if refresh else ""
     banner = ('<div class="flash warn">Auto-submit is on.</div>'
               if app.settings.submit_mode == "auto" else "")
     if config.HOSTED:
@@ -300,10 +301,42 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     banner += start_here(app, active)
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
-            f"content='width=device-width,initial-scale=1'>{auto}<title>Job Agent</title>"
-            f"<link rel=stylesheet href=/style.css>{SCRIPT if config.HOSTED else ''}</head><body><header>"
+            f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
+            f"<title>Job Agent</title><style>{FIRST_PAINT}</style>"
+            f"<link rel=stylesheet href=/style.css>{SCRIPT if config.HOSTED else ''}</head><body{live}><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
-            f"<main>{banner}{note}{body}</main></body></html>").encode()
+            f"<main>{banner}{note}{body}</main><script src=/live.js></script></body></html>").encode()
+
+
+# The page's background before the stylesheet arrives, so moving between pages never flashes white.
+FIRST_PAINT = "html{background:#f6f7fb}@media (prefers-color-scheme:dark){html{background:#0b0d14}}"
+
+LIVE_JS = r"""// Pages with work running update in place: no reload, no flash, scroll and open sections kept.
+(() => {
+  if (!document.body.hasAttribute("data-live")) return;
+  const tick = async () => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    if (!typing && !document.hidden) {
+      try {
+        const html = await (await fetch(location.href, {cache: "no-store"})).text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const fresh = doc.querySelector("main"), now = document.querySelector("main");
+        if (fresh && now && fresh.innerHTML !== now.innerHTML) {
+          const open = [...now.querySelectorAll("details")].map((d) => d.open);
+          now.innerHTML = fresh.innerHTML;
+          now.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true; });
+          // Scripts in the page (toggles, copy buttons) bind to the new content again.
+          now.querySelectorAll("script[src]").forEach((old) => {
+            const s = document.createElement("script"); s.src = old.src; old.replaceWith(s);
+          });
+        }
+        if (!doc.body.hasAttribute("data-live")) return;  // Nothing running any more.
+      } catch (_) { /* The next tick tries again. */ }
+    }
+    setTimeout(tick, 2500);
+  };
+  setTimeout(tick, 2500);
+})();"""
 
 
 def start_here(app: Dashboard, active: str) -> str:
@@ -530,11 +563,11 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     wanted = ACTIVE if status == "active" else tuple(ORDER) if status == "all" else (status,)
     jobs = app.tracker.with_status(*wanted)
 
-    jobs.sort(key=matching.rank_key)
+    roles = matching.grouped(jobs)
     unscored = len(matching.stale(app.tracker, profile, config.read_optional("resume.md") or "")) \
         if (profile.get("preferences", {}).get("description") or profile.get("preferences", {}).get("roles")) else None
     rows = []
-    for job in jobs[:500]:
+    for job, others in roles[:500]:
         score, kind = matching.ranking_score(job)
         why = json.loads(job["details"] or "{}").get("match", {}).get("why", "") if kind == "match" else ""
         if job["status"] == "found":
@@ -551,7 +584,7 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
         rows.append(f'<tr class="{"below" if below else ""}"><td>{badge}</td>'
                     f'<td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])}</div>'
-                    f'{f"<div class=src>{esc(why)}</div>" if why else ""}</td>'
+                    f'{f"<div class=src>{esc(why)}</div>" if why else ""}{also_listed(others)}</td>'
                     f'<td class=muted style="white-space:nowrap">{esc((job["posted_at"] or "")[:10])}</td>'
                     f'<td>{esc(job["ats"])}</td>'
                     f'<td><span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span>'
@@ -581,8 +614,20 @@ def page_jobs(app: Dashboard, status: str, flash: str) -> bytes:
     <div class="tabs">{tabs}</div>
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>System</th><th>Status</th><th></th></tr>
     {"".join(rows) or '<tr><td colspan=6 class=muted>None.</td></tr>'}</table>
-    {f'<p class=muted>Showing the top 500 of {len(jobs)}.</p>' if len(jobs) > 500 else ''}</div>"""
+    {f'<p class=muted>Showing the top 500 of {len(roles)} roles.</p>' if len(roles) > 500 else ''}</div>"""
     return layout(app, "/jobs", body, flash, refresh=bool(refreshing))
+
+
+def also_listed(others: list[dict]) -> str:
+    """The same role's other listings (other offices, or posted again), folded under the row."""
+    if not others:
+        return ""
+    places = sorted({(o["location"] or "").split(";")[0].strip() for o in others} - {""})
+    items = "".join(f'<li><a href="/job/{o["id"]}">{esc(o["location"] or o["title"])}</a> '
+                    f'<span class=muted>· {esc((o["posted_at"] or "")[:10])} · {o["status"].replace("_", " ")}</span></li>'
+                    for o in others)
+    return (f'<details class=src><summary>Also listed {len(others)} more time{"s" if len(others) > 1 else ""}'
+            f'{": " + esc(", ".join(places[:3])) if places else ""}</summary><ul style="margin:4px 0">{items}</ul></details>')
 
 
 def page_search(app: Dashboard, flash: str) -> bytes:
@@ -641,6 +686,7 @@ def page_search(app: Dashboard, flash: str) -> bytes:
       <option value="1"{" selected" if str(prefs.get("resume_pages") or 1) == "1" else ""}>One page</option>
       <option value="2"{" selected" if str(prefs.get("resume_pages") or 1) == "2" else ""}>Two pages</option>
     </select></div>
+    {letter_settings(app, prefs)}
     {people_settings(prefs)}
     <button class=primary>Save</button></form>"""
     return layout(app, "/search", body, flash)
@@ -650,6 +696,17 @@ PEOPLE_HINTS = {"background": "same school or past employer: the likeliest to re
                 "peer": "someone in this role or on the team",
                 "recruiter": "best contacted once you've applied",
                 "hiring_manager": "advice is mixed: some welcome it, some pass it to HR"}
+
+
+def letter_settings(app: Dashboard, prefs: dict) -> str:
+    from .prepare import LETTER_MODES
+
+    mode = config.letter_mode({"preferences": prefs}, app.settings)
+    options = "".join(f'<option value="{k}"{" selected" if k == mode else ""}>{label[0].upper() + label[1:]}</option>'
+                      for k, label in LETTER_MODES.items())
+    return (f'<div class=card><h2>Cover letters</h2><p class=muted>A tailored letter (about 250 words, your '
+            f'real experience, company facts quoted from its pages) when an application has a place for one.</p>'
+            f'<select name=cover_letter style="width:auto">{options}</select></div>')
 
 
 def people_settings(prefs: dict) -> str:
@@ -778,10 +835,15 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         buttons.append(form(app, "/reject", "Reject", {"job_id": job_id}))
     if job["status"] in ("needs_you", "prepared") and packets.missing(packet):
         buttons.append(form(app, "/draft", "Draft missing answers with the model", {"job_id": job_id}))
+    letter = next((a for a in packet["answers"] if answers.is_cover_letter(a)), None)
+    if letter and not packet["documents"].get("cover_letter") and job["status"] in ("prepared", "approved", "needs_you"):
+        buttons.append(form(app, "/letter", "Write a cover letter", {"job_id": job_id}))
     if job["status"] == "needs_you":
         for outcome, label in (("submitted", "It went through"), ("prepared", "Back to queue"),
                                ("failed", "Mark failed")):
             buttons.append(form(app, "/resolve", label, {"job_id": job_id, "outcome": outcome}))
+    if job["status"] in ("prepared", "approved", "needs_you", "rejected"):  # Applied outside the app.
+        buttons.append(form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id}))
     if trace.runs(job_id):
         docs = f'<a class="button primary" href="/job/{job_id}/trace">How this was made</a> ' + docs
     t = packet["tailoring"]
@@ -843,6 +905,9 @@ def person_block(app: Dashboard, job: dict, person: dict, applied: bool) -> str:
     else:
         timing = ""
     hint = f'<p class=muted style="margin:4px 0">{timing}</p>' if timing and not person.get("sent_at") else ""
+    if person.get("evidence", "search result") == "search result" and not person.get("sent_at"):
+        hint += ('<p class=warn style="margin:4px 0;font-size:13px">Found from a LinkedIn search headline, which '
+                 'can be months out of date: check their profile shows they still work there before sending.</p>')
     message = person.get("draft") or {}
     checks = "".join(f'<div class="flash warn">Check: {esc(c)}</div>' for c in person.get("checks") or [])
     state, buttons = "", []
@@ -863,7 +928,8 @@ def person_block(app: Dashboard, job: dict, person: dict, applied: bool) -> str:
         if person.get("linkedin"):
             buttons.append(f'<a class=button href="{esc(person["linkedin"])}" target=_blank rel=noopener>Open LinkedIn</a>')
     if not person.get("sent_at"):
-        buttons.append(form(app, "/people/state", "Remove", {"job_id": job_id, "person": pid, "state": "removed"}))
+        buttons.append(form(app, "/people/state", "Remove (left, or not right)",
+                            {"job_id": job_id, "person": pid, "state": "removed"}))
     draft = ""
     if message:
         disabled = " disabled" if person.get("sent_at") and person.get("followed_up_at") else ""
@@ -1336,10 +1402,11 @@ def page_assistant(app: Dashboard, chat_id: int | None, draft: str = "") -> byte
         'You confirm every submission.</p><div class=prompts>'
         + "".join(f'<button data-prompt="{esc(t)}">{esc(t)}</button>' for t in SUGGESTIONS) + "</div></div>")
     body = f"""<div class=chat id=chat data-token="{app.token}" data-chat="{chat["id"] if chat else ""}">
-    <nav class=chats><a class="button new" href="/assistant">+ New chat</a>{chats}</nav>
+    <nav class=chats><a class="button new" href="/assistant?new=1">+ New chat</a>{chats}</nav>
     <section class=convo><div id=tasks></div>{hello}<div id=log><div id=live></div></div>
     <div class=composer><div class=box><textarea id=message rows=1 placeholder="Message the assistant">{esc(draft)}</textarea>
-    <div class=row><select id=model title="Model for this chat">{options}</select>
+    <div class=row><span><select id=model title="Model for this chat">{options}</select>
+    </span>
     <span><button id=stop hidden>Stop</button> <button id=send class=primary>Send</button></span></div></div></div>
     </section></div><script src="/assistant/chat.js"></script>"""
     return layout(app, "/assistant", body)
@@ -1508,7 +1575,13 @@ def handler_for(app: Dashboard):
                 return self.send(page_today(app, flash))
             if url.path == "/assistant":
                 chat = query.get("chat", "")
+                latest = app.chats.chats()
+                if not chat.isdigit() and "new" not in query and "q" not in query and latest:
+                    # The Assistant tab goes back to your latest chat; "+ New chat" starts one.
+                    return self.send(b"", 303, headers={"Location": f"/assistant?chat={latest[0]['id']}"})
                 return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
+            if url.path == "/live.js":
+                return self.send(LIVE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/people.js":
                 return self.send(PEOPLE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/assistant/chat.js":
@@ -1620,15 +1693,20 @@ def handler_for(app: Dashboard):
             chat = int(one["chat"]) if one.get("chat", "").isdigit() else None
             if one.get("model") and one["model"] not in {*llm_models.choices(), app.turns.default_model()}:
                 raise ValueError("Pick a model from the list.")
+            from .chat import EFFORTS
+
+            if one.get("effort") and one["effort"] not in EFFORTS:
+                raise ValueError("Pick an effort from the list.")
             if path == "/assistant/api/send":
                 if app.llm_missing:
                     raise ValueError("No model is connected (see the Model page).")
-                return {"chat": app.turns.send(chat, one.get("text", ""), one.get("model", ""))}
+                return {"chat": app.turns.send(chat, one.get("text", ""), one.get("model", ""), one.get("effort", ""))}
             if path == "/assistant/api/stop" and chat:
                 app.turns.stop(chat)
                 return {"ok": True}
             if path == "/assistant/api/model" and chat:
-                app.chats.update(chat, model=one.get("model", "") or app.turns.default_model())
+                app.chats.update(chat, model=one.get("model", "") or app.turns.default_model(),
+                                 effort=one.get("effort") or None)
                 return {"ok": True}
             if path == "/assistant/api/delete" and chat:
                 app.turns.stop(chat)
@@ -1665,8 +1743,7 @@ def handler_for(app: Dashboard):
             if path == "/prepare-top":
                 count = max(1, min(20, int(one.get("count") or 3)))
                 found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
-                found.sort(key=matching.rank_key)
-                picks = found[:count]
+                picks = [job for job, _ in matching.grouped(found)][:count]  # One per role.
                 app.ensure_worker()
                 for job in picks:
                     tracker.add_task("prepare", job["id"])
@@ -1697,6 +1774,8 @@ def handler_for(app: Dashboard):
                     "resume_pages": 2 if one.get("resume_pages") == "2" else 1,
                     "people_kinds": [k for k in fields.get("people_kinds", []) if k in people.KINDS],
                     "people_per_job": int(one.get("people_per_job") or people.DEFAULT_PER_JOB),
+                    "cover_letter": one.get("cover_letter") if one.get("cover_letter") in ("always", "required", "never")
+                    else None,
                 })
                 if refresh:
                     app.ensure_worker()
@@ -1716,7 +1795,12 @@ def handler_for(app: Dashboard):
                 return "Marked as not sent.", back
             if path == "/people/state":
                 people.set_state(tracker, int(one["job_id"]), one["person"], one.get("state", ""))
-                return "Saved.", back
+                return ("Removed. They won't be suggested again for this company." if one.get("state") == "removed"
+                        else "Saved."), back
+            if path == "/letter":
+                app.ensure_worker()
+                tracker.add_task("letter", int(one["job_id"]))
+                return "Writing a cover letter. It appears here when ready; then approve again.", back
             if path == "/draft":
                 app.ensure_worker()
                 tracker.add_task("draft", int(one["job_id"]))

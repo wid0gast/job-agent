@@ -10,7 +10,7 @@ invisible hCaptcha; a visible challenge is handed to you.
 
 from urllib.parse import quote
 
-from .forms import (Closed, FillError, answered, check_labeled, clean, combobox,  # noqa: F401
+from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
                     select_native, type_into, wait_for_result)
 
 API = "https://api.lever.co/v0/postings"
@@ -149,8 +149,7 @@ def fill_field(page, field: dict, value, files: dict) -> None:
 
 
 def fill_form(page, packet: dict, files: dict) -> None:
-    for answer in answered(packet):
-        fill_field(page, answer, answer["value"], files)
+    fill_all(page, packet, files, fill_field)
 
 
 def submit(page, ask) -> dict:

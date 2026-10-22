@@ -111,6 +111,8 @@ class Scout(Researcher):
             raise ValueError("Give the person's full name as the page shows it.")
         if any(norm(p["name"]) == norm(name) for p in self.people):
             raise ValueError("Already saved.")
+        if norm(name) in removed_names(self.job["company"]):
+            raise ValueError("The user removed this person before (e.g. they've left the company): skip them.")
         if norm(quote) not in norm(self.text_of(url)):
             raise ValueError("That quote isn't in the page or search result word for word. Copy it exactly.")
         if not all(w in norm(quote) for w in words):
@@ -152,7 +154,9 @@ class Scout(Researcher):
             "id": re.sub(r"[^a-z0-9]+", "-", norm(name)).strip("-"),
             "name": " ".join(name.split()), "kind": kind, "title": title.strip()[:120],
             "why": why.strip()[:300], "source": url, "quote": quote.strip()[:400], "shared": shared,
-            "linkedin": linkedin, "email": found_email, "email_status": "published" if found_email else None})
+            "linkedin": linkedin, "email": found_email, "email_status": "published" if found_email else None,
+            # A page it read is fresh; a search result's headline can be months old.
+            "evidence": "page" if url in self.pages else "search result"})
         return {"kept": len(self.people), "of": self.limit}
 
     def note_email_format(self, address_format: str, example: str, example_name: str):
@@ -464,15 +468,32 @@ def unmark(tracker, job_id: int, person_id: str) -> None:
     tracker.event(job_id, "note", now(), f"Not sent after all: {person['name']}.")
 
 
+def removed_file():
+    return config.DATA_DIR / "people-removed.json"
+
+
+def removed_names(company: str) -> set[str]:
+    """People you removed for this company (left, wrong person): never suggested again."""
+    path = removed_file()
+    saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return set(saved.get(norm(company), []))
+
+
 def set_state(tracker, job_id: int, person_id: str, state: str) -> None:
-    """replied (stops reminders) or removed (not this person)."""
-    _, packet = load(tracker, job_id)
+    """replied (stops reminders) or removed (not this person, for any job at this company)."""
+    job, packet = load(tracker, job_id)
     person = person_in(packet, person_id)
     if state == "replied":
         person["replied_at"] = now()
         tracker.event(job_id, "note", now(), f"{person['name']} replied.")
     elif state == "removed":
         person["removed"] = True
+        path = removed_file()
+        saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        names = set(saved.get(norm(job["company"]), [])) | {norm(person["name"])}
+        saved[norm(job["company"])] = sorted(names)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(saved, indent=1), encoding="utf-8")
     else:
         raise ValueError("state must be replied or removed.")
     packets.store(packet)
@@ -507,6 +528,8 @@ def due(tracker) -> list[dict]:
     for job_id in tracker.contacted_jobs():
         job = tracker.get(job_id)
         packet = packets.load(job) if job else None
+        if job and job["status"] == "rejected":  # You're not pursuing it.
+            continue
         people = [p for p in ((packet or {}).get("people") or {}).get("people", []) if not p.get("removed")]
         sent = [p for p in people if p.get("sent_at")]
         if not sent or any(p.get("replied_at") for p in people):

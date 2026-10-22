@@ -268,7 +268,7 @@ emailed code).
 | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | (empty) | Your key and a tool-capable model ID (several, comma-separated, are tried in order). Set for you on the class app store. |
 | `SPEND_CAP_USD` | `1.00` | A run stops once model spending reaches this. |
 | `OPENROUTER_DATA_COLLECTION` | `deny` | Skip providers that keep your data. Some free models need `allow`. |
-| `COVER_LETTER` | `required` | Write cover letters only when required, `always`, or `never`. |
+| `COVER_LETTER` | `always` | Write a cover letter whenever the form has a place for one (`always`), only when it's required, or `never`. The Search page's choice overrides this. |
 | `RESEARCH` | `auto` | Research the company for letters and "why us" answers, or `off`. |
 | `DAILY_OUTREACH_LIMIT` | `10` | Emails to people at companies per day (first emails and follow-ups). |
 | `BRAVE_API_KEY` | (empty) | Web search for research, finding people, Discover and the assistant. Without it, a free search is tried (best effort). |

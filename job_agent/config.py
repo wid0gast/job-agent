@@ -39,7 +39,7 @@ class Settings:
     fit_threshold: int = 60
     spend_cap_usd: float = 1.0
     data_collection: str = "deny"
-    cover_letter: str = "required"   # required | always | never
+    cover_letter: str = "always"     # always (whenever the form has a letter field) | required | never
     research: str = "auto"           # auto (for letters and "why us" answers) | off
 
     @classmethod
@@ -66,7 +66,7 @@ class Settings:
             fit_threshold=int(os.environ.get("FIT_THRESHOLD", "60")),
             spend_cap_usd=float(os.environ.get("SPEND_CAP_USD", "1.00")),
             data_collection=os.environ.get("OPENROUTER_DATA_COLLECTION", "deny").strip(),
-            cover_letter=os.environ.get("COVER_LETTER", "required").strip(),
+            cover_letter=os.environ.get("COVER_LETTER", "always").strip(),
             research=os.environ.get("RESEARCH", "auto").strip().lower(),
         )
 
@@ -106,7 +106,7 @@ def load_profile() -> dict:
 
 SEARCH_KEYS = ("description", "roles", "fields", "job_types", "include_senior", "locations", "terms",
                "max_posting_age_days", "exclude_companies", "exclude_title_words", "fit_threshold", "resume_pages",
-               "people_kinds", "people_per_job")
+               "people_kinds", "people_per_job", "cover_letter")
 
 
 def load_search() -> dict:
@@ -123,6 +123,12 @@ def save_search(values: dict) -> None:
     clean = {k: values[k] for k in SEARCH_KEYS if k in values}
     (PROFILE_DIR / "search.yaml").write_text(
         header + yaml.safe_dump(clean, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+def letter_mode(profile: dict, settings) -> str:
+    """When to write cover letters: the Search page's choice, else COVER_LETTER from .env."""
+    mode = (profile.get("preferences") or {}).get("cover_letter")
+    return mode if mode in ("always", "required", "never") else settings.cover_letter
 
 
 def fit_threshold(profile: dict, settings) -> int:

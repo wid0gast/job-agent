@@ -72,6 +72,16 @@ def job_key(url: str) -> str:
     return f"{host}{path}" + (f"?{'&'.join(ids)}" if ids else "")
 
 
+def same_posting(a: str, b: str) -> bool:
+    """One Workday requisition listed on two of a company's career sites: R108261 on one,
+    R108261-1 on another (the suffix counts the copies)."""
+    parts = [re.fullmatch(r"workday:([^/]+)/[^:]+:(.+)", key) for key in (a, b)]
+    if not all(parts) or parts[0].group(1) != parts[1].group(1):
+        return False
+    one, two = sorted((parts[0].group(2), parts[1].group(2)), key=len)
+    return one == two or re.fullmatch(re.escape(one) + r"-\d{1,2}", two) is not None
+
+
 def normalize(text: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
@@ -221,7 +231,7 @@ class Tracker:
             "SELECT * FROM jobs WHERE match_key = ? AND status NOT IN ('skipped', 'closed')",
             (same,),
         ):
-            if system and row["job_key"].startswith(f"{system}:"):
+            if system and row["job_key"].startswith(f"{system}:") and not same_posting(row["job_key"], key):
                 continue
             return dict(row)
         return None

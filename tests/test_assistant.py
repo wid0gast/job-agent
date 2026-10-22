@@ -222,7 +222,12 @@ def test_a_chat_turn_uses_tools_and_remembers(app):
     assert len(third) == 6 and third[1]["content"].endswith("What jobs do I have?")
     assert "[Since your last reply: The user undid your edit" in third[5]["content"]
     assert not json.loads(call(app, "GET", f"/assistant/api/poll?chat={chat_id}&since={state['rev']}")[1])["running"]
-    assert re.search(r"/assistant\?chat=\d+", call(app, "GET", "/assistant")[1])  # Listed in the sidebar.
+    assert re.search(r"/assistant\?chat=\d+", call(app, "GET", "/assistant?new=1")[1])  # Listed in the sidebar.
+    # The Assistant tab goes back to the latest chat rather than an empty new one.
+    conn = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
+    conn.request("GET", "/assistant", headers={"Host": f"127.0.0.1:{app.port}"})
+    answer = conn.getresponse()
+    assert answer.status == 303 and answer.getheader("Location") == f"/assistant?chat={chat_id}"
 
 
 def test_tool_errors_reach_the_model_and_stop_works(app):

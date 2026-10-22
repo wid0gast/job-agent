@@ -62,15 +62,17 @@ class ChatStore:
             );
             CREATE INDEX IF NOT EXISTS chat_items_rev ON chat_items (chat_id, rev);
             """)
+        if "effort" not in {row["name"] for row in self.db.execute("PRAGMA table_info(chats)")}:
+            self.db.execute("ALTER TABLE chats ADD COLUMN effort TEXT")  # Picked per chat, like the model.
         self.db.commit()
 
     def _rev(self) -> int:
         return (self.db.execute("SELECT MAX(rev) FROM chat_items").fetchone()[0] or 0) + 1
 
-    def create(self, model: str, title: str = "New chat") -> int:
+    def create(self, model: str, title: str = "New chat", effort: str = "") -> int:
         with self.lock:
-            cursor = self.db.execute("INSERT INTO chats (title, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                                     (title, model, now(), now()))
+            cursor = self.db.execute("INSERT INTO chats (title, model, effort, created_at, updated_at)"
+                                     " VALUES (?, ?, ?, ?, ?)", (title, model, effort or None, now(), now()))
             self.db.commit()
             return cursor.lastrowid
 
@@ -219,12 +221,16 @@ class Turns:
     def default_model(self) -> str:
         return self.settings.model.split(",")[0].strip()
 
-    def send(self, chat_id: int | None, text: str, model: str = "") -> int:
+    @staticmethod
+    def default_effort() -> str:
+        return default_effort()
+
+    def send(self, chat_id: int | None, text: str, model: str = "", effort: str = "") -> int:
         text = text.strip()
         if not text:
             raise ValueError("Type a message first.")
         if chat_id is None:
-            chat_id = self.store.create(model or self.default_model(), title=title_for(text))
+            chat_id = self.store.create(model or self.default_model(), title=title_for(text), effort=effort)
         chat = self.store.chat(chat_id)
         if chat is None:
             raise ValueError("No such chat.")
@@ -267,6 +273,7 @@ class Turns:
                                                       "shown": "You stopped the assistant.", "delivered": False})
             if turn.usage["requests"]:  # What this reply took, under it.
                 self.store.add(turn.chat_id, "stats", {**turn.usage, "model": turn.chat["model"],
+                                                       "effort": effort_for(turn.chat),
                                                        "seconds": round(time.time() - turn.started, 1)})
             with self.lock:
                 self.running.pop(turn.chat_id, None)
@@ -384,6 +391,23 @@ def web_tools(web) -> list:
 
 
 # ----- helpers ------------------------------------------------------------------------
+
+EFFORTS = {"low": "Low effort", "medium": "Medium effort", "high": "High effort",
+           "xhigh": "Extra high effort", "max": "Max effort"}
+
+
+def default_effort() -> str:
+    """The assistant's effort from TASKS (a task maps to an effort here, or to (tier, effort))."""
+    task = models.TASKS.get("assistant", "medium")
+    return task if isinstance(task, str) else task[1]
+
+
+def effort_for(chat: dict) -> str:
+    """The chat's effort: picked beside the model, else the assistant's default. Extra high is an
+    Opus level; elsewhere it runs as high."""
+    effort = chat.get("effort") or default_effort()
+    return "high" if effort == "xhigh" and "opus" not in (chat.get("model") or "") else effort
+
 
 def title_for(text: str) -> str:
     words = " ".join(text.split())

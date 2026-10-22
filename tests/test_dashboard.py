@@ -3,6 +3,7 @@
 import http.client
 import re
 import threading
+import time
 from dataclasses import replace
 from http.server import ThreadingHTTPServer
 
@@ -93,9 +94,15 @@ def test_today_points_to_the_assistant_and_agent_traces_render(tmp_path, monkeyp
 
 def test_ranked_jobs_open_before_a_resume_and_errors_show(tmp_path, monkeypatch):
     """Without a master resume, Ranked jobs still opens; a page that fails says so (never hangs)."""
+    import shutil
+
+    profile = tmp_path / "profile"
+    shutil.copytree(config.ROOT / "profile.example", profile)
+    (profile / "resume.md").unlink(missing_ok=True)
+    (profile / "search.yaml").write_text("description: data science\n")
+    monkeypatch.setattr(config, "PROFILE_DIR", profile)
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
-    (config.PROFILE_DIR / "resume.md").unlink(missing_ok=True)
-    (config.PROFILE_DIR / "search.yaml").write_text("description: data science\n")
     Tracker(tmp_path / "t.db").add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
     settings = replace(config.Settings.from_env(require_model=False), submit_mode="review")
     app = dashboard.Dashboard(settings, 0)
@@ -109,5 +116,69 @@ def test_ranked_jobs_open_before_a_resume_and_errors_show(tmp_path, monkeypatch)
         monkeypatch.setattr(dashboard, "page_queue", lambda *_: (_ for _ in ()).throw(SystemExit("boom")))
         status, body, _ = request(app.port, "GET", "/queue")
         assert status == 500 and "Something went wrong" in body and "boom" in body
+    finally:
+        server.shutdown()
+
+
+def test_a_prepared_job_can_be_marked_applied(tmp_path, monkeypatch):
+    """Applied to a prepared job outside the app: one click records it (and it leaves the queue)."""
+    from job_agent import packets
+
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    tracker = Tracker(tmp_path / "t.db")
+    tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
+    job = tracker.all()[0]
+    folder = packets.directory(job)
+    packets.save({"job": {"company_id": "acme"}, "fit": {"score": 80, "summary": "", "requirements": [], "flags": []},
+                  "answers": [], "documents": {}, "checks": {},
+                  "tailoring": {"matched": [], "emphasized": [], "gaps": []}}, folder)
+    tracker.move(job["id"], "found", "preparing")
+    tracker.move(job["id"], "preparing", "prepared", packet_dir=str(folder))
+    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        page = request(app.port, "GET", f"/job/{job['id']}")[1]
+        assert 'action="/mark-applied"' in page
+        token = re.search(r'name=token value="([^"]+)"', page).group(1)
+        request(app.port, "POST", "/mark-applied", f"token={token}&job_id={job['id']}",
+                {"Origin": f"http://127.0.0.1:{app.port}"})
+        assert Tracker(tmp_path / "t.db").get(job["id"])["status"] == "submitted"
+    finally:
+        server.shutdown()
+
+
+def test_pages_with_work_running_update_in_place_without_reloading(tmp_path, monkeypatch):
+    """No full-page reloads (they flash and lose your place): the content is swapped in place."""
+    from playwright.sync_api import sync_playwright
+
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    tracker = Tracker(tmp_path / "t.db")
+    task = tracker.add_task("refresh")
+    tracker.set_task(task, status="running", result="Job lists read: 10 new jobs kept so far")
+    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app.ensure_worker = lambda: None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{app.port}/")
+            assert "10 new jobs" in page.inner_text("main")
+            reloads = []
+            page.on("framenavigated", lambda frame: reloads.append(frame.url))
+            tracker.set_task(task, result="Job lists read: 42 new jobs kept so far")
+            deadline = time.time() + 8
+            while "42 new jobs" not in page.inner_text("main") and time.time() < deadline:
+                page.wait_for_timeout(250)
+            assert "42 new jobs" in page.inner_text("main")
+            assert reloads == []  # Same page: updated in place, never reloaded.
+            assert 'http-equiv="refresh"' not in page.content()
+            browser.close()
     finally:
         server.shutdown()

@@ -64,7 +64,7 @@ COMPLIANCE = [{"type": "eeoc", "description": "&lt;p&gt;Voluntary.&lt;/p&gt;", "
 COUNTRIES = ["United States +1", "United Kingdom +44", "Canada +1", "India +91"] + [
     f"Country {n} +{n}" for n in range(100, 170)]
 SCHOOLS = ["New York University", "Polytechnic Institute of New York University",
-           "Columbia University", "Cornell University"]
+           "Columbia University", "Cornell University", "Other"]
 DEGREES = ["Associate's Degree", "Bachelor's Degree", "Master's Degree",
            "Doctor of Philosophy (Ph.D.)", "High School"]
 EXTRA = {"label": "Are you able to work onsite in New York three days a week?",
@@ -124,7 +124,7 @@ def upload(key, label, required):
 
 
 SCRIPT = r"""
-document.querySelectorAll('input[role=combobox]').forEach((inp) => {
+const initCombo = (inp) => {
   const opts = JSON.parse(inp.dataset.options), multi = inp.dataset.multi === '1';
   const search = inp.dataset.search === '1', control = inp.closest('.select__control');
   const hidden = inp.closest('.select').querySelector('input[type=hidden]');
@@ -160,6 +160,18 @@ document.querySelectorAll('input[role=combobox]').forEach((inp) => {
   inp.addEventListener('input', open);
   inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
   inp.addEventListener('blur', () => setTimeout(close, 150));
+};
+document.querySelectorAll('input[role=combobox]').forEach(initCombo);
+// Education: "Add another" inserts the next row (school--1, degree--1, ...), as Greenhouse does.
+document.querySelectorAll('.education--container .add-another-button').forEach((button) => {
+  button.addEventListener('click', () => {
+    const box = button.closest('.education--container'), n = box.querySelectorAll('.education--form').length;
+    const row = document.createElement('div');
+    row.className = 'education--form';
+    row.innerHTML = box.querySelector('template').innerHTML.replaceAll('--0', `--${n}`);
+    button.before(row);
+    row.querySelectorAll('input[role=combobox]').forEach(initCombo);
+  });
 });
 document.querySelectorAll('.file-upload input[type=file]').forEach((inp) => {
   inp.addEventListener('change', () => {
@@ -198,8 +210,10 @@ def form_page(job_id: str) -> str:
         if key == "phone":  # Fields the API doesn't list, as on the real form.
             parts.append(combo("country", "Country", False, COUNTRIES))
         if key == "resume":
-            parts.append(combo("school--0", "School", True, SCHOOLS, search=True))
-            parts.append(combo("degree--0", "Degree", True, DEGREES))
+            row = combo("school--0", "School", True, SCHOOLS, search=True) + combo("degree--0", "Degree", True, DEGREES)
+            parts.append(f'<div class="education--container"><div class="education--form">{row}</div>'
+                         f'<template>{row}</template>'
+                         '<button type="button" class="add-another-button">Add another</button></div>')
         if index == 0:
             parts.append('<div class="hp"><label id="website_hp-label" for="website_hp">Website</label>'
                          '<input id="website_hp" name="website_hp" type="text"></div>')

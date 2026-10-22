@@ -76,7 +76,8 @@ def _submit(job_id: int, ctx, ask, log) -> str:
             system.fill_form(page, packet, packets.files(packet))
         except forms.FillError as error:
             trace.check("Every approved answer could be entered", False, f"{error.label}: {error.problem}")
-            return back_to_you(f"Couldn't fill “{error.label}”: {error.problem}.")
+            what = error.label if error.label.endswith(" fields") else f"“{error.label}”"
+            return back_to_you(f"Couldn't fill {what}: {error.problem}. The rest was filled; nothing was sent.")
         step.summary = f"{sum(a.get('value') not in (None, '', []) for a in packet['answers'])} answers and " \
                        f"{len(packets.files(packet))} document(s)"
 

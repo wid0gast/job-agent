@@ -195,6 +195,23 @@ def ranking_score(job: dict) -> tuple[int | None, str]:
     return None, ""
 
 
+def grouped(jobs: list[dict]) -> list[tuple[dict, list[dict]]]:
+    """Ranked jobs with listings of the same role (same company and title: one role in several
+    offices, or posted more than once) under the best-ranked one, as (job, other listings)."""
+    groups: dict[str, list[dict]] = {}
+    out = []
+    for job in sorted(jobs, key=rank_key):
+        key = job.get("match_key")
+        if key and key in groups:
+            groups[key].append(job)
+            continue
+        others: list[dict] = []
+        if key:
+            groups[key] = others
+        out.append((job, others))
+    return out
+
+
 def rank_key(job: dict) -> tuple:
     """Sort key, best first: model-scored jobs, then keyword-only ones, then the rest; newest breaks ties."""
     score, kind = ranking_score(job)

@@ -13,6 +13,16 @@
   const sendButton = document.getElementById("send");
   const stopButton = document.getElementById("stop");
   const model = document.getElementById("model");
+  const effort = document.getElementById("effort");
+  // Extra high is an Opus level: offered only when an Opus model is picked.
+  const fitEffort = () => {
+    if (!effort) return;  // No effort picker for this model service.
+    const xhigh = effort.querySelector('option[value="xhigh"]');
+    const opus = model.value.includes("opus");
+    xhigh.hidden = !opus;
+    if (!opus && effort.value === "xhigh") effort.value = "high";
+  };
+  fitEffort();
   const empty = document.getElementById("empty");
   const nodes = new Map();
   let rev = 0, running = false, timer = null, stickToBottom = true, shownTasks = "";
@@ -89,7 +99,7 @@
     read_file: "Read a file", edit_file: "Edited a file", update_search: "Updated your search",
     list_tasks: "Checked tasks", wait_for_tasks: "Waiting for tasks", cancel_task: "Cancelled a task",
     find_people: "Finding people to contact", edit_outreach: "Edited a message", redraft_outreach: "Rewriting messages",
-    request_outreach: "Asked you to send an email", set_contact: "Updated a contact",
+    request_outreach: "Asked you to send an email", write_cover_letter: "Writing a cover letter", set_contact: "Updated a contact",
     WebSearch: "Searched the web", WebFetch: "Read a web page", web_search: "Searched the web", web_fetch: "Read a web page",
   };
 
@@ -154,7 +164,8 @@
     } else if (item.kind === "stats") {
       const k = n => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
       const name = MODEL_NAMES[d.model] || d.model;
-      el.innerHTML = `<div class="stats-line">${esc(name)} · ${d.requests} request${d.requests === 1 ? "" : "s"} · ` +
+      const level = {low: "low", medium: "medium", high: "high", xhigh: "extra high", max: "max"}[d.effort] || "";
+      el.innerHTML = `<div class="stats-line">${esc(name)}${level ? ` (${level} effort)` : ""} · ${d.requests} request${d.requests === 1 ? "" : "s"} · ` +
                      `${d.seconds} s · ${k(d.input)} tokens in, ${k(d.output)} out</div>`;
     } else if (item.kind === "note") {
       el.innerHTML = `<div class="note">${esc(d.shown || d.text)}</div>`;
@@ -241,7 +252,7 @@
     const text = input.value.trim();
     if (!text || running) return;
     sendButton.disabled = true;
-    post("/assistant/api/send", {chat: chatId || "", text, model: model.value}).then(reply => {
+    post("/assistant/api/send", {chat: chatId || "", text, model: model.value, effort: effort ? effort.value : ""}).then(reply => {
       sendButton.disabled = false;
       if (reply.error) return;
       input.value = "";
@@ -258,7 +269,9 @@
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
   });
   input.addEventListener("input", () => { input.style.height = ""; input.style.height = Math.min(input.scrollHeight, 220) + "px"; });
-  model.addEventListener("change", () => chatId && post("/assistant/api/model", {chat: chatId, model: model.value}));
+  const saveChoice = () => chatId && post("/assistant/api/model", {chat: chatId, model: model.value, effort: effort ? effort.value : ""});
+  model.addEventListener("change", () => { fitEffort(); saveChoice(); });
+  if (effort) effort.addEventListener("change", saveChoice);
   document.querySelectorAll("[data-prompt]").forEach(button => button.addEventListener("click", () => {
     input.value = button.dataset.prompt; input.focus();
   }));
@@ -266,7 +279,7 @@
     event.preventDefault();
     if (!confirm("Delete this chat? Jobs and applications aren't affected.")) return;
     post("/assistant/api/delete", {chat: button.dataset.delete}).then(() => {
-      location.href = Number(button.dataset.delete) === chatId ? "/assistant" : location.href;
+      location.href = Number(button.dataset.delete) === chatId ? "/assistant?new=1" : location.href;
     });
   }));
   input.focus();

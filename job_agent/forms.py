@@ -81,11 +81,36 @@ def answered(packet: dict) -> list[dict]:
 
 # ----- standard widgets -------------------------------------------------------
 
+def text_value(value) -> str:
+    """Text as a form field holds it: line breaks as \n (a browser's text box stores \r\n as \n)."""
+    return str(value).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def same_text(shown: str, wanted) -> bool:
+    return text_value(shown).strip() == text_value(wanted).strip()
+
+
+def fill_all(page, packet: dict, files: dict, fill_field) -> None:
+    """Fill every answer, then report every field that failed (one problem never leaves the rest
+    of the form empty). Nothing is submitted while any failed."""
+    failed = []
+    for answer in answered(packet):
+        try:
+            fill_field(page, answer, answer["value"], files)
+        except FillError as error:
+            failed.append(error)
+    if len(failed) == 1:
+        raise failed[0]
+    if failed:
+        raise FillError(failed[0].key, f"{len(failed)} fields",
+                        "; ".join(f"“{e.label[:80]}”: {e.problem}" for e in failed))
+
+
 def type_into(locator, value: str, field: dict) -> None:
     locator.scroll_into_view_if_needed(timeout=5000)
-    locator.fill(str(value))
+    locator.fill(text_value(value))
     locator.evaluate("el => el.dispatchEvent(new Event('blur', {bubbles: true}))")
-    if locator.input_value().strip() != str(value).strip():
+    if not same_text(locator.input_value(), value):
         raise FillError(field["key"], field["label"], "value didn't stick")
 
 

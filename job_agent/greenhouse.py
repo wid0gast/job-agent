@@ -14,7 +14,7 @@ import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from .forms import (Closed, FillError, answered, clean, norm, pick_option,  # noqa: F401
+from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, clean, norm, pick_option,  # noqa: F401
                     unexpected, wait_for_result)
 
 API = "https://boards-api.greenhouse.io/v1/boards"
@@ -157,8 +157,23 @@ PAGE_FIELDS_JS = r"""
 """
 
 
+def education_rows(page) -> None:
+    """One education row per degree in your profile: "Add another" until there are enough."""
+    from . import config
+
+    wanted = len(config.load_profile().get("education") or [])
+    button = page.locator(".education--container button.add-another-button").first
+    for _ in range(4):
+        rows = page.locator('[id^="school--"][role="combobox"]').count()
+        if not rows or rows >= wanted or not button.count():
+            return
+        button.click()
+        page.locator(f'[id="school--{rows}"]').wait_for(timeout=5000)
+
+
 def page_fields(page) -> list[dict]:
     """Visible fields on the open form, with combobox options read by opening each."""
+    education_rows(page)
     fields = page.evaluate(PAGE_FIELDS_JS)
     for field in fields:
         if field["kind"] == "select":
@@ -211,7 +226,57 @@ def read_form(page, board: str, job_id: str, data: dict) -> tuple[list[dict], li
     page.goto(apply_url(board, job_id), wait_until="domcontentloaded")
     page.locator("#application-form, form").first.wait_for(timeout=20000)
     page.wait_for_timeout(800)
-    return merge(api_fields(data), page_fields(page))
+    fields, notes = merge(api_fields(data), page_fields(page))
+    unlisted_education(page, fields)
+    return fields, notes
+
+
+def probe(page, key: str, value: str) -> str | None:
+    """The option a search box offers for `value`, typed as a person would (nothing is chosen)."""
+    box = page.locator(f'[id="{key}"]')
+    try:
+        box.scroll_into_view_if_needed(timeout=5000)
+        for attempt in range(2):  # A menu left open by the last box can cover this one.
+            try:
+                box.click(timeout=4000)
+                break
+            except Exception:  # noqa: BLE001
+                if attempt:
+                    raise
+                page.keyboard.press("Escape")
+                page.evaluate("() => document.activeElement && document.activeElement.blur()")
+        box.press_sequentially(value[:40], delay=20)
+        listbox = page.locator(f'[id="react-select-{key}-listbox"]')
+        deadline, options = time.time() + 4, []
+        while time.time() < deadline:
+            options = [clean(o) for o in listbox.locator('[role="option"]').all_inner_texts()] if listbox.count() else []
+            index = pick_option(options, value, loose=True)
+            if index is not None:
+                return options[index]
+            time.sleep(0.4)
+        return None
+    except Exception:  # noqa: BLE001 - unknown: leave it to the normal path.
+        return value
+    finally:
+        page.keyboard.press("Escape")
+        box.fill("")
+        box.evaluate("el => el.blur()")
+
+
+def unlisted_education(page, fields: list[dict]) -> None:
+    """Search boxes in education rows (school, discipline) whose lists may not have your value:
+    found out now, so the packet you approve says exactly what will be chosen."""
+    from . import config
+    from .answers import EDUCATION_ROW, education_value
+
+    profile = config.load_profile()
+    for field in fields:
+        row = EDUCATION_ROW.match(field["key"])
+        if not row or field["kind"] != "search" or row.group(1) not in ("school", "discipline"):
+            continue
+        value = education_value(profile, row.group(1), int(row.group(2)))
+        if value and probe(page, field["key"], str(value)) is None:
+            field["unlisted"] = {"value": value, "instead": probe(page, field["key"], "Other")}
 
 
 # ----- filling --------------------------------------------------------------
@@ -278,9 +343,9 @@ def fill_field(page, field: dict, value, files: dict) -> None:
         return
     box = page.locator(f'[id="{key}"]')
     box.scroll_into_view_if_needed(timeout=5000)
-    box.fill(str(value))
+    box.fill(text_value(value))
     box.evaluate("el => el.dispatchEvent(new Event('blur', {bubbles: true}))")
-    if box.input_value().strip() != str(value).strip():
+    if not same_text(box.input_value(), value):
         raise FillError(key, field["label"], "value didn't stick")
 
 
@@ -306,8 +371,7 @@ def tick(page, field: dict, values: list[str]) -> None:
 
 
 def fill_form(page, packet: dict, files: dict) -> None:
-    for answer in answered(packet):
-        fill_field(page, answer, answer["value"], files)
+    fill_all(page, packet, files, fill_field)
 
 
 # ----- submitting -----------------------------------------------------------

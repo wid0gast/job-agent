@@ -221,7 +221,9 @@ How to work: search with site set to linkedin.com (e.g. "Company role
 title", "Company university recruiter"), and the company's own blog, team
 and engineering pages (authors and staff stories often say their role and
 school). LinkedIn pages can't be opened, and its results often show only a
-name and headline: use exactly that. A shared school or employer usually
+name and headline: use exactly that, but know they can be months out of
+date, so prefer someone a page you read confirms (a team page, a recent
+post) over a headline alone. A shared school or employer usually
 needs a page that says it (a blog bio, a university news story, a personal
 site): fetch it and quote it. Keep a person with save_person only when the
 quote (exact words from the page or result) shows their name, the company
