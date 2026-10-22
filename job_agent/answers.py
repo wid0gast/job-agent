@@ -21,6 +21,11 @@ DEGREE_NAMES = ["Associate's Degree", "Bachelor's Degree", "Master's Degree",
 VISA_SPONSORSHIP = (r"(visa|immigration|employment|work|h-?1b|status)\b[^?]*sponsor|"
                     r"sponsor[^?]*\b(visa|immigration|employment|work|h-?1b)|"
                     r"(require|need)s?\b[^?]{0,20}sponsorship")
+US = re.compile(r"\b(united states|u\.?s\.?a?\.?|america)\b", re.I)
+OTHER_COUNTRY = re.compile(
+    r"\b(canada|united kingdom|u\.?k\.?|britain|england|ireland|india|germany|france|netherlands|spain|"
+    r"italy|switzerland|poland|europe|european union|eu|eea|australia|new zealand|singapore|japan|china|"
+    r"hong kong|israel|mexico|brazil|uae|dubai)\b", re.I)
 ACKNOWLEDGE = re.compile(r"privacy|gdpr|consent|code of conduct|acknowledg|terms|data protection", re.I)
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
           "September", "October", "November", "December"]
@@ -144,7 +149,12 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
     standard = profile.get("standard_answers", {})
     eeo = profile.get("eeo", {})
     first, _, last = (contact.get("name") or "").partition(" ")
+    # profile.yaml can set them apart, for names with a middle part.
+    first, last = contact.get("first_name") or first, contact.get("last_name") or last
     key, label = field["key"], field["label"].lower()
+    # Authorization and sponsorship in your profile are for the US: a question about
+    # another country is left for you.
+    elsewhere = bool(OTHER_COUNTRY.search(label)) and not US.search(label)
     month, year = graduation(profile)
     start_month, start_year = month_year(education.get("start"))
     by_key = {
@@ -214,8 +224,8 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
             (r"github", contact.get("github")),
             (r"\b(website|portfolio)\b", contact.get("website") or contact.get("github")),
             (r"authori[sz]ed to work|legally (able|eligible) to work|work authori[sz]ation",
-             yes_no(auth.get("authorized_in_us"))),
-            (VISA_SPONSORSHIP, sponsorship_answer(label, auth)),
+             None if elsewhere else yes_no(auth.get("authorized_in_us"))),
+            (VISA_SPONSORSHIP, None if elsewhere else sponsorship_answer(label, auth)),
             (r"how did you (hear|find|learn)|where did you (hear|find)|which channel",
              standard.get("how_did_you_hear")),
             (r"(previously|ever) (been )?(work|employ)|worked (at|for) .* before|"

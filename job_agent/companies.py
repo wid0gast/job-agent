@@ -103,11 +103,13 @@ class Companies:
         if not self.dirty:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w", newline="", encoding="utf-8") as handle:
+        partial = self.path.with_name(self.path.name + ".partial")  # Swapped in whole.
+        with partial.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=FIELDS)
             writer.writeheader()
             for company_id in sorted(self.rows):
                 writer.writerow({k: self.rows[company_id].get(k, "") for k in FIELDS})
+        partial.replace(self.path)
         self.dirty = False
 
 

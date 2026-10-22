@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from urllib.parse import quote, urlsplit
 
 from . import config, documents, packets, style, trace
-from .harness import AgentRun, StopRun, Tool, schema, trace_path
+from .harness import AgentRun, Tool, schema, trace_path
 from .research import Researcher, norm
 
 KINDS = {"background": "Shares your background", "peer": "In this role or team",
@@ -534,7 +534,8 @@ def due(tracker) -> list[dict]:
     for job_id in tracker.contacted_jobs():
         job = tracker.get(job_id)
         packet = packets.load(job) if job else None
-        if job and job["status"] == "rejected":  # You're not pursuing it.
+        # You're not pursuing it, or the company has answered: no more nudges.
+        if job and (job["status"] == "rejected" or job.get("outcome") in SETTLED):
             continue
         people = [p for p in ((packet or {}).get("people") or {}).get("people", []) if not p.get("removed")]
         sent = [p for p in people if p.get("sent_at")]
@@ -551,8 +552,13 @@ def due(tracker) -> list[dict]:
     return out
 
 
+# Outcomes after which reminders to contact people stop.
+SETTLED = ("oa", "interview", "offer", "rejected", "withdrawn")
+
+
 def age_days(stamp: str) -> int:
-    return (datetime.now(UTC) - datetime.fromisoformat(stamp)).days
+    when = datetime.fromisoformat(stamp)
+    return (datetime.now(UTC) - (when if when.tzinfo else when.replace(tzinfo=UTC))).days
 
 
 def refresh(job_id: int, ctx, log=print) -> str:

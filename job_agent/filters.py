@@ -81,8 +81,11 @@ def degree_levels(profile: dict) -> set[str]:
 def check(job: dict, details: dict, profile: dict) -> str | None:
     """Why this job is filtered out, or None if it passes."""
     prefs = profile.get("preferences", {})
-    excluded = {c.lower() for c in prefs.get("exclude_companies", [])}
-    if (job.get("company") or "").lower() in excluded:
+    from .companies import slug  # "Meta" excludes "Meta Platforms, Inc." too.
+
+    excluded = [slug(c) for c in prefs.get("exclude_companies", []) if slug(c)]
+    company = slug(job.get("company") or "")
+    if company and any(company == e or company.startswith(e + "-") for e in excluded):
         return "Excluded company."
     from . import sources  # (sources imports this module)
 
@@ -118,13 +121,20 @@ def check(job: dict, details: dict, profile: dict) -> str | None:
     if mine and wanted and not mine & wanted:
         return f"Degree: asks for {', '.join(sorted(wanted))}."
     max_age = prefs.get("max_posting_age_days")
-    if max_age and job.get("posted_at"):
-        posted = datetime.fromisoformat(job["posted_at"].replace("Z", "+00:00"))
-        if posted.tzinfo is None:
-            posted = posted.replace(tzinfo=UTC)
-        if datetime.now(UTC) - posted > timedelta(days=int(max_age)):
-            return f"Posted more than {max_age} days ago."
+    posted = posted_date(job.get("posted_at"))
+    if max_age and posted and datetime.now(UTC) - posted > timedelta(days=int(max_age)):
+        return f"Posted more than {max_age} days ago."
     return None
+
+
+def posted_date(stamp: str | None) -> datetime | None:
+    """A board's posting date, or None when missing or malformed (boards vary; one odd
+    date must not stop a refresh)."""
+    try:
+        posted = datetime.fromisoformat((stamp or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return posted if posted.tzinfo else posted.replace(tzinfo=UTC)
 
 
 def sponsorship_problem(description: str, profile: dict) -> str | None:

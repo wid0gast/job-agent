@@ -26,7 +26,6 @@ from .harness import AgentRun, StopRun, Tool, schema
 from .pageview import FINAL_SUBMIT, PageView, follow_new_tab
 
 MAX_QUESTIONS = 3
-EXPLORES = True  # prepare.build: the form is read by exploring, after the documents exist.
 KEYCHAIN = "job-agent"
 
 
@@ -389,8 +388,9 @@ def walk(page, packet, files, ask, *, email, tracker, before_final, known, log):
                               "isn't there any more. Prepare it again."}
         if step["action"] == "submit":
             before_final()
+            before = forms.visible_text(page)
             found.first.click()
-            return forms.wait_for_result(page, ask)
+            return forms.wait_for_result(page, ask, before=before)
         pages = len(context.pages)
         replay_step(page, found, step, values, by_key, files, ask)
         if step["action"] == "click":  # It may open the application in a new tab.

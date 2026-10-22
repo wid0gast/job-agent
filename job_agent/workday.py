@@ -614,8 +614,9 @@ def walk(page, packet: dict, files: dict, ask, *, email: str, tracker, before_fi
         label = clean(footer.inner_text())
         if re.search(r"submit", label, re.I):
             before_final()
+            before = visible_text(page)
             footer.click()
-            return wait_for_result(page, ask, errors=ERRORS)
+            return wait_for_result(page, ask, before=before, errors=ERRORS)
         footer.click()
         page.wait_for_timeout(1500)
         settle(page)

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import config
+from .llm import NOT_SET_UP
 from .tracker import Tracker
 
 DB_PATH = config.DATA_DIR / "applications.db"
@@ -60,7 +61,7 @@ class Context:
         self.llm = client(settings)
         self.ask = None  # Set per task: how a step asks you something.
         if require_model and self.llm is None:
-            raise SystemExit("Set OPENROUTER_API_KEY and OPENROUTER_MODEL in .env.")
+            raise SystemExit(NOT_SET_UP)
         self.http = http()
         self.playwright = sync_playwright().start()
         self.headless = Headless(self.playwright, settings.browser_channel)
@@ -105,8 +106,6 @@ class Context:
 
 
 def run_task(task: dict, ctx: Context, log) -> str:
-    from . import prepare, resumes, sources, submit
-
     tracker = ctx.tracker
 
     def ask(question: str) -> str:
@@ -128,70 +127,95 @@ def run_task(task: dict, ctx: Context, log) -> str:
         raise TimeoutError("No reply within 15 minutes.")
 
     ctx.ask = ask  # Agents inside a step (the explorer during prepare) ask through this task.
-    if task["kind"] == "discover":
-        from . import discover
+    handler = HANDLERS.get(task["kind"])
+    if handler is None:
+        raise ValueError(f"Unknown task {task['kind']!r}.")
+    if task["kind"] in NEEDS_MODEL and ctx.llm is None:
+        raise ValueError(NOT_SET_UP)
+    return handler(task, ctx, log)
 
-        c = discover.run(ctx.llm, tracker, config.load_profile(), log)
-        return (f"{c['postings']} postings found on job sites; {c['new_boards']} new company boards; "
-                f"{c['new']} new jobs, {c['seen']} already known")
-    if task["kind"] == "warmup":
-        from . import hosted
 
-        return hosted.warm_up(ctx, log)
-    if task["kind"] == "refresh":
-        counts = sources.refresh(tracker, config.load_profile(), boards=True, log=log,
-                                 progress=lambda text: tracker.set_task(task["id"], result=text))
-        from . import matching
+def _discover(task, ctx, log) -> str:
+    from . import discover
 
-        matching.keyword_rank(tracker, config.load_profile())  # Free; the model ranks only the best of these.
-        return (f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known; "
-                f"{counts['skipped']} outside your search not kept")
-    if task["kind"] == "sync_profile":
-        from . import profile_sync
+    c = discover.run(ctx.llm, ctx.tracker, config.load_profile(), log)
+    return (f"{c['postings']} postings found on job sites; {c['new_boards']} new company boards; "
+            f"{c['new']} new jobs, {c['seen']} already known")
 
-        if ctx.llm is None:
-            raise ValueError("Add an OpenRouter key and model in .env to read your resume.")
-        notes = profile_sync.sync(ctx.llm, log)
-        return "Profile updated from your resume. " + " ".join(notes)
-    if task["kind"] == "merge_resumes":
-        proposal = resumes.propose(log=log)
-        return f"Proposed master resume ready for review ({len(proposal['kept'])} line(s) kept from older versions)."
-    if task["kind"] == "import_resume":
-        if ctx.llm is None:
-            raise ValueError("Add an OpenRouter key and model in .env to read resumes.")
-        details = resumes.parse(ctx.llm, Path(task["arg"]), log)
-        return f"Read {details['source']} (content through {details['latest_date']})."
-    if task["kind"] == "score_matches":
-        return score_matches(ctx, log)
-    if task["kind"] == "draft":
-        return prepare.draft_missing(task["job_id"], ctx, log)
-    if task["kind"] == "prepare":  # arg: a note on what to change, for a redo.
-        return prepare.prepare(task["job_id"], ctx, log, note=task["arg"] or "")
-    if task["kind"] == "render":
-        return prepare.render(task["job_id"], ctx, log)
-    if task["kind"] == "letter":
-        return prepare.add_letter(task["job_id"], ctx, log)
-    if task["kind"] == "people":
-        from . import people
 
-        return people.refresh(task["job_id"], ctx, log)
-    if task["kind"] == "redraft":  # arg: {"people": [ids], "note": "what to change"}
-        import json
+def _warmup(task, ctx, log) -> str:
+    from . import hosted
 
-        from . import people
+    return hosted.warm_up(ctx, log)
 
-        request = json.loads(task["arg"] or "{}")
-        return people.redraft(task["job_id"], ctx, request.get("people") or [], request.get("note", ""), log)
-    if task["kind"] == "submit":
-        return submit.submit(task["job_id"], ctx, ask, log)
-    raise ValueError(f"Unknown task {task['kind']!r}.")
+
+def _refresh(task, ctx, log) -> str:
+    from . import matching, sources
+
+    counts = sources.refresh(ctx.tracker, config.load_profile(), boards=True, log=log,
+                             progress=lambda text: ctx.tracker.set_task(task["id"], result=text))
+    matching.keyword_rank(ctx.tracker, config.load_profile())  # Free; the model ranks only the best of these.
+    return (f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known; "
+            f"{counts['skipped']} outside your search not kept")
+
+
+def _sync_profile(task, ctx, log) -> str:
+    from . import profile_sync
+
+    return "Profile updated from your resume. " + " ".join(profile_sync.sync(ctx.llm, log))
+
+
+def _merge_resumes(task, ctx, log) -> str:
+    from . import resumes
+
+    proposal = resumes.propose(log=log)
+    return f"Proposed master resume ready for review ({len(proposal['kept'])} line(s) kept from older versions)."
+
+
+def _import_resume(task, ctx, log) -> str:
+    from . import resumes
+
+    details = resumes.parse(ctx.llm, Path(task["arg"]), log)
+    return f"Read {details['source']} (content through {details['latest_date']})."
+
+
+def _redraft(task, ctx, log) -> str:  # arg: {"people": [ids], "note": "what to change"}
+    import json
+
+    from . import people
+
+    request = json.loads(task["arg"] or "{}")
+    return people.redraft(task["job_id"], ctx, request.get("people") or [], request.get("note", ""), log)
+
+
+def step(module: str, name: str):
+    """A pipeline function, imported when first used (the dashboard imports this module too)."""
+    import importlib
+
+    return getattr(importlib.import_module(f".{module}", __package__), name)
+
+
+# Every kind of task the dashboard and the assistant queue, and what runs it.
+HANDLERS = {
+    "discover": _discover, "warmup": _warmup, "refresh": _refresh, "sync_profile": _sync_profile,
+    "merge_resumes": _merge_resumes, "import_resume": _import_resume, "redraft": _redraft,
+    "score_matches": lambda task, ctx, log: score_matches(ctx, log),
+    # arg: a note on what to change, for a redo.
+    "prepare": lambda task, ctx, log: step("prepare", "prepare")(task["job_id"], ctx, log, note=task["arg"] or ""),
+    "draft": lambda task, ctx, log: step("prepare", "draft_missing")(task["job_id"], ctx, log),
+    "render": lambda task, ctx, log: step("prepare", "render")(task["job_id"], ctx, log),
+    "letter": lambda task, ctx, log: step("prepare", "add_letter")(task["job_id"], ctx, log),
+    "people": lambda task, ctx, log: step("people", "refresh")(task["job_id"], ctx, log),
+    "submit": lambda task, ctx, log: step("submit", "submit")(task["job_id"], ctx, ctx.ask, log),
+}
+NEEDS_MODEL = ("sync_profile", "import_resume")
 
 
 def score_matches(ctx: Context, log) -> str:
     from . import matching
 
     if ctx.llm is None:
-        raise ValueError("Add an OpenRouter key and model in .env to rank jobs.")
+        raise ValueError(NOT_SET_UP)
     result = matching.score(ctx.llm, ctx.tracker, log=log)
     return (f"Ranked {result['scored']} job(s) with the model; {result['remaining']} not yet "
             "(they keep their keyword score).")

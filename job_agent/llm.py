@@ -33,6 +33,10 @@ def choices() -> list[str]:
     return [m.strip() for m in os.environ.get("OPENROUTER_MODEL", "").split(",") if m.strip()]
 
 
+TRANSIENT = re.compile(r"overloaded|\b5\d\d\b|timed? ?out|took more than|connection|network|"
+                       r"temporar|ECONNRESET|socket|try again", re.I)
+
+
 class SpendCapReached(RuntimeError):
     pass
 

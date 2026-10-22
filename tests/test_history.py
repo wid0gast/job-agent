@@ -104,3 +104,21 @@ def test_status_column_must_be_clear(tracker, tmp_path):
     with pytest.raises(ValueError, match="status-column"):
         history.import_sheet(write(tmp_path, sheet), tracker)  # profile name is Jane: ambiguous
     assert history.import_sheet(write(tmp_path, sheet), tracker, status="Alex")["added"] == 4
+
+
+def test_quiet_applications_become_no_response_once(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from job_agent import history
+    from job_agent.tracker import Tracker
+
+    tracker = Tracker(tmp_path / "t.db")
+    tracker.add_lead("https://boards.greenhouse.io/acme/jobs/1", "test", "Acme", "Data Intern", "NYC")
+    job = tracker.leads(5)[0]["id"]
+    old = (datetime.now(UTC) - timedelta(days=40)).isoformat(timespec="seconds")
+    tracker.mark_applied(job, old, "you")
+    assert history.mark_quiet(tracker) == 1 and tracker.get(job)["outcome"] == "no_response"
+    tracker.set_outcome(job, "applied", note="Still waiting.")  # You set it back:
+    assert history.mark_quiet(tracker) == 0 and tracker.get(job)["outcome"] == "applied"
+    rows = history.breakdown(tracker)
+    assert {"group": "Contacted someone", "value": "no", "n": 1, "heard": 0, "positive": 0} in rows

@@ -10,7 +10,7 @@ comboboxes (location, school) and month/year dropdowns (education dates).
 """
 
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
-                    select_native, type_into, wait_for_result)
+                    select_native, type_into, visible_text, wait_for_result)
 
 GRAPHQL = "https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobPosting"
 JOBS = "https://jobs.ashbyhq.com"
@@ -227,5 +227,6 @@ def fill_form(page, packet: dict, files: dict) -> None:
 
 
 def submit(page, ask) -> dict:
+    before = visible_text(page)
     page.locator("button").filter(has_text="Submit Application").first.click()
-    return wait_for_result(page, ask, errors="[class*=_error]:visible, .ashby-application-form-error")
+    return wait_for_result(page, ask, before=before, errors="[class*=_error]:visible, .ashby-application-form-error")

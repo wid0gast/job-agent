@@ -81,6 +81,11 @@ def resolve(tracker, job_id: int, outcome: str) -> None:
     tracker.move(job_id, "needs_you", outcome, reason=f"Marked {outcome} by you.")
 
 
+def skip(tracker, job_id: int) -> None:
+    """You're not interested in a found job: set aside, with the reason; requeue undoes it."""
+    tracker.move(job_id, "found", "skipped", reason="Not interested (you).")
+
+
 def requeue(tracker, job_id: int) -> None:
     tracker.move(job_id, ("failed", "rejected", "skipped", "closed", "filtered_out"), "found",
                  reason="Requeued by you.")

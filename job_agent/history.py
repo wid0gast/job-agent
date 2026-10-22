@@ -165,3 +165,54 @@ def summary(tracker: Tracker) -> dict:
             "response_rate": round(100 * answered / len(apps)) if apps else 0,
             "positive_rate": round(100 * sum(counts[o] for o in ("oa", "interview", "offer")) / len(apps))
             if apps else 0}
+
+
+QUIET_DAYS = 30  # No reply after this long: most employers that answer do so well before.
+HEARD = ("oa", "interview", "offer", "rejected")
+POSITIVE = ("oa", "interview", "offer")
+
+
+def mark_quiet(tracker: Tracker, days: int = QUIET_DAYS) -> int:
+    """Applications still "applied" after `days` become "no response". One you set back to
+    applied (its history has a no_response entry) is left as you set it."""
+    from .tracker import utc_days_ago
+
+    cutoff, marked = utc_days_ago(days), 0
+    for job in tracker.applications():
+        if ((job["outcome"] or "applied") != "applied" or not job["applied_date_known"]
+                or (job["submitted_at"] or "") > cutoff
+                or any(e["kind"] == "no_response" for e in tracker.events(job["id"]))):
+            continue
+        tracker.set_outcome(job["id"], "no_response", note=f"No reply in {days} days (marked automatically; "
+                            "set it back if you're still waiting).")
+        marked += 1
+    return marked
+
+
+def breakdown(tracker: Tracker) -> list[dict]:
+    """Response rates by what you can change: fit, reaching out, how and where you applied."""
+    contacted = set(tracker.contacted_jobs())
+
+    def fit_band(job):
+        score = job["fit_score"]
+        return "not scored" if score is None else "fit 80+" if score >= 80 else "fit 60-79" if score >= 60 else "fit under 60"
+
+    groups = {
+        "Fit": fit_band,
+        "Contacted someone": lambda job: "yes" if job["id"] in contacted else "no",
+        "Applied": lambda job: {"agent": "by the agent", "import": "imported"}.get(job["applied_via"] or "",
+                                                                                  "by you"),
+        "System": lambda job: job["ats"] or "other",
+    }
+    apps = tracker.applications()
+    out = []
+    for name, key in groups.items():
+        rows: dict[str, list[dict]] = {}
+        for job in apps:
+            rows.setdefault(key(job), []).append(job)
+        for value, jobs in sorted(rows.items(), key=lambda kv: -len(kv[1])):
+            heard = sum((j["outcome"] or "applied") in HEARD for j in jobs)
+            good = sum((j["outcome"] or "applied") in POSITIVE for j in jobs)
+            out.append({"group": name, "value": value, "n": len(jobs),
+                        "heard": round(100 * heard / len(jobs)), "positive": round(100 * good / len(jobs))})
+    return out

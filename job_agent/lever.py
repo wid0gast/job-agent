@@ -11,7 +11,7 @@ invisible hCaptcha; a visible challenge is handed to you.
 from urllib.parse import quote
 
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
-                    select_native, type_into, wait_for_result)
+                    pick_option, select_native, type_into, visible_text, wait_for_result)
 
 API = "https://api.lever.co/v0/postings"
 API_EU = "https://api.eu.lever.co/v0/postings"
@@ -136,10 +136,12 @@ def fill_field(page, field: dict, value, files: dict) -> None:
         box = page.locator("#location-input")
         box.fill("")
         box.press_sequentially(str(value)[:40], delay=30)
-        option = page.locator(".dropdown-location, .dropdown-results div:visible").first
+        options = page.locator(".dropdown-location, .dropdown-results div:visible")
         try:
-            option.wait_for(timeout=6000)
-            option.click()
+            options.first.wait_for(timeout=6000)
+            texts = [clean(t) for t in options.all_inner_texts()]
+            # The suggestion that is this place ("Portland, ME" for "Portland, ME"), else the top one.
+            options.nth(pick_option(texts, str(value), loose=True) or 0).click()
         except Exception:  # noqa: BLE001 - no suggestion list: the typed text stands.
             pass
         if not box.input_value().strip():
@@ -153,6 +155,7 @@ def fill_form(page, packet: dict, files: dict) -> None:
 
 
 def submit(page, ask) -> dict:
+    before = visible_text(page)
     page.locator("#btn-submit, button[type=submit]").first.click()
-    return wait_for_result(page, ask, done_url=("/thanks",),
+    return wait_for_result(page, ask, before=before, done_url=("/thanks",),
                            errors=".application-error, .error-message:visible, [class*=error]:visible")

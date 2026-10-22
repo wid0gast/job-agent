@@ -26,7 +26,10 @@ def directory(job: dict) -> Path:
 def save(packet: dict, folder: Path) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "packet.json"
-    path.write_text(json.dumps(packet, indent=1, ensure_ascii=False), encoding="utf-8")
+    # Written whole, then swapped in: a crash mid-write never leaves half a packet.
+    partial = folder / "packet.json.partial"
+    partial.write_text(json.dumps(packet, indent=1, ensure_ascii=False), encoding="utf-8")
+    partial.replace(path)
     return path
 
 

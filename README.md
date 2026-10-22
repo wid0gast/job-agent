@@ -291,6 +291,9 @@ emailed code).
   limits, and asks for one rewrite when it finds any. The prompts were tuned on
   real postings ([eval](docs/writing-eval.md)). Resume PDFs keep your style and
   read cleanly in applicant tracking systems.
+- **Tracks what happens next.** Mark each application's outcome; ones with no reply in
+  30 days are marked no response, and the Applications page shows which kinds of
+  applications get answers. Ranked jobs can be searched, paged and set aside in one click.
 - **Quality over volume.** Tailored applications get roughly 3–4x the
   response rate of mass ones, and sites restrict accounts that behave like
   bots. Hence the daily cap and the review step.
