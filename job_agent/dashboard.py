@@ -1121,7 +1121,11 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
              + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(label(a))}</a></li>' for a in problems)
-             + "</ul></div>") if problems else ""
+             + "</ul>" + ('<p style="margin:8px 0 0">Your work authorization isn\'t set: choose it once on the '
+                          '<a href="/profile#authorization">Profile page</a> and these questions are answered in '
+                          'code on applications prepared from then on.</p>'
+                          if any("work_authorization" in (a.get("note") or "") for a in problems) else "")
+             + "</div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
     if checks.get("resume_pages", 1) > 1:
         warn.append(f"The resume is {checks['resume_pages']} pages.")
@@ -1424,6 +1428,23 @@ def page_profile(app: Dashboard, flash: str) -> bytes:
              f'<pre>{esc(derived.read_text(encoding="utf-8"))}</pre></div>') if derived.exists() else (
         '<div class=card><h2>From your resume</h2><p class=muted>Nothing yet: add your '
         '<a href="/resumes">master resume</a> and your details are read from it.</p></div>')
+    auth = config.load_profile().get("work_authorization") or {}
+    if "authorized_in_us" in auth:
+        status = (f'<div class=card><h2>Work authorization</h2><p style="margin:0">{esc(auth.get("rule") or auth.get("status") or "From your profile")}: '
+                  f'authorized in the U.S. {"yes" if auth["authorized_in_us"] else "no"}; sponsorship now '
+                  f'{"yes" if auth.get("requires_sponsorship_now") else "no"}, later '
+                  f'{"yes" if auth.get("requires_sponsorship_future") else "no"}.</p><p class=muted '
+                  f'style="margin:6px 0 0">Forms\' authorization and sponsorship questions are answered from this, '
+                  f'in code. Change it under work_authorization in Profile settings.</p></div>')
+    else:
+        options = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in actions.AUTHORIZATION.items())
+        status = (f'<div class="card" id=authorization><h2>Work authorization</h2><p class=muted>Not set, so every '
+                  f'form\'s "authorized to work?" and "need sponsorship?" questions are left for you. Choose once '
+                  f'and they\'re answered in code from fixed rules. Not listed? Add it in Profile settings.</p>'
+                  f'<form method=post action="/profile/authorization" class=row><input type=hidden name=token '
+                  f'value="{app.token}"><select name=choice required style="width:auto"><option value="" selected disabled>'
+                  f'Choose your status…</option>{options}</select>'
+                  f'<button class=primary>Save</button></form></div>')
     cards = []
     for name, title, help_text in PROFILE_SECTIONS:
         text = config.read_optional(name) or ""
@@ -1438,7 +1459,7 @@ def page_profile(app: Dashboard, flash: str) -> bytes:
     body = f"""<h1>Profile</h1>
     <p class=muted style="margin-top:-8px">Stays on your computer; sent to Claude only to tailor resumes and answer
     application questions.</p>
-    {facts}{"".join(cards)}"""
+    {status}{facts}{"".join(cards)}"""
     return layout(app, "/profile", body, flash)
 
 
@@ -2289,6 +2310,9 @@ def handler_for(app: Dashboard):
                     tracker.add_task("sync_profile")
                     message += " Updating your profile facts from it."
                 return message, "/resumes"
+            if path == "/profile/authorization":
+                auth = actions.set_work_authorization(tracker, one.get("choice", ""))
+                return f"Saved: {auth['rule']}.", "/profile"
             if path == "/profile/save":
                 name = one.get("file", "")
                 actions.save_profile(tracker, name, one.get("content", ""))

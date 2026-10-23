@@ -103,3 +103,24 @@ def test_field_and_seniority_filters():
     assert "Not in your fields" in reason({"title": "Sales Lead"}, {}, software)  # A board job: by title.
     assert reason({"title": "Staff Engineer"}, {}, {}) .startswith("Senior role")
     assert reason({"title": "Staff Engineer"}, {}, {"include_senior": True}) is None
+
+
+def test_work_authorization_is_chosen_once_on_the_profile_page(app, profile):
+    import yaml
+
+    from job_agent import answers
+
+    facts = yaml.safe_load((profile / "resume-profile.yaml").read_text())
+    facts.pop("work_authorization")
+    (profile / "resume-profile.yaml").write_text(yaml.safe_dump(facts))
+    _, _, page = request(app, "GET", "/profile")
+    assert 'action="/profile/authorization"' in page
+    status, where, _ = request(app, "POST", "/profile/authorization", {"choice": "f1"})
+    assert status == 303 and "F-1" in where
+    auth = config.load_profile()["work_authorization"]
+    assert answers.sponsorship_answer("Will you now or in the future require visa sponsorship?", auth) == "Yes"
+    assert "# What your resume can't say" in (profile / "profile.yaml").read_text(), "your comments are kept"
+    _, _, page = request(app, "GET", "/profile")
+    assert 'action="/profile/authorization"' not in page and "F-1 student" in page
+    _, where, _ = request(app, "POST", "/profile/authorization", {"choice": "citizen"})
+    assert "already%20sets" in where  # Once set, it's changed in profile.yaml.

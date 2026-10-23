@@ -180,6 +180,29 @@ def save_search(tracker, settings, values: dict) -> tuple[str, bool]:
     return f"Saved. {after} job(s) pass your filters ({after - before:+d}).", False
 
 
+# Your status in words the resume rules read (profile_sync.STATUS_RULES): the answers to
+# authorization and sponsorship questions then come from code, not the model.
+AUTHORIZATION = {"citizen": "U.S. citizen", "permanent": "U.S. permanent resident (green card)",
+                 "f1": "F-1 student (CPT/OPT)", "h1b": "On an H-1B visa", "j1": "J-1 visa holder",
+                 "authorized": "Authorized to work in the U.S., no sponsorship needed (e.g. EAD)"}
+
+
+def set_work_authorization(tracker, choice: str) -> dict:
+    """Add your work authorization to profile.yaml (once; after that it's edited there)."""
+    from .profile_sync import work_authorization
+
+    if choice not in AUTHORIZATION:
+        raise ValueError("Pick one of the listed statuses.")
+    path = config.PROFILE_DIR / "profile.yaml"
+    content = path.read_text(encoding="utf-8")
+    if "work_authorization" in (yaml.safe_load(content) or {}):
+        raise ValueError("profile.yaml already sets work_authorization: change it there, in Profile settings.")
+    auth = work_authorization(AUTHORIZATION[choice], "United States")
+    save_profile(tracker, "profile.yaml", content.rstrip() + "\n\n# Set on the Profile page.\n"
+                 + yaml.safe_dump({"work_authorization": auth}, sort_keys=False, allow_unicode=True))
+    return auth
+
+
 def save_profile(tracker, name: str, content: str) -> None:
     """Save a profile file; preferences may change which jobs pass the filters."""
     config.save_profile_file(name, content)
