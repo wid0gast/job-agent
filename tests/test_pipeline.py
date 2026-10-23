@@ -387,3 +387,14 @@ def test_no_reply_to_the_agents_question_ends_its_run(ctx):
     explorer = web.Explorer(ctx, job, "", view=None, document=None, log=lambda *_: None, ask=silent)
     with pytest.raises(StopRun, match="no reply within 15 minutes"):
         explorer.ask("May I create an account?")
+
+
+def test_an_empty_fit_check_is_a_failure_not_a_score_of_zero(ctx):
+    # One class-platform model answered every fit check with the schema's bare minimum.
+    job_id = add_job(ctx, "4001")
+    real = ctx.llm.json
+    ctx.llm.json = lambda system, user, schema, name="answer": (
+        {"flags": [], "requirements": [], "score": 0, "summary": ""} if name == "fit" else real(system, user, schema, name))
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
+    job = ctx.tracker.get(job_id)
+    assert "empty fit check" in job["reason"] and job["fit_score"] is None, "no score recorded, not set aside"

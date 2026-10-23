@@ -174,6 +174,29 @@ def test_scoring_has_its_own_lane(tracker):
     assert tracker.claim_task(exclude=worker.OWN_LANE)["id"] == prepare
 
 
+def test_refresh_runs_beside_a_prepare(tracker, monkeypatch):
+    """A refresh reads every company board (over 15 minutes on the class platform); a prepare
+    queued behind it used to wait all that time. The lists lane takes it instead."""
+    from job_agent import worker
+
+    monkeypatch.setitem(worker.HANDLERS, "refresh", lambda task, ctx, log: "lists read")
+    refresh, prepare = tracker.add_task("refresh"), tracker.add_task("prepare", 1)
+    ctx = type("Ctx", (), {"tracker": tracker, "llm": None})()
+    stop = threading.Event()
+    side = threading.Thread(target=worker.lane, args=(ctx, lambda *_: None, stop, worker.LANES[1]), daemon=True)
+    side.start()
+    try:
+        for _ in range(50):
+            if tracker.task(refresh)["status"] == "done":
+                break
+            threading.Event().wait(0.1)
+    finally:
+        stop.set()
+        side.join(5)
+    assert tracker.task(refresh)["result"] == "lists read"
+    assert tracker.claim_task(exclude=worker.OWN_LANE)["id"] == prepare, "the main loop takes the prepare"
+
+
 def test_refresh_keeps_only_jobs_that_fit_and_ranks_them_batch_by_batch(tmp_path, monkeypatch):
     """Jobs outside the search are dropped before they're stored (tens of thousands filled the
     class platform's workspace), and each batch is filtered and ranked as it lands."""

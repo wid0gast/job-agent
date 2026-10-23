@@ -33,6 +33,7 @@ TASKS = {"refresh": "Refresh the job lists", "discover": "Discover companies", "
          "import_resume": "Read a resume", "people": "Find people to contact", "letter": "Write a cover letter",
          "redraft": "Rewrite messages", "first_read": "Hiring manager's first read"}
 MAX_WAIT_MINUTES = 15
+MAX_UNASKED = 3  # Prepares the assistant may queue in one go before the user agrees to more.
 
 
 @dataclass
@@ -169,9 +170,17 @@ class Assistant:
     def rank_jobs(self):
         return self.queue("score_matches", note="Claude scores the best keyword matches (a minute or two).")
 
-    def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False):
+    def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False,
+                             confirmed: bool = False):
+        ids = list(dict.fromkeys(int(i) for i in job_ids))
+        if len(ids) > MAX_UNASKED and not confirmed:
+            # Each prepare is minutes of model work and spend. Asked to "submit everything", a
+            # model on the class platform once queued twelve without asking.
+            return {"queued": [], "problems": [
+                f"That's {len(ids)} prepares at once (each takes a few minutes and model spend). Ask the user "
+                f"to confirm they want all {len(ids)}, then call again with confirmed=true."]}
         queued, problems = [], []
-        for job_id in dict.fromkeys(int(i) for i in job_ids):
+        for job_id in ids:
             job = self.tracker.get(job_id)
             if job is None:
                 problems.append(f"#{job_id}: no such job")
@@ -536,8 +545,10 @@ class Assistant:
                  "answers) as background tasks. Also redoes a prepared one: pass a note saying what to change, "
                  "e.g. 'lead with the robotics project'. Nothing is sent. anyway=true prepares a job set aside "
                  "only because its fit scored below the threshold, reusing that fit check: only when the user "
-                 "asks after seeing why.",
-                 schema({"job_ids": ids, "note": string, "anyway": boolean}, ["job_ids"]), self.prepare_applications),
+                 f"asks after seeing why. More than {MAX_UNASKED} at once needs confirmed=true, after the user "
+                 "agreed to that number.",
+                 schema({"job_ids": ids, "note": string, "anyway": boolean, "confirmed": boolean}, ["job_ids"]),
+                 self.prepare_applications),
             Tool("edit_answer", "Change one answer in a packet (keys from get_packet). Short answers and choices "
                  "must be facts the user stated (in this chat or their profile); essays (long text answers) may be "
                  "written for them. remember=true saves a short answer for future applications.",
