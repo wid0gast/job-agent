@@ -168,7 +168,7 @@ def app(env, tmp_path, monkeypatch):  # noqa: F811 - pytest fixture
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     api = llm.AnthropicAPI(spend_cap_usd=1.0)
     monkeypatch.setattr(chat.models, "client", lambda settings: api)
-    app = dashboard.Dashboard(replace(settings, submit_mode="review"), 0)
+    app = dashboard.Dashboard(settings, 0)
     app.llm_missing = False
     app.ensure_worker = lambda: None
     app.api = api

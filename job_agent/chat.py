@@ -21,6 +21,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from . import llm as models
+from .harness import argument_problems
 from .assistant import Assistant, Chat
 from .prompts import ASSISTANT_PROMPT
 
@@ -192,7 +193,10 @@ class Turn:
     def run_tool(self, tool, args: dict) -> tuple[bool, str]:
         """Run one of the app's tools; returns (ok, result as JSON text for Claude)."""
         item = self.tool_start(tool.name, args)
+        problems = argument_problems(tool.parameters, args)
         try:
+            if problems:  # Checked before anything runs, like the pipeline's agents.
+                raise ValueError(f"Not run: {'; '.join(problems)}.")
             result, ok = tool.fn(**args), True
         except TypeError as error:
             result, ok = f"Bad arguments for {tool.name}: {error}", False
@@ -406,6 +410,7 @@ class APIChat:
                 api.check_budget()
                 with api.client.beta.messages.stream(
                         model=model, max_tokens=16000, system=system, messages=messages,
+                        cache_control=models.CACHE,  # Each step resends the chat so far.
                         tools=declared + self.web_tools(model), thinking=api.THINKING, betas=api.AGENT_BETAS,
                         context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
                         output_config={"effort": effort_for(turn.chat)}) as stream:

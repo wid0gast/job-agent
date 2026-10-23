@@ -3,7 +3,6 @@
 import http.client
 import shutil
 import threading
-from dataclasses import replace
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlencode
 
@@ -23,7 +22,7 @@ def profile(tmp_path, monkeypatch):
 @pytest.fixture()
 def app(profile, tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
-    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
     app.llm_missing = False
     monkeypatch.setattr(app, "ensure_worker", lambda: None)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)

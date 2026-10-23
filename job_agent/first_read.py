@@ -1,9 +1,11 @@
 """A HIRING MANAGER'S FIRST READ: the packet read the way the person deciding will read it.
 
-Hiring managers skim each application for about 30 seconds on the first pass, and about
-half count heavily AI-written material as a red flag. The writer can't judge that about its
-own work, so a different model (llm.TASKS["first_read"]) reads the finished packet as the
-hiring manager: which pile it lands in, what they'd remember, and up to three lines that
+The first pass is quick: recruiters give a resume 7.4 seconds on average before keeping or
+dropping it (Ladders' 2018 eye-tracking study), and about half of hiring managers count heavily
+AI-written material as a red flag. The writer can't judge that about its own work, so a
+different model (llm.TASKS["first_read"]) reads the finished packet as the hiring manager on
+a quick first pass (the prompt allows about 30 seconds for the whole packet, letter and
+answers included): which pile it lands in, what they'd remember, and up to three lines that
 hurt it. Code then checks each quoted line really is in the application (a concern about
 words that aren't there is dropped). Nothing is changed for you: you decide what to fix,
 by editing or asking the assistant.
@@ -82,7 +84,11 @@ def read(ctx, packet: dict) -> dict:
 
 def summary(result: dict) -> str:
     return (f"{PILES[result['pile']]}; {len(result['concerns'])} line(s) that hurt it"
-            + ("; missing: " + result["missing"][:80] if result["missing"] else ""))
+            + ("; missing: " + shorten(result["missing"], 80) if result["missing"] else ""))
+
+
+def shorten(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0].rstrip(",;:") + "…"
 
 
 def add(ctx, packet: dict, log=print) -> None:

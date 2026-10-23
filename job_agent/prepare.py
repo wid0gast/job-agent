@@ -2,7 +2,7 @@
 
 Unattended and safe to repeat: it reads public pages only and never touches
 a submit button. Cheap checks run first so the model is called only for jobs
-worth preparing (free models allow few requests a day).
+worth preparing (each fit check is a full read of the posting by the strongest model).
 """
 
 import html
@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import (answers, companies, config, documents, filters, first_read, latex, packets, people, research, style,
-               systems, trace, web)
+               stopping, systems, trace, web)
 from .llm import NOT_SET_UP
 from .prompts import COVER_LETTER_PROMPT, FIT_PROMPT, TAILOR_PROMPT
 
@@ -78,6 +78,13 @@ LETTER_SCHEMA = {
 }
 
 
+# The steps of build() in the order they run, for progress on the dashboard (some are skipped:
+# research and the letter only when wanted, the browser agent only on sites without a coded filler).
+STEPS = ("Your filters and limits", "Reading the posting", "Fit check", "Reading the application form",
+         "Answers from your profile", "Tailoring the resume", "Company research", "Cover letter",
+         "Filling the application (browser agent)", "Drafting the remaining answers",
+         "Checking against your profile", "A hiring manager's first read", "People to contact")
+MIN_POSTING_WORDS = 80  # Fewer, and the "posting" is a sign-in wall, an error page or a page that didn't load.
 FILL_TARGET = 0.88  # A tailored resume should use most of its last page.
 NUMBERS_CHECK = "Tailored resume uses only numbers from your resume"
 
@@ -102,6 +109,10 @@ def prepare(job_id: int, ctx, log=print, note: str = "") -> str:
         tracker.move(job_id, ("found", "needs_you", "prepared"), "preparing", reason=None)
         try:
             packet = build(job, ctx, log, note)
+        except stopping.Stopped:
+            tracker.move(job_id, "preparing", "found", reason="Stopped by you; prepare it again any time.")
+            outcome.update(status="stopped", detail="Stopped by you.")
+            raise
         except Stop as stop:
             tracker.move(job_id, "preparing", stop.status, reason=stop.reason)
             log(f"  {stop.status}: {stop.reason}")
@@ -161,6 +172,14 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         trace.check("Only text a person can see reaches the model", not hidden,
                     f"Removed {len(hidden)} hidden passage(s), e.g. “{hidden[0][:300]}”" if hidden else
                     "Nothing hidden on this page.")
+        readable = len(description.split()) >= MIN_POSTING_WORDS
+        trace.check("The posting could be read", readable,
+                    f"{len(description.split())} words of visible text." if readable else
+                    f"Only {len(description.split())} words of visible text: too little to judge fit or tailor to.")
+        if not readable:  # Scoring or tailoring against nothing would only be guesses.
+            raise Stop("failed", f"Couldn't read this posting: only {len(description.split())} words of visible text "
+                                 "came back (the page may need you signed in, or didn't load). Open the posting to "
+                                 "check, then prepare again.")
         reason = filters.sponsorship_problem(description, profile)
         trace.check("Sponsorship wording fits your work authorization", not reason, reason or "")
         if reason:

@@ -19,7 +19,8 @@ from .browser import VISIBLE_TEXT_JS
 SNAPSHOT_JS = r"""
 (start) => {
   const shown = (el) => {
-    if (el.closest('[aria-hidden="true"], [hidden], [inert]')) return false;
+    // [inert] can't be used; aria-hidden only hides from screen readers (Meta sets it on the whole page).
+    if (el.closest('[hidden], [inert]')) return false;
     if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return false;

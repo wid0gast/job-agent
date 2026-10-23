@@ -111,3 +111,15 @@ def test_a_read_goes_out_of_date_when_what_the_employer_reads_changes(tmp_path):
     before = first_read.basis(packet(tmp_path))
     assert first_read.basis(packet(tmp_path)) == before
     assert first_read.basis(packet(tmp_path, essay="Something else.")) != before
+
+
+def test_the_progress_list_names_every_step_preparing_runs():
+    import inspect
+    import re
+
+    from job_agent import first_read as reader
+    from job_agent import prepare
+
+    source = inspect.getsource(prepare.build) + inspect.getsource(prepare.write_letter) + inspect.getsource(reader.add)
+    named = set(re.findall(r'trace\.step\("([^"]+)"\)', source))
+    assert named <= set(prepare.STEPS), named - set(prepare.STEPS)

@@ -85,3 +85,54 @@ def test_finishing_before_any_tool_ran_is_refused_once(tmp_path):
                    tmp_path / "t.jsonl")
     assert run.run("task") == "Done."
     assert "No tool has run yet" in model.seen[0]["error"]
+
+
+def test_a_batch_is_checked_before_any_of_it_runs(tmp_path):
+    ran = []
+
+    def save(job_id, document):
+        ran.append((job_id, document))
+        return "saved"
+
+    def finish(report):
+        raise StopRun(report)
+
+    tools = [Tool("save", "", schema({"job_id": {"type": "integer"},
+                                      "document": {"type": "string", "enum": ["resume", "cover_letter"]}}), save),
+             Tool("finish", "", schema({"report": {"type": "string"}}), finish)]
+    model = ScriptedModel([
+        {"role": "assistant", "tool_calls": [call("save", {"job_id": 3, "document": "resume"}, "1"),
+                                             call("save", {"job_id": "3", "document": "letter"}, "2")]},
+        {"role": "assistant", "tool_calls": [call("finish", {"report": "done"}, "3")]},
+    ])
+    AgentRun(model, "system", tools, tmp_path / "trace.jsonl").run("go")
+    assert ran == [(3, "resume")], "the bad call never ran"
+    refused = next(m for m in model.seen[-1] if m.get("tool_call_id") == "2")["content"]
+    assert "Not run" in refused and "'job_id' should be integer" in refused and "one of resume" in refused
+
+
+def test_a_task_you_stop_ends_at_its_next_step(tmp_path):
+    import pytest
+
+    from job_agent import stopping, trace
+    from job_agent.tracker import Tracker
+
+    tracker = Tracker(tmp_path / "jobs.db")
+    queued = tracker.add_task("prepare", 1)
+    assert tracker.stop_task(queued) == "Cancelled." and tracker.task(queued)["status"] == "stopped"
+
+    submit = tracker.add_task("submit", 2)
+    tracker.claim_task(kinds=("submit",))
+    with pytest.raises(ValueError, match="can't be stopped"):
+        tracker.stop_task(submit)  # The click may already have happened.
+
+    prepare = tracker.add_task("prepare", 3)
+    tracker.claim_task(kinds=("prepare",))
+    stopping.watch(lambda: tracker.stop_asked(prepare))
+    with trace.step("Fit check"):
+        pass  # Not asked yet: work goes on.
+    assert tracker.stop_task(prepare).startswith("Stopping")
+    with pytest.raises(stopping.Stopped):
+        with trace.step("Tailoring the resume"):
+            raise AssertionError("a stopped task doesn't start its next step")
+    stopping.watch(None)

@@ -14,7 +14,7 @@ import traceback
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config
+from . import config, stopping
 from .llm import NOT_SET_UP
 from .tracker import Tracker
 
@@ -217,8 +217,11 @@ def lane(ctx: Context, log, stop: threading.Event) -> None:
             stop.wait(1)
             continue
         log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
+        stopping.watch(lambda task_id=task["id"]: ctx.tracker.stop_asked(task_id))
         try:
             ctx.tracker.set_task(task["id"], status="done", result=score_matches(ctx, log)[:2000])
+        except stopping.Stopped:
+            ctx.tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
         except Exception as error:  # noqa: BLE001 - reported on the task, like any other.
             log(traceback.format_exc())
             ctx.tracker.set_task(task["id"], status="failed", result=f"{type(error).__name__}: {error}"[:2000])
@@ -253,9 +256,13 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
                     continue
                 label = f"{task['kind']}" + (f" job {task['job_id']}" if task["job_id"] else "")
                 log(f"Task {task['id']}: {label}")
+                stopping.watch(lambda task_id=task["id"]: tracker.stop_asked(task_id))
                 try:
                     result = run_task(task, ctx, log)
                     tracker.set_task(task["id"], status="done", result=str(result)[:2000])
+                except stopping.Stopped:
+                    log(f"Task {task['id']} stopped at your request")
+                    tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
                 except (Exception, SystemExit) as error:  # noqa: BLE001 - one task's failure doesn't stop the worker.
                     log(traceback.format_exc())
                     tracker.set_task(task["id"], status="failed",

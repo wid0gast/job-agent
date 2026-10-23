@@ -101,7 +101,8 @@ def check(job: dict, details: dict, profile: dict) -> str | None:
         return f"Job type {job['job_type']} not wanted."
     locations = details.get("locations") or [job.get("location") or ""]
     if not location_ok(locations, prefs.get("locations", [])):
-        return f"Location: {'; '.join(locations)[:120]}."
+        return (f"Location: {'; '.join(locations)[:120]} (you're looking in "
+                f"{', '.join(prefs.get('locations', []))[:80]}; change it on the Search page).")
     terms = prefs.get("terms") or []
     job_terms = [t for t in details.get("terms", []) if t and t != "N/A"]
     named = title_season(job.get("title"))

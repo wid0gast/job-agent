@@ -305,7 +305,7 @@ class AnthropicAPI(Model):
 
     def _api_json(self, system: str, user: str, schema: dict, model: str, effort: str) -> str:
         response = self.client.beta.messages.create(
-            model=model, max_tokens=16000, system=system,
+            model=model, max_tokens=16000, system=cached(system),
             messages=[{"role": "user", "content": user}],
             output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
             # If a safety check declines, the API retries on a suitable model itself.
@@ -328,7 +328,7 @@ class AnthropicAPI(Model):
         messages = [{"role": "user", "content": user}]
         for _ in range(4):  # A long run of searches can pause; sending it back continues it.
             response = self.client.messages.create(
-                model=model, max_tokens=16000, system=system, messages=messages,
+                model=model, max_tokens=16000, system=system, messages=messages, cache_control=CACHE,
                 output_config={"format": {"type": "json_schema", "schema": schema}, "effort": effort},
                 tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches,
                         **({"allowed_domains": domains} if domains else {})}])
@@ -357,12 +357,23 @@ class AnthropicAPI(Model):
     def _api_turn(self, messages: list[dict], tools: list[dict], model: str, effort: str):
         response = self.client.beta.messages.create(
             model=model, max_tokens=16000, system=messages[0]["content"], output_config={"effort": effort},
+            cache_control=CACHE,  # Each turn resends the conversation so far: read it from the cache.
             messages=to_anthropic(messages[1:]), thinking=self.THINKING, betas=self.AGENT_BETAS,
             context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
             tools=[{"name": t["function"]["name"], "description": t["function"]["description"],
                     "input_schema": t["function"]["parameters"]} for t in tools])
         self.finished(response, model)
         return response
+
+
+# Prompt caching (API key only; Claude Code caches by itself). A cached prefix costs a tenth
+# of fresh input to read back, and a quarter more to write once.
+CACHE = {"type": "ephemeral"}
+
+
+def cached(system: str) -> list[dict]:
+    """Standing instructions marked for caching: the same text starts every request of a step."""
+    return [{"type": "text", "text": system, "cache_control": CACHE}]
 
 
 @contextmanager

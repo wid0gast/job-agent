@@ -1,7 +1,7 @@
 """HOW TO APPLY: the route that gives each job its best odds, decided in code from signals you can check.
 
 Most tools only make applying faster. What changes the odds is how you apply:
-- through a person: in Lever's data on about 4 million candidates, 1 in 16 referred candidates
+- through a person: in Lever's 2016 study of about 4 million candidates, 1 in 16 referred candidates
   was hired, against 1 in 152 who applied through a careers page or posting;
 - to a posting that's really hiring: about 1 in 5 postings show no hiring activity, and roles
   open 45+ days or posted again are the clearest sign (JobsPipe's 2026 ghost-job index);

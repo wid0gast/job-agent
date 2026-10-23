@@ -32,7 +32,6 @@ BACKENDS = ("auto", "claude-code", "anthropic", "off")
 class Settings:
     backend: str                     # auto | claude-code | anthropic | off (see llm.client)
     model: str                       # Set: one model for every task. Empty: a model per task (llm.TASKS)
-    submit_mode: str
     daily_submit_limit: int
     browser_channel: str
     company_cap: int = 3
@@ -49,13 +48,9 @@ class Settings:
         backend = os.environ.get("MODEL_BACKEND", "auto").strip().lower()
         if backend not in BACKENDS:
             raise SystemExit(f"MODEL_BACKEND must be one of {', '.join(BACKENDS)}.")
-        mode = os.environ.get("SUBMIT_MODE", "review").strip().lower()
-        if mode not in ("review", "auto"):
-            raise SystemExit("SUBMIT_MODE must be review or auto.")
         return cls(
             backend=backend,
             model=os.environ.get("CLAUDE_MODEL", "").strip(),
-            submit_mode=mode,
             daily_submit_limit=int(os.environ.get("DAILY_SUBMIT_LIMIT", "15")),
             browser_channel=os.environ.get("BROWSER_CHANNEL", "chrome").strip(),
             company_cap=int(os.environ.get("COMPANY_CAP", "3")),

@@ -134,12 +134,34 @@ uv run job-agent dashboard        # http://127.0.0.1:8770
    job is prepared it has a *fit* score from the full posting. Model scores
    rank above keyword-only ones, and jobs below your threshold are greyed.
    Ranking runs alongside other tasks, so you can prepare while it works.
-2. **Prepare** (per job, or "Prepare top matches", which takes the best-ranked) reads the posting and the
+   **How to apply.** Every job you haven't applied to gets *Reach out first*,
+   *Apply* or *Think twice*, with its reasons, decided in code (no model):
+   *Think twice* when the role was posted again in the same place 21+ days
+   later, has been open 45+ days (90 for internships), you've applied there
+   for the same role, or the company limit is full; *Reach out first* when a
+   person found at the company shares your background or works in the role
+   and hasn't heard from you (or you're waiting on them, or they replied).
+   It shows on Ranked jobs, the Approval queue and each job's page.
+2. **Prepare** (per job, or "Prepare top matches", which takes the best-ranked
+   and passes over Think twice jobs, saying which) reads the posting and the
    application form without signing in or clicking anything, scores fit,
    tailors your resume, and drafts every answer, recording where each came
    from: your profile, saved answers, answers you approved before, or the
-   model. Nothing is submitted.
-3. **Approval queue.** Review a packet, edit any answer, then approve.
+   model. Nothing is submitted. The job's page shows each step as it
+   finishes. A job whose fit is below your threshold is set aside: its page
+   shows the reason and the full fit check, and **Prepare anyway** goes ahead
+   with that same fit check. Ranked jobs lists what you asked to prepare and
+   how each went.
+   **A hiring manager's first read.** After the packet is built, a different
+   model (Sonnet; Opus wrote it) reads it as the hiring manager would on a
+   quick first pass: which pile it lands in, what they'd remember, what they
+   looked for and didn't find, and up to three lines that hurt it, each with a
+   fix from your real material. Each quoted line is checked to be in the
+   application. It changes nothing; "Read it again" after your edits.
+3. **Approval queue.** Each job's page starts with the decision at a glance
+   (how to apply, the hiring manager's read, fit, whether it's ready) and
+   tabs for Review, Application, Fit and research, and People. Review a
+   packet, edit any answer, then approve.
    Approval is refused while a required answer is missing, an answer
    contradicts your profile, or the company or daily cap is full. Approving
    reserves the slot. Editing after approval un-approves.
@@ -306,7 +328,6 @@ emailed code).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `SUBMIT_MODE` | `review` | `auto` submits approved-quality packets without asking. |
 | `DAILY_SUBMIT_LIMIT` | `15` | Hard cap on submissions per day. |
 | `BROWSER_CHANNEL` | `chrome` | `chromium` uses Playwright's browser (run `uv run playwright install chromium`). |
 | `COMPANY_CAP`, `COMPANY_WINDOW_DAYS` | `3`, `30` | Default per-company limit (rolling). Known limits are in `company-rules.yaml`. |
@@ -333,9 +354,10 @@ emailed code).
   CAPTCHAs, and asks you for one-time codes. Account passwords are generated
   and stored in the macOS Keychain (`job-agent:<site>`). The model never sees
   them.
-- **Quality over volume.** Tailored applications get roughly 3–4x the
-  response rate of mass ones, and sites restrict accounts that behave like
-  bots. Hence the daily cap and the review step.
+- **Quality over volume.** Hiring managers discount generic and AI-sounding
+  applications (about half count heavily AI-written ones as a red flag), and
+  sites restrict accounts that behave like bots. Hence the daily cap, the
+  per-company cap and the review step.
 
 ### Code map
 
@@ -372,6 +394,9 @@ emailed code).
 | `job_agent/web.py`, `pageview.py` | The explorer agent, its page view, and the coded replay |
 | `job_agent/research.py` | The research agent: search, read, quote-checked facts |
 | `job_agent/people.py` | People to contact: the finder agent and its checks, drafts, sending and reminders |
+| `job_agent/strategy.py` | How to apply: Reach out first, Apply or Think twice, from signals in code |
+| `job_agent/first_read.py` | A hiring manager's first read of each packet, quotes checked in code |
+| `job_agent/style.py` | Writing checks: stock words and openers, em dashes, length limits |
 | `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |
 | `job_agent/documents.py` | Resume/cover letter PDFs and the invented-number check |

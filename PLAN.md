@@ -1,7 +1,31 @@
 # Job Agent: Plan
 
-Status: Phase 1 slice built (2026-10-13). Items marked **(exists)** are
-built; the rest is planned. Next: the agents (A1 → A2 → A3) below.
+Status: the original plan, written 2026-10-13 to 10-15 and kept as the record
+of what was decided and why. The app has moved on; what changed is below.
+Items marked **(exists)** were built by 10-15.
+
+## What changed since (as of 2026-10-23)
+
+- **Approval is always required.** The opt-in auto-submit mode planned below
+  was never built, and the setting was removed: applying can't be undone.
+- **The A1 planner became the Assistant tab**, a chat with the same tools as the
+  dashboard. It can only *ask* to submit, through a card you click.
+- **Claude only, two ways in:** your Claude plan through Claude Code, or an
+  Anthropic API key, with a model per task (Haiku ranks titles, Sonnet reads
+  and reviews, Opus writes and judges fit). OpenRouter is used only by the
+  class platform version (its broker), so `data_collection: "deny"` below
+  applies there.
+- **Search:** company research and people-finding use Claude's web search;
+  Brave and DuckDuckGo remain only as a fallback without Claude.
+- **Built since:** Workday's job feed and Discover (companies found on job-system
+  sites), people to contact with drafted outreach (Phase 4 networking),
+  outcome tracking and response-rate stats (Phase 3), the writing guide and
+  style checks, trimming to one page, "How this was made" traces, How to
+  apply (Reach out first / Apply / Think twice) and a hiring manager's first
+  read of each packet.
+- **Submit uses no model at all.** The line below that says the model may help
+  find a field was dropped in design: submit is code replaying what you
+  approved, with each field found by its id, name or recorded label.
 
 ## Goal
 
@@ -12,8 +36,8 @@ it grows into networking and interview prep.
 
 ## Principles
 
-1. **You approve every application by default.** An auto-submit mode exists
-   but is off unless you turn it on.
+1. **You approve every application.** (An opt-in auto-submit mode was planned;
+   it was never built and is removed.)
 2. **Truthful.** Every resume line and answer comes from your profile, base
    resumes, story bank or answers you've given. No invented experience or
    numbers. **(exists, for numbers)**
@@ -102,8 +126,7 @@ master list ─► filters + fit score ─► company rules check ─► PREPARE
     question added; the model can draft it as a separate step. The final
     click happens only when the footer button says Submit. **(exists)**
 - **Submit is code, not a fresh agent.** **(exists, Greenhouse)** It replays the approved
-  field → value list. The model may help find a field on the page but never
-  chooses a value. This makes submit more reliable, and once you approve, the
+  field → value list. No model runs during submit (see "What changed"). This makes submit more reliable, and once you approve, the
   page can't change what gets sent (the "plan-then-execute" defence against
   prompt injection).
 - **Approval is per answer, keyed by question wording.** **(exists)** At submit, a
@@ -111,7 +134,7 @@ master list ─► filters + fit score ─► company rules check ─► PREPARE
   without stopping. Only a new *required* question without an approved
   answer, changed options on an approved question, a CAPTCHA or a code sends
   the packet back to the queue marked "needs you".
-- **Auto-submit mode (opt-in, off by default).** When turned on in
+- **Auto-submit mode (opt-in, off by default). Not built; removed (see "What changed").** When turned on in
   Settings, packets that pass every check go out without waiting in the
   queue. Guardrails still apply: fit score above a threshold you set,
   company rules, the consistency check, the daily cap, and anything
@@ -411,8 +434,7 @@ false claim on a demo page is not used.
 
 ## Changes to existing code
 
-- `SUBMIT_MODE` stays, still `review` by default. `auto` gains the
-  guardrails above and is controlled from Settings.
+- `SUBMIT_MODE` was planned to keep an `auto` option; it was removed instead.
 - The single search-then-apply run becomes prepare → approve → submit
   stages, with packets saved in `data/` and the states above.
 - The final click moves from the agent's `submit_application` tool into the

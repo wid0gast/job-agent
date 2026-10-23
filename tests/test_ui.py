@@ -72,9 +72,13 @@ def test_whole_flow_in_the_dashboard(env, tmp_path, monkeypatch):  # noqa: F811
                 time.sleep(0.5)
                 page.reload()
             page.get_by_role("link", name="Machine Learning Intern").click()
+            # The decision at a glance, then tabs: the fit check is under its own.
+            expect(page.locator(".decide")).to_contain_text("Ready to approve")
+            page.get_by_role("link", name="Fit and research").click()
             expect(page.locator("h2").filter(has_text="Fit 85")).to_be_visible()
 
             # Edit an answer, then approve from the job page.
+            page.locator("a.tab", has_text="Application").click()
             row = page.locator("tr").filter(has_text="Why do you want to work at Contoso AI?")
             row.locator("textarea").fill("I want to build evaluation tools for document models.")
             page.get_by_role("button", name="Save changes").click()

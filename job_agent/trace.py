@@ -77,7 +77,10 @@ def run(kind: str, job_id: int | None):
     try:
         yield outcome
     except BaseException as error:
-        outcome = {"status": "failed", "detail": f"{type(error).__name__}: {error}"[:500]}
+        from .stopping import Stopped
+
+        outcome = ({"status": "stopped", "detail": "Stopped by you."} if isinstance(error, Stopped) else
+                   {"status": "failed", "detail": f"{type(error).__name__}: {error}"[:500]})
         raise
     finally:
         current.write("end_run", seconds=round(time.time() - started, 1), **outcome)
@@ -87,6 +90,9 @@ def run(kind: str, job_id: int | None):
 
 @contextmanager
 def step(name: str):
+    from . import stopping
+
+    stopping.check()  # A step boundary: where a task you asked to stop ends.
     current = _current.get()
     handle = Step()
     if current is None:
