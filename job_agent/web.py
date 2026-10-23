@@ -47,7 +47,8 @@ def fetch(ctx, job: dict) -> dict:
             page.wait_for_load_state("networkidle", timeout=8000)
         except PlaywrightError:
             pass
-        return {"html": with_frames(page, job.get("title") or ""), "url": page.url}
+        return {"html": with_frames(page, job.get("title") or ""), "url": page.url,
+                "status": response.status if response else None}
     finally:
         page.close()
 

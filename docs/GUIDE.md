@@ -350,6 +350,12 @@ emailed code).
 - **Can't be steered by the page.** The model only sees text and fields a
   person could see. Hidden instructions and hidden trap fields never reach it,
   and it treats page text as information, not orders.
+- **No guessing from a page it couldn't read.** Before any model call, code
+  checks the posting: at least 80 words a person can see, and, on career
+  sites read through the browser, the job's title on the page (postings inside
+  frames are read too). A sign-in wall, a privacy notice or a site that turns
+  away automated readers stops the prepare with the reason, instead of a fit
+  score and resume tailored to the wrong text.
 - **Human checks stay human.** It never tries to solve or get around
   CAPTCHAs, and asks you for one-time codes. Account passwords are generated
   and stored in the macOS Keychain (`job-agent:<site>`). The model never sees

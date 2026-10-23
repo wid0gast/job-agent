@@ -182,9 +182,12 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                     f"{words} of visible text." if readable else
                     f"Only {words} of visible text: too little to judge fit or tailor to.")
         if not readable:  # Scoring or tailoring against nothing would only be guesses.
-            raise Stop("failed", f"Couldn't read this posting: only {words} of visible text "
-                                 "came back (the page may need you signed in, or didn't load). Open the posting to "
-                                 "check, then prepare again.")
+            refused = posting.get("status") in (401, 403, 429)
+            raise Stop("failed", f"Couldn't read this posting: only {words} of visible text came back "
+                                 + (f"(the site answered {posting['status']}: it turns away automated readers). "
+                                    "Open the posting yourself; you can still apply there." if refused else
+                                    "(the page may need you signed in, or didn't load). Open the posting to "
+                                    "check, then prepare again."))
         if system is web:  # The job APIs return the posting by its ID; a page can be anything.
             named = web.title_found(description, job["title"] or "")
             trace.check("The page names this job", named,

@@ -152,3 +152,15 @@ def test_prepare_reads_a_framed_posting_whole(ctx, site):  # noqa: F811
         job = ctx.tracker.leads(10)[-1]
         assert job["url"].endswith(f"/{path}/102")
         assert prepare.prepare(job["id"], ctx, log=lambda *_: None) == "found", ctx.tracker.get(job["id"])["reason"]
+
+
+def test_a_site_that_refuses_the_reader_says_so(ctx, site, monkeypatch):  # noqa: F811
+    from job_agent import web
+
+    ctx.tracker.add_lead(f"{site}/jobs/101", "test", "Keysight", "EDA Software Intern", "Remote",
+                         ats="other", job_type="internship", details={"locations": ["Remote"]})
+    job_id = ctx.tracker.leads(10)[-1]["id"]
+    monkeypatch.setattr(web, "fetch", lambda ctx, job: {"html": "<h1>403 Forbidden</h1>", "url": job["url"],
+                                                        "status": 403})
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
+    assert "answered 403" in ctx.tracker.get(job_id)["reason"]
