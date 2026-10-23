@@ -22,7 +22,9 @@ the candidate's profile and resume show it (yes, partly, no) with the
 evidence. Then give a 0-100 score: 80+ strong fit, 60-79 reasonable, below 60
 weak. Missing must-haves weigh heavily; missing nice-to-haves lightly. A role
 that isn't what the candidate says they're looking for scores lower even if
-they qualify. Do not inflate. Flag scam signs (asks for payment, vague role, personal email) if any.
+they qualify. Do not inflate. flags: only problems worth the candidate's attention (scam
+signs such as asking for payment, a vague role or a personal email; contradictions in the
+posting); leave it empty rather than listing what you checked and found fine.
 
 {TO_YOU}
 

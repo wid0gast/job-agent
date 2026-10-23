@@ -296,6 +296,30 @@ NAV = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jo
        ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
 
 
+def labeler(answers: list[dict]):
+    """A question's label, told apart from others with the same wording by its choices
+    (a form once asked "select the combination that matches your results" four times)."""
+    from collections import Counter
+
+    counts = Counter(a["label"] for a in answers)
+    seen = Counter()
+
+    def label(a: dict) -> str:
+        if counts[a["label"]] < 2:
+            return a["label"]
+        options = a.get("options") or []
+        if 1 < len(options) <= 6:
+            return f'{a["label"]} ({" / ".join(map(str, options))})'
+        seen[a["key"]] = seen.get(a["key"]) or len(seen) + 1
+        return f'{a["label"]} (#{seen[a["key"]]})'
+    return label
+
+
+def joined(items: list[str]) -> str:
+    """Notes joined into one line, without the ".;" of notes that end in a period."""
+    return "; ".join(i.strip().rstrip(".;") for i in items if i.strip()) + ("." if items else "")
+
+
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False,
            title: str = "") -> bytes:
     """A page: the header with `active` highlighted, then `body`. `title` names the browser tab
@@ -874,7 +898,8 @@ def not_prepared_card(app: Dashboard, job: dict) -> str:
     buttons.append(form(app, "/requeue", "Back to found", {"job_id": job["id"]}))
     hint = ("The fit check below is why: read it before deciding. Prepare anyway reuses it (no second fit "
             "check) and makes the rest of the packet." if actions.below_threshold(job) else
-            "Your filters are on the Search page." if job["status"] == "filtered_out" else "")
+            "Your filters are on the Search page; after changing one, Back to found puts the job up "
+            "for preparing again." if job["status"] == "filtered_out" else "")
     trail = (f' <a href="/job/{job["id"]}/trace">How it decided</a>' if trace.runs(job["id"]) else "")
     return (f'<div class="card" id=why><h2>{NOT_PREPARED[job["status"]]}</h2>'
             f'<p style="margin:0">{esc(job["reason"] or "No reason was recorded.")}{trail}</p>'
@@ -1084,9 +1109,10 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     problems = packets.missing(packet)
     checks = packet["checks"]
     warn = []
+    label = labeler(packet["answers"])
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
-             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(a["label"])}</a></li>' for a in problems)
+             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(label(a))}</a></li>' for a in problems)
              + "</ul></div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
     if checks.get("resume_pages", 1) > 1:
@@ -1097,7 +1123,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
     rows = "".join(
-        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(a["label"])}</b>{" *" if a["required"] else ""}'
+        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(label(a))}</b>{" *" if a["required"] else ""}'
         f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
         f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
         for a in packet["answers"])
@@ -1150,9 +1176,9 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         docs = f'<a class="button primary" href="/job/{job_id}/trace">How this was made</a> ' + docs
     t = packet["tailoring"]
     advice = strategy.Advisor(app.tracker, app.settings).advise(job, packet)
-    tailoring = (f'<div class=card><h2>Tailoring the resume</h2><p><b>Matched:</b> {esc("; ".join(t["matched"]))}</p>'
-                 f'<p><b>Emphasized:</b> {esc("; ".join(t["emphasized"]))}</p>'
-                 f'<p><b>Gaps:</b> {esc("; ".join(t["gaps"]))}</p></div>')
+    tailoring = (f'<div class=card><h2>Tailoring the resume</h2><p><b>Matched:</b> {esc(joined(t["matched"]))}</p>'
+                 f'<p><b>Emphasized:</b> {esc(joined(t["emphasized"]))}</p>'
+                 f'<p><b>Gaps:</b> {esc(joined(t["gaps"]))}</p></div>')
     listed = [p for p in (packet.get("people") or {}).get("people", []) if not p.get("removed")]
     panels = [
         ("review", "Review", route_card(advice) + first_read_card(app, job, packet)),
