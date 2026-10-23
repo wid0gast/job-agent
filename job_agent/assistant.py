@@ -19,8 +19,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import (actions, answers, companies, config, documents, first_read, latex, matching, packets, people, resumes,
-               sources, strategy, style, systems)
+from . import (actions, answers, companies, config, documents, filters, first_read, latex, matching, packets, people,
+               resumes, sources, strategy, style, systems)
 from .harness import Tool, schema
 from .tracker import OUTCOMES, STATUSES
 
@@ -143,7 +143,8 @@ class Assistant:
                          "value": a.get("value"), "source": a.get("source"),
                          **({"options": a["options"][:25]} if a.get("options") else {})}
                         for a in packet["answers"] if a["kind"] != "file" or answer_is_document(a)],
-            "needs_you": [a["key"] for a in packets.missing(packet)],
+            "needs_you": [{"key": a["key"], "label": a["label"][:200], "kind": a["kind"]}
+                          for a in packets.missing(packet)],
             # The text edit_document changes: as printed, below the name and contact line.
             "resume": {"pages": (docs.get("resume") or {}).get("pages"),
                        "text": latex.plain(packet["resume_doc"]) if packet.get("resume_doc") else
@@ -182,6 +183,13 @@ class Assistant:
                     continue
                 self.chat.start_worker()
                 queued.append({"job_id": job_id, "task_id": actions.prepare_anyway(self.tracker, job_id)})
+                continue
+            still = (filters.check(job, json.loads(job["details"] or "{}"), config.load_profile())
+                     if job["status"] == "filtered_out" else None)
+            if still:  # Restoring it would only set it aside again at the first step of preparing.
+                problems.append(f"#{job_id}: your filters set it aside ({still}) and still would, so restoring "
+                                "and preparing it would set it aside again. If the user wants it, change that "
+                                "filter with update_search first, then restore it and prepare.")
                 continue
             if job["status"] not in ("found", "prepared", "needs_you"):
                 problems.append(f"#{job_id}: it is {job['status']}" + (

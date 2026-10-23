@@ -287,3 +287,12 @@ def test_each_chat_picks_its_effort(app):
     call(app, "POST", "/assistant/api/send", {"chat": chat_id, "text": "And now?"})
     settle(app, chat_id)
     assert app.api.client.sent[1]["output_config"]["effort"] == "high"  # Extra high is Opus-only.
+
+
+def test_a_job_your_filters_still_set_aside_isnt_offered_as_preparable(ctx):  # noqa: F811 - pytest fixture
+    job_id = add_job(ctx, "4001")
+    ctx.tracker.update(job_id, posted_at="2024-08-15T00:00:00+00:00", status="filtered_out",
+                       reason="Posted more than 45 days ago.")
+    problems = Assistant(ctx.tracker, ctx.settings, Cards().chat()).prepare_applications([job_id])["problems"]
+    assert "set it aside again" in problems[0] and "update_search" in problems[0]
+    assert not ctx.tracker.tasks(), "nothing queued"
