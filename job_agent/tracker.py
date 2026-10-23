@@ -532,6 +532,33 @@ class Tracker:
         self.db.commit()
 
     @locked
+    def stop_task(self, task_id: int) -> str:
+        """Stop a task: a queued one at once; a running one at its next step (stopping.py).
+        Returns what happened, for the dashboard or the assistant."""
+        from .stopping import STOPPABLE
+
+        task = self.task(task_id)
+        if task is None or task["status"] not in ("queued", "running"):
+            raise ValueError("That task isn't queued or running.")
+        if task["status"] == "queued":
+            self.set_task(task_id, status="stopped", result="Cancelled before it started.")
+            return "Cancelled."
+        if task["kind"] not in STOPPABLE:
+            raise ValueError("This task can't be stopped once it has started"
+                             + (" (a submit may already have clicked)." if task["kind"] == "submit" else "."))
+        cursor = self.db.execute("UPDATE tasks SET status = 'stopping', updated_at = ? WHERE id = ? AND status = 'running'",
+                                 (now(), task_id))
+        self.db.commit()
+        if cursor.rowcount != 1:
+            raise ValueError("It finished just now.")
+        return "Stopping after the current step."
+
+    @locked
+    def stop_asked(self, task_id: int) -> bool:
+        row = self.db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        return bool(row) and row["status"] == "stopping"
+
+    @locked
     def task(self, task_id: int) -> dict | None:
         row = self.db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return dict(row) if row else None
@@ -546,7 +573,7 @@ class Tracker:
         """After a crash: re-queue nothing that might have been sent."""
         notes = []
         stale = self.db.execute(
-            "SELECT id FROM tasks WHERE status IN ('running', 'waiting')").fetchall()
+            "SELECT id FROM tasks WHERE status IN ('running', 'waiting', 'stopping')").fetchall()
         for row in stale:
             self.set_task(row["id"], status="failed", result="The worker stopped during this task.")
         for job in self.with_status("submitting"):

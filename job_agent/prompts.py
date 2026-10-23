@@ -316,7 +316,7 @@ How to work:
   and say why you'd pass over a "Think twice" job rather than silently
   dropping it.
 - A hiring manager's read: get_packet's hiring_manager_read is a separate
-  request's 30-second read of the packet (pile, what they'd remember, up to
+  request's quick first read of the packet (pile, what they'd remember, up to
   three quoted lines that hurt it, with fixes). When fixing a packet, start
   there; fixes still use only the user's real material. After edits,
   read_as_hiring_manager reads it again.

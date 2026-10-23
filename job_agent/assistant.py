@@ -462,11 +462,7 @@ class Assistant:
         return result
 
     def cancel_task(self, task_id: int):
-        task = self.tracker.task(task_id)
-        if task is None or task["status"] != "queued":
-            raise ValueError("Only a task that hasn't started can be cancelled.")
-        self.tracker.set_task(task_id, status="failed", result="Cancelled.")
-        return {"cancelled": task_id}
+        return {"task_id": task_id, "result": self.tracker.stop_task(task_id)}
 
     # ----- plumbing -----------------------------------------------------------
 
@@ -545,7 +541,7 @@ class Assistant:
                  schema({"job_id": integer, "document": {"type": "string", "enum": ["resume", "cover_letter"]},
                          "edits": edits}), self.edit_document),
             Tool("read_as_hiring_manager", "Have a separate request read a prepared application as the hiring "
-                 "manager would on a 30-second first pass: which pile, what they'd remember, and up to three lines "
+                 "manager would on a quick first pass: which pile, what they'd remember, and up to three lines "
                  "that hurt it (background task). Preparing does this once; use it again after edits.",
                  schema({"job_id": integer}), self.read_as_hiring_manager),
             Tool("write_cover_letter", "Write a cover letter for a prepared application whose form has a "
@@ -593,7 +589,9 @@ class Assistant:
             Tool("wait_for_tasks", f"Wait (up to {MAX_WAIT_MINUTES} minutes) until these tasks finish, then "
                  "return their results.", schema({"task_ids": ids, "max_minutes": {"type": "number"}}, ["task_ids"]),
                  self.wait_for_tasks, read_only=True),
-            Tool("cancel_task", "Cancel a queued task that hasn't started.", schema({"task_id": integer}),
+            Tool("cancel_task", "Cancel a queued task, or stop a running prepare or people search after its "
+                 "current step (only when the user asks). A submit that has started can't be stopped.",
+                 schema({"task_id": integer}),
                  self.cancel_task),
         ]
 

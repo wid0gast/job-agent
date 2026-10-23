@@ -61,7 +61,7 @@ def prepare_environment() -> Path:
         "TECTONIC_CACHE_DIR": str(work / "tectonic-cache"),
         "TMPDIR": str(work / "tmp"),  # The platform's /tmp holds only 32 MB.
         "PATH": f"{TECTONIC.parent}:{os.environ.get('PATH', '')}",
-        "SUBMIT_MODE": "review", "BROWSER_CHANNEL": "",
+        "BROWSER_CHANNEL": "",
     })
     profile = work / "profile" / "profile.yaml"
     if not profile.exists():

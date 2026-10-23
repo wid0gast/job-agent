@@ -5,7 +5,6 @@ import json
 import re
 import shutil
 import threading
-from dataclasses import replace
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlencode
 
@@ -75,7 +74,7 @@ def test_search_page_saves_and_jobs_page_ranks(tracker, tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
     config.save_search({"description": "ML research internships"})
     matching.score(Ranker(), tracker, log=lambda *_: None)
-    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
     server.RequestHandlerClass = dashboard.handler_for(app)
@@ -112,7 +111,7 @@ def test_saving_search_with_no_jobs_starts_a_refresh(tmp_path, monkeypatch):
     shutil.copytree(config.ROOT / "profile.example", profile)
     monkeypatch.setattr(config, "PROFILE_DIR", profile)
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "empty.db")
-    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
     monkeypatch.setattr(app, "ensure_worker", lambda: None)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port

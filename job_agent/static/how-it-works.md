@@ -4,7 +4,7 @@ Applying for jobs is slow and mostly silent. Doing one application properly
 (reading the posting, tailoring a resume, writing answers) takes a long time,
 and most get no reply. Two things help most: applying to the right
 jobs with honest, tailored applications, and talking to someone at the company
-(in Lever's data on about 4 million candidates, 1 in 16 referred candidates was
+(in Lever's 2016 study of about 4 million candidates, 1 in 16 referred candidates was
 hired, against 1 in 152 who applied through a careers page or posting).
 
 It's getting worse because of tools like this one. LinkedIn gets about
@@ -36,9 +36,12 @@ So:
 | Finding people to contact (where they might be mentioned) | Answers already in your profile |
 | The assistant chat (what you'll ask is open-ended) | Every check that guards the output |
 
-Agents run in a small loop written for this app (`harness.py`, about 150
-lines): ask the model, run the tools it asks for, send back the results or the
-error, repeat until it calls `finish` or hits a step or time limit.
+Agents run in a small loop written for this app (`harness.py`, about 200
+lines): ask the model, check every tool call's arguments against the tool's
+schema before any of them runs, run the valid ones, send back the results or
+the errors, and repeat until it calls `finish`, hits a step or time limit, or
+you press Stop (it ends at the next step; a submit can't be stopped once
+started, since the click may already have happened).
 
 ## Decisions, and why
 
@@ -50,8 +53,8 @@ back to you), and types your approved answers. No model runs during submit, so
 it can't improvise.
 
 **Why does it say how to apply, and not just apply?**
-Because the route changes the odds more than speed does. A referral is about
-9 times as likely to lead to a hire. About 1 in 5 postings show no hiring
+Because the route changes the odds more than speed does. A referral was about
+9 times as likely to lead to a hire in Lever's 2016 data. About 1 in 5 postings show no hiring
 activity, and roles open for months or posted again are the clearest sign.
 A second application where you just applied for the same role mostly reaches
 the same people. So every job gets one of **Reach out first**, **Apply** or
@@ -62,15 +65,16 @@ call, so it's the same every time and never guesses. "Prepare top matches"
 passes over Think twice jobs and says which.
 
 **Why have a "hiring manager" read the application?**
-A hiring manager gives each application about 30 seconds on the first pass,
-and the writer can't judge its own work. So a separate request, with none of
-the writing steps' instructions, reads the finished packet as the hiring
-manager: which pile it lands in, what they'd remember, what they looked for
-and didn't find, and up to three lines that hurt it, each with a fix that
-uses only your real material. (The standalone version uses a different
-model for this than for the writing.) Code checks every quoted line is
-really in your application and drops any that isn't. It changes nothing by
-itself: you decide what to fix.
+The first pass is quick (recruiters give a resume 7.4 seconds on average
+before keeping or dropping it, in Ladders' 2018 eye-tracking study), and the
+writer can't judge its own work. So a separate request, with none of the
+writing steps' instructions, reads the finished packet as the hiring manager
+on a quick first pass, about 30 seconds for the whole packet: which pile it
+lands in, what they'd remember, what they looked for and didn't find, and up
+to three lines that hurt it, each with a fix that uses only your real
+material. (The standalone version uses a different model for this than for
+the writing.) Code checks every quoted line is really in your application and
+drops any that isn't. It changes nothing by itself: you decide what to fix.
 
 **Why one model, with a different effort per step?**
 The class platform gives each visit one model, so every step uses it, with

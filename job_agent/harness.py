@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import trace
+from . import stopping, trace
 
 
 class StopRun(Exception):
@@ -36,6 +36,39 @@ class Tool:
         return {"type": "function",
                 "function": {"name": self.name, "description": self.description,
                              "parameters": self.parameters}}
+
+
+TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None),
+         "integer": int, "number": (int, float)}
+
+
+def argument_problems(schema: dict, value, where: str = "arguments") -> list[str]:
+    """What's wrong with a tool call's arguments against its declared schema (the parts tools use:
+    type, enum, required, no extra properties, items, minItems), checked before anything runs."""
+    kinds = schema.get("type")
+    if kinds:
+        kinds = [kinds] if isinstance(kinds, str) else kinds
+        if not any(isinstance(value, TYPES[k]) and not (k in ("integer", "number") and isinstance(value, bool))
+                   for k in kinds):
+            return [f"{where} should be {' or '.join(kinds)}, not {type(value).__name__}"]
+    if "enum" in schema and value not in schema["enum"]:
+        return [f"{where} should be one of {', '.join(map(str, schema['enum']))}"]
+    problems = []
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        problems += [f"{where} is missing {name!r}" for name in schema.get("required", []) if name not in value]
+        if schema.get("additionalProperties") is False:
+            problems += [f"{where} has an unknown field {name!r}" for name in value if name not in properties]
+        for name, item in value.items():
+            if name in properties:
+                problems += argument_problems(properties[name], item, f"{name!r}")
+    if isinstance(value, list):
+        if len(value) < schema.get("minItems", 0):
+            problems.append(f"{where} needs at least {schema['minItems']} item(s)")
+        if "items" in schema:
+            for i, item in enumerate(value):
+                problems += argument_problems(schema["items"], item, f"{where}[{i}]")
+    return problems
 
 
 def trace_path(name: int | str) -> Path:
@@ -87,6 +120,7 @@ class AgentRun:
         for _ in range(self.max_steps):
             if time.time() > deadline:
                 return self.end(f"Stopped at the time limit ({self.max_seconds / 60:.0f} minutes).")
+            stopping.check()  # Each turn is a step boundary.
             if not getattr(self.llm, "prunes_context", False):  # Else the API clears old results itself.
                 self.prune_snapshots()
             self.steps += 1
@@ -105,7 +139,11 @@ class AgentRun:
                 self.messages.append({"role": "user", "content":
                                       "Continue with tool calls, or call finish if you're done."})
                 continue
+            checked = {call["id"]: self.check(call) for call in calls}  # The whole batch, before any runs.
             for call in calls:
+                if checked[call["id"]]:
+                    self.tool_result(call, checked[call["id"]])
+                    continue
                 if call["function"]["name"] == "finish" and not self.used_tools and not self.reminded:
                     # Finishing before any tool ran usually means it tried a tool of its own
                     # (none are on) and gave up. Say how tools work, once.
@@ -129,7 +167,9 @@ class AgentRun:
         trace.agent(self.trace_path.stem, getattr(self, "start_line", 0), getattr(self, "steps", 0), report)
         return report
 
-    def execute(self, call: dict) -> dict:
+    def check(self, call: dict) -> dict | None:
+        """Why this call can't run (unknown tool, arguments not JSON or not matching the tool's
+        schema), as the result the model gets back; None when it may run."""
         name = call["function"]["name"]
         tool = self.by_name.get(name)
         if tool is None:
@@ -138,6 +178,16 @@ class AgentRun:
             args = json.loads(call["function"].get("arguments") or "{}")
         except json.JSONDecodeError as error:
             return {"ok": False, "error": f"Arguments were not valid JSON: {error}"}
+        problems = argument_problems(tool.parameters, args)
+        if problems:
+            self.trace("call", {"name": name, "args": args, "refused": problems})
+            return {"ok": False, "error": f"Not run: {'; '.join(problems)}."}
+        return None
+
+    def execute(self, call: dict) -> dict:
+        name = call["function"]["name"]
+        tool = self.by_name[name]
+        args = json.loads(call["function"].get("arguments") or "{}")
         self.trace("call", {"name": name, "args": args})
         what = "; ".join(str(v)[:120] for v in list(args.values())[:2])
         try:

@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from . import config, llm as models, research
+from .harness import argument_problems
 from .assistant import Assistant, Chat
 from .prompts import ASSISTANT_PROMPT
 
@@ -192,7 +193,10 @@ class Turn:
     def run_tool(self, tool, args: dict) -> tuple[bool, str]:
         """Run one of the app's tools; returns (ok, result as JSON text for the model)."""
         item = self.tool_start(tool.name, args)
+        problems = argument_problems(tool.parameters, args)
         try:
+            if problems:  # Checked before anything runs, like the pipeline's agents.
+                raise ValueError(f"Not run: {'; '.join(problems)}.")
             result, ok = tool.fn(**args), True
         except TypeError as error:
             result, ok = f"Bad arguments for {tool.name}: {error}", False

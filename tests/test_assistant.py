@@ -153,7 +153,7 @@ def app(env, tmp_path, monkeypatch):  # noqa: F811 - pytest fixture
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "data" / "t.db")
     model = FakeModel([])
     monkeypatch.setattr(chat.models, "client", lambda settings: model)
-    app = dashboard.Dashboard(replace(settings, submit_mode="review", model="deepseek/deepseek-v4.1-flash"), 0)
+    app = dashboard.Dashboard(replace(settings, model="deepseek/deepseek-v4.1-flash"), 0)
     app.llm_missing = False
     app.ensure_worker = lambda: None
     app.model_stub = model

@@ -31,7 +31,6 @@ def load_env_file(path: Path = ROOT / ".env") -> None:
 class Settings:
     api_key: str
     model: str
-    submit_mode: str
     daily_submit_limit: int
     browser_channel: str
     company_cap: int = 3
@@ -52,13 +51,9 @@ class Settings:
                 "Set OPENROUTER_API_KEY and OPENROUTER_MODEL in job-agent/.env "
                 "(copy .env.example)."
             )
-        mode = os.environ.get("SUBMIT_MODE", "review").strip().lower()
-        if mode not in ("review", "auto"):
-            raise SystemExit("SUBMIT_MODE must be review or auto.")
         return cls(
             api_key=key,
             model=model,
-            submit_mode=mode,
             daily_submit_limit=int(os.environ.get("DAILY_SUBMIT_LIMIT", "15")),
             browser_channel=os.environ.get("BROWSER_CHANNEL", "chrome").strip(),
             company_cap=int(os.environ.get("COMPANY_CAP", "3")),

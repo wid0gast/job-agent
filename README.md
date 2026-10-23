@@ -260,7 +260,6 @@ emailed code).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `SUBMIT_MODE` | `review` | `auto` submits approved-quality packets without asking. |
 | `DAILY_SUBMIT_LIMIT` | `15` | Hard cap on submissions per day. |
 | `BROWSER_CHANNEL` | `chrome` | `chromium` uses Playwright's browser (run `uv run playwright install chromium`). |
 | `COMPANY_CAP`, `COMPANY_WINDOW_DAYS` | `3`, `30` | Default per-company limit (rolling). Known limits are in `company-rules.yaml`. |
@@ -296,16 +295,17 @@ emailed code).
   applications get answers. Ranked jobs can be searched, paged and set aside in one click.
 - **Says how to apply, not just whether.** Each job gets Reach out first, Apply or
   Think twice, decided in code from the posting's dates, earlier listings of the
-  role, your own applications and the people found. A referral is about 9 times as
-  likely to lead to a hire, and roles open for months or posted again often aren't
+  role, your own applications and the people found. In Lever's 2016 data a referral
+  was about 9 times as likely to lead to a hire, and roles open for months or posted again often aren't
   really hiring.
 - **Read by a hiring manager's eye before you approve.** A separate request gives
-  each packet a 30-second first pass: which pile, what they'd remember, and up to
+  each packet a quick first pass: which pile, what they'd remember, and up to
   three quoted lines that hurt it, with fixes from your real material. Quotes not
   found in the application are dropped.
-- **Quality over volume.** Tailored applications get roughly 3–4x the
-  response rate of mass ones, and sites restrict accounts that behave like
-  bots. Hence the daily cap and the review step.
+- **Quality over volume.** Hiring managers discount generic and AI-sounding
+  applications (about half count heavily AI-written ones as a red flag), and
+  sites restrict accounts that behave like bots. Hence the daily cap, the
+  per-company cap and the review step.
 
 ### Code map
 

@@ -23,7 +23,9 @@ VISIBLE_TEXT_JS = r"""
   const hidden = (el) => {
     if (hiddenCache.has(el)) return hiddenCache.get(el);
     let result = false;
-    if (el.closest('[aria-hidden="true"], [hidden], script, style, noscript, template')) result = true;
+    // Not aria-hidden: it hides from screen readers, not from eyes. Sites (Meta) set it on the whole
+    // page while a banner is open, which once left a posting with no text at all.
+    if (el.closest('[hidden], script, style, noscript, template')) result = true;
     else {
       const s = getComputedStyle(el);
       const r = el.getBoundingClientRect();

@@ -4,7 +4,6 @@ import http.client
 import re
 import threading
 import time
-from dataclasses import replace
 from http.server import ThreadingHTTPServer
 
 from job_agent import config, dashboard
@@ -24,7 +23,7 @@ def test_pages_and_request_checks(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
     Tracker(tmp_path / "t.db").add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s",
                                         "Acme", "ML Intern", "NYC")
-    settings = replace(config.Settings.from_env(require_model=False), submit_mode="review")
+    settings = config.Settings.from_env(require_model=False)
     app = dashboard.Dashboard(settings, 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
@@ -63,7 +62,7 @@ def test_today_points_to_the_assistant_and_agent_traces_render(tmp_path, monkeyp
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     tracker = Tracker(tmp_path / "t.db")
     tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
-    settings = replace(config.Settings.from_env(require_model=False), submit_mode="review")
+    settings = config.Settings.from_env(require_model=False)
     app = dashboard.Dashboard(settings, 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
@@ -104,7 +103,7 @@ def test_ranked_jobs_open_before_a_resume_and_errors_show(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
     Tracker(tmp_path / "t.db").add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
-    settings = replace(config.Settings.from_env(require_model=False), submit_mode="review")
+    settings = config.Settings.from_env(require_model=False)
     app = dashboard.Dashboard(settings, 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
@@ -134,7 +133,7 @@ def test_a_prepared_job_can_be_marked_applied(tmp_path, monkeypatch):
                   "tailoring": {"matched": [], "emphasized": [], "gaps": []}}, folder)
     tracker.move(job["id"], "found", "preparing")
     tracker.move(job["id"], "preparing", "prepared", packet_dir=str(folder))
-    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port
     server.RequestHandlerClass = dashboard.handler_for(app)
@@ -158,7 +157,7 @@ def test_pages_with_work_running_update_in_place_without_reloading(tmp_path, mon
     tracker = Tracker(tmp_path / "t.db")
     task = tracker.add_task("refresh")
     tracker.set_task(task, status="running", result="Job lists read: 10 new jobs kept so far")
-    app = dashboard.Dashboard(replace(config.Settings.from_env(require_model=False), submit_mode="review"), 0)
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
     app.ensure_worker = lambda: None
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
     app.port = server.server_port

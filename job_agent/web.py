@@ -91,7 +91,8 @@ def explore(ctx, job: dict, description: str, document, log, facts=lambda: []) -
 class Explorer:
     def __init__(self, ctx, job, description, view: PageView, document, log, ask, facts=lambda: []):
         self.ctx, self.job, self.description, self.view = ctx, job, description, view
-        self.document, self.log, self.ask, self.facts = document, log, ask, facts
+        self.document, self.log, self.facts = document, log, facts
+        self._ask = ask
         self.profile, self.saved = config.load_profile(), config.load_answers()
         self.answers: list[dict] = []
         self.steps: list[dict] = []
@@ -116,6 +117,15 @@ class Explorer:
         if ref is not None:
             step["target"] = self.target(ref)
         self.steps.append(step)
+
+    def ask(self, question: str) -> str:
+        """Ask you (on the job's page and Today). No reply in time ends the run: going on
+        without your answer, or asking again, would only repeat the question."""
+        try:
+            return self._ask(question)
+        except TimeoutError:
+            raise StopRun(f"Stopped: no reply within 15 minutes to “{question[:200]}”. Prepare again when "
+                          "you can answer.") from None
 
     def account_consent(self) -> None:
         """A page with a password box means an account in the user's name: ask first."""
