@@ -198,6 +198,11 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
 .prompts button{text-align:left;font-weight:500;padding:12px 14px}
 @media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
+@media (max-width:640px){.card table{display:block;overflow-x:auto}
+header{position:static;flex-wrap:wrap;padding:8px 12px}header nav{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
+header nav a{white-space:nowrap}
+table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:auto!important}
+table.stack td:last-child{padding-top:0}}
 .person{border-top:1px solid var(--line);padding:16px 0 4px}.person:first-of-type{border-top:0;padding-top:4px}
 .person .draft{display:grid;gap:8px;margin:10px 0}.person .draft label{font-size:12px;color:var(--muted);font-weight:600}
 .person textarea.short{min-height:60px}.person .sent{color:var(--good);font-weight:600}
@@ -1128,10 +1133,10 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
         for a in packet["answers"])
     answers_card = (f'<form method=post action="/edit-all" class=card><input type=hidden name=token value="{app.token}">'
-                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table>{rows}</table>'
+                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table class=stack>{rows}</table>'
                     '<div class=save><button class=primary>Save changes</button>'
                     '<span class=muted>Only answers you changed are saved.</span></div></form>'
-                    if editable else f'<div class=card><h2>Answers</h2><table>{rows}</table></div>')
+                    if editable else f'<div class=card><h2>Answers</h2><table class=stack>{rows}</table></div>')
     tail = packet.get("submission")
     researched = recorded = proof = ""
     if packet.get("research"):  # Company facts the letter and "why us" answers could use.
