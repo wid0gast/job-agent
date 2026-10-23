@@ -7,9 +7,20 @@ jobs with honest, tailored applications, and talking to someone at the company
 (in Lever's data on about 4 million candidates, 1 in 16 referred candidates was
 hired, against 1 in 152 who applied through a careers page or posting).
 
-Job Agent does the slow parts and leaves the decisions with you: it finds and
-ranks jobs, prepares each application, finds people worth contacting with a
-drafted message, and applies only when you approve.
+It's getting worse because of tools like this one. LinkedIn gets about
+11,000 applications a minute, up 45% in a year; on Handshake, applications per
+job rose 26% while postings fell. Most AI job tools make it worse: they raise
+the *number* of applications (one auto-apply service sells 4,500 a month), and
+hiring managers answer with filters. About half now count heavily
+AI-written applications as a red flag, and Greenhouse's CEO calls it a
+"doom loop".
+
+Job Agent aims at the *odds* of each application instead of the count. It
+does the slow parts and leaves the decisions with you: it finds and ranks
+jobs, says how to apply to each (through a person, directly, or not at all),
+prepares each application and has a hiring manager's eye read it, finds
+people worth contacting with a drafted message, and applies only when you
+approve.
 
 ## Agent or code? The rule it follows
 
@@ -37,6 +48,27 @@ What you approve is exactly what gets sent. Approval records a fingerprint
 form, compares it with what you approved (a new required question sends it
 back to you), and types your approved answers. No model runs during submit, so
 it can't improvise.
+
+**Why does it say how to apply, and not just apply?**
+Because the route changes the odds more than speed does. A referral is about
+9 times as likely to lead to a hire. About 1 in 5 postings show no hiring
+activity, and roles open for months or posted again are the clearest sign.
+A second application where you just applied for the same role mostly reaches
+the same people. So every job gets one of **Reach out first**, **Apply** or
+**Think twice**, with the reasons. It's decided in code from data you can
+check (posting dates, earlier listings of the role in the same place, your
+applications, the people found and what you've sent them), with no model
+call, so it's the same every time and never guesses. "Prepare top matches"
+passes over Think twice jobs and says which.
+
+**Why have a "hiring manager" read the application?**
+A hiring manager gives each application about 30 seconds on the first pass,
+and the writer can't judge its own work. So a different model (Sonnet; Opus
+wrote it) reads the finished packet as the hiring manager: which pile it
+lands in, what they'd remember, what they looked for and didn't find, and up
+to three lines that hurt it, each with a fix that uses only your real
+material. Code checks every quoted line is really in your application and
+drops any that isn't. It changes nothing by itself: you decide what to fix.
 
 **Why a different model for different tasks?**
 Cost and quality where they matter: Haiku ranks hundreds of job titles,

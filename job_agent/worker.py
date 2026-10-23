@@ -120,6 +120,18 @@ def _discover(task, ctx, log) -> str:
             f"{c['new']} new jobs, {c['seen']} already known")
 
 
+PREPARE_OUTCOMES = {"prepared": "Prepared", "filtered_out": "Not prepared", "closed": "Closed",
+                    "failed": "Failed", "found": "Not prepared", "needs_you": "Needs you"}
+
+
+def _prepare(task, ctx, log) -> str:
+    """Prepare one job; the result says what happened and why (the job's reason)."""
+    status = step("prepare", "prepare")(task["job_id"], ctx, log, note=task["arg"] or "")
+    reason = (ctx.tracker.get(task["job_id"]) or {}).get("reason")
+    return PREPARE_OUTCOMES.get(status, status) + (f": {reason}" if reason else
+                                                   ": ready for your review." if status == "prepared" else "")
+
+
 def _refresh(task, ctx, log) -> str:
     from . import matching, sources
 
@@ -172,14 +184,15 @@ HANDLERS = {
     "merge_resumes": _merge_resumes, "import_resume": _import_resume, "redraft": _redraft,
     "score_matches": lambda task, ctx, log: score_matches(ctx, log),
     # arg: a note on what to change, for a redo.
-    "prepare": lambda task, ctx, log: step("prepare", "prepare")(task["job_id"], ctx, log, note=task["arg"] or ""),
+    "prepare": lambda task, ctx, log: _prepare(task, ctx, log),
     "draft": lambda task, ctx, log: step("prepare", "draft_missing")(task["job_id"], ctx, log),
     "render": lambda task, ctx, log: step("prepare", "render")(task["job_id"], ctx, log),
     "letter": lambda task, ctx, log: step("prepare", "add_letter")(task["job_id"], ctx, log),
     "people": lambda task, ctx, log: step("people", "refresh")(task["job_id"], ctx, log),
+    "first_read": lambda task, ctx, log: step("first_read", "again")(task["job_id"], ctx, log),
     "submit": lambda task, ctx, log: step("submit", "submit")(task["job_id"], ctx, ctx.ask, log),
 }
-NEEDS_MODEL = ("sync_profile", "import_resume")
+NEEDS_MODEL = ("sync_profile", "import_resume", "first_read")
 
 
 def score_matches(ctx: Context, log) -> str:

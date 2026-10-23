@@ -19,7 +19,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import actions, answers, companies, config, documents, latex, matching, packets, people, resumes, sources, style, systems
+from . import (actions, answers, companies, config, documents, first_read, latex, matching, packets, people, resumes,
+               sources, strategy, style, systems)
 from .harness import Tool, schema
 from .tracker import OUTCOMES, STATUSES
 
@@ -30,7 +31,7 @@ TASKS = {"refresh": "Refresh the job lists", "discover": "Discover companies", "
          "prepare": "Prepare", "render": "Typeset documents", "submit": "Submit", "draft": "Draft answers",
          "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes",
          "import_resume": "Read a resume", "people": "Find people to contact", "letter": "Write a cover letter",
-         "redraft": "Rewrite messages"}
+         "redraft": "Rewrite messages", "first_read": "Hiring manager's first read"}
 MAX_WAIT_MINUTES = 15
 
 
@@ -94,8 +95,9 @@ class Assistant:
         roles = matching.grouped(rows)  # One entry per role; its other listings (offices, reposts) inside.
         limit = max(1, min(limit, 50))
         page = roles[offset:offset + limit]
-        result = {"total": len(roles), "jobs": [{**brief(j), **({"also_listed": [
-            {"id": o["id"], "location": (o["location"] or "")[:60]} for o in others]} if others else {})}
+        advisor = strategy.Advisor(self.tracker, self.settings)
+        result = {"total": len(roles), "jobs": [{**brief(j), **route_brief(advisor.advise(j, packets.load(j))), **(
+            {"also_listed": [{"id": o["id"], "location": (o["location"] or "")[:60]} for o in others]} if others else {})}
             for j, others in page]}
         if offset + limit < len(roles):
             result["more"] = f"{len(roles) - offset - limit} more: pass offset={offset + limit}, or narrow the query."
@@ -111,6 +113,7 @@ class Assistant:
             out["fit"] = {"score": fit.get("score"), "summary": fit.get("summary"), "flags": fit.get("flags"),
                           "unmet": [r["requirement"] for r in fit.get("requirements", []) if r.get("met") == "no"]}
         packet = packets.load(job)
+        out.update(route_brief(strategy.Advisor(self.tracker, self.settings).advise(job, packet), full=True))
         if packet:
             out["packet"] = f"Prepared; read it with get_packet({job_id})."
         if include_posting:
@@ -152,6 +155,8 @@ class Assistant:
                                                               checks.get("invented_numbers") or []],
             "reviewer_note": packet.get("reviewer_note"),
             "people_to_contact": people_brief(packet),
+            **route_brief(strategy.Advisor(self.tracker, self.settings).advise(job, packet), full=True),
+            "hiring_manager_read": read_brief(packet),
         }
 
     def refresh_jobs(self):
@@ -163,12 +168,20 @@ class Assistant:
     def rank_jobs(self):
         return self.queue("score_matches", note="Claude scores the best keyword matches (a minute or two).")
 
-    def prepare_applications(self, job_ids: list[int], note: str = ""):
+    def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False):
         queued, problems = [], []
         for job_id in dict.fromkeys(int(i) for i in job_ids):
             job = self.tracker.get(job_id)
             if job is None:
                 problems.append(f"#{job_id}: no such job")
+                continue
+            if actions.below_threshold(job):
+                if not anyway:
+                    problems.append(f"#{job_id}: {job['reason']} Show the user its fit check (get_job); if they "
+                                    "still want it, call again with anyway=true.")
+                    continue
+                self.chat.start_worker()
+                queued.append({"job_id": job_id, "task_id": actions.prepare_anyway(self.tracker, job_id)})
                 continue
             if job["status"] not in ("found", "prepared", "needs_you"):
                 problems.append(f"#{job_id}: it is {job['status']}" + (
@@ -336,6 +349,13 @@ class Assistant:
             people.person_in(packet or {}, pid)
         return self.queue("redraft", job_id, arg=json.dumps({"people": person_ids or [], "note": note}),
                           note="Rewrites the unsent drafts following the note (a minute).")
+
+    def read_as_hiring_manager(self, job_id: int):
+        job = self.job(job_id)
+        if packets.load(job) is None:
+            raise ValueError(f"Job {job_id} has no packet yet; prepare it first.")
+        return self.queue("first_read", job_id, note="A different model reads the packet as the hiring manager "
+                          "(under a minute); get_packet shows the result as hiring_manager_read.")
 
     def write_cover_letter(self, job_id: int):
         job = self.job(job_id)
@@ -510,8 +530,10 @@ class Assistant:
                  "(background task).", schema(), self.rank_jobs),
             Tool("prepare_applications", "Prepare application packets (fit check, tailored resume, drafted "
                  "answers) as background tasks. Also redoes a prepared one: pass a note saying what to change, "
-                 "e.g. 'lead with the robotics project'. Nothing is sent.",
-                 schema({"job_ids": ids, "note": string}, ["job_ids"]), self.prepare_applications),
+                 "e.g. 'lead with the robotics project'. Nothing is sent. anyway=true prepares a job set aside "
+                 "only because its fit scored below the threshold, reusing that fit check: only when the user "
+                 "asks after seeing why.",
+                 schema({"job_ids": ids, "note": string, "anyway": boolean}, ["job_ids"]), self.prepare_applications),
             Tool("edit_answer", "Change one answer in a packet (keys from get_packet). Short answers and choices "
                  "must be facts the user stated (in this chat or their profile); essays (long text answers) may be "
                  "written for them. remember=true saves a short answer for future applications.",
@@ -521,6 +543,10 @@ class Assistant:
                  "then typeset the PDF again. Numbers must come from the master resume.",
                  schema({"job_id": integer, "document": {"type": "string", "enum": ["resume", "cover_letter"]},
                          "edits": edits}), self.edit_document),
+            Tool("read_as_hiring_manager", "Have a different model read a prepared application as the hiring "
+                 "manager would on a 30-second first pass: which pile, what they'd remember, and up to three lines "
+                 "that hurt it (background task). Preparing does this once; use it again after edits.",
+                 schema({"job_id": integer}), self.read_as_hiring_manager),
             Tool("write_cover_letter", "Write a cover letter for a prepared application whose form has a "
                  "place for one (background task).", schema({"job_id": integer}), self.write_cover_letter),
             Tool("request_submission", "Ask the user to confirm submitting prepared applications. Shows a card "
@@ -586,6 +612,24 @@ def task_brief(task: dict) -> dict:
     return {"id": task["id"], "what": TASKS.get(task["kind"], task["kind"]), "job_id": task["job_id"],
             "status": task["status"], "result": (task["result"] or "")[:300] or None,
             **({"question": task["question"]} if task["status"] == "waiting" else {})}
+
+
+def route_brief(advice: dict | None, full: bool = False) -> dict:
+    """How to apply (strategy.py), for jobs not yet applied to."""
+    if not advice:
+        return {}
+    out = {"how_to_apply": advice["label"], "why": advice["headline"]}
+    if full:
+        out["signals"] = [r["text"] for r in advice["reasons"]]
+    return out
+
+
+def read_brief(packet: dict) -> dict | None:
+    read = packet.get("first_read")
+    if not read or read.get("error"):
+        return None
+    return {"pile": read["pile"], "remembered": read["remembered"], "missing": read["missing"] or None,
+            "concerns": read["concerns"], "out_of_date": read["basis"] != first_read.basis(packet)}
 
 
 def people_brief(packet: dict) -> dict | None:

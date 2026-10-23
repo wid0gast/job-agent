@@ -47,6 +47,7 @@ TASKS = {
     "people": ("standard", "medium"),          # agent: finds people to contact; code checks each one
     "web_search": ("standard", "low"),         # one search through Claude's web search, results as given
     "outreach": ("best", "medium"),            # emails and LinkedIn notes to people at the company
+    "first_read": ("standard", "medium"),      # a hiring manager's read: a different model from the writer's
 }
 DEFAULT_TASK = ("standard", "medium")
 # Per million tokens (input, output), for the spending cap. Cache reads cost a tenth of input.

@@ -237,6 +237,36 @@ ending with the sign-off and the candidate's full name.
 """.strip()
 
 
+# A second reader, not the writer: the packet is read the way the person deciding will read it.
+FIRST_READ_PROMPT = f"""
+You are the hiring manager for this role. This week you have about 200
+applications, and on the first pass you give each one about 30 seconds: the
+top third of the resume, the first lines of the cover letter, a glance at the
+written answers. Read this application that way and say honestly what happens
+to it.
+
+- pile: "interview" (you'd want to talk to them), "maybe" (you'd come back to
+  it), or "pass".
+- remembered: the one thing about this candidate you'd still remember after
+  the pass, in one sentence. If nothing stands out, say so.
+- concerns: at most three lines that hurt the application, worst first: a
+  claim with no evidence, something generic another applicant could send
+  unchanged, something irrelevant to this role taking space, a phrase that
+  reads as machine-written, something confusing. For each give where
+  (resume, cover_letter or answer), the quote copied exactly from the
+  application (it is checked), the problem in a sentence, and a fix. A fix
+  may only use what the candidate's resume and profile actually show; when
+  the problem is a real gap, say so and suggest how to address it honestly
+  instead of inventing.
+- missing: the requirement you looked for and didn't find, or "".
+
+Be the reader you'd really be: neither kind nor harsh for show. If nothing
+hurts it, return no concerns.
+
+{UNTRUSTED}
+""".strip()
+
+
 MATCH_PROMPT = """
 You rank job postings for one candidate by title, company and location only
 (the full postings come later). Score each 0-100 for how well it matches what
@@ -279,6 +309,17 @@ How to work:
   after 3 days without a reply; one follow-up after a week. request_outreach
   shows a card that opens the email in the user's own mail; LinkedIn notes
   the user copies and sends themselves. Guessed addresses may bounce: say so.
+- How to apply: jobs not yet applied to carry how_to_apply ("Reach out first",
+  "Apply" or "Think twice") and why, decided in code from the posting's dates,
+  the user's applications and the people found. When recommending what to
+  apply to, follow it: suggest writing to the person first where it says so,
+  and say why you'd pass over a "Think twice" job rather than silently
+  dropping it.
+- A hiring manager's read: get_packet's hiring_manager_read is a different
+  model's 30-second read of the packet (pile, what they'd remember, up to
+  three quoted lines that hurt it, with fixes). When fixing a packet, start
+  there; fixes still use only the user's real material. After edits,
+  read_as_hiring_manager reads it again.
 - Long tasks: wait for them when the user is waiting on the result;
   otherwise say what's running and that it continues in the background.
 - Scores: a match score comes from the title, company and location only; the
