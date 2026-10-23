@@ -112,8 +112,8 @@ background:var(--card);color:var(--text);cursor:pointer;text-decoration:none;dis
 transition:background .15s,border-color .15s,transform .05s}
 button:hover,.button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));text-decoration:none}
 button:active{transform:translateY(1px)}
-button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
-box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover{filter:brightness(1.06)}
+button.primary,.button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
+box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover,.button.primary:hover{filter:brightness(1.06);text-decoration:none}
 input[type=text],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
 padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);
 transition:border-color .15s,box-shadow .15s}
@@ -198,6 +198,7 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
 .prompts button{text-align:left;font-weight:500;padding:12px 14px}
 @media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
+@media (max-width:1200px){header nav a{padding:6px 7px}.brand{margin-right:6px}}
 @media (max-width:640px){.card table{display:block;overflow-x:auto}
 header{position:static;flex-wrap:wrap;padding:8px 12px}header nav{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
 header nav a{white-space:nowrap}
@@ -903,6 +904,9 @@ def not_prepared_card(app: Dashboard, job: dict) -> str:
     if actions.below_threshold(job):
         buttons.append(form(app, "/prepare-anyway", "Prepare anyway", {"job_id": job["id"]}, True))
         buttons.append('<a class=button href="/search">Change your threshold</a>')
+    if job["status"] == "failed" and job["url"]:  # Most often a page it couldn't read: you can.
+        buttons.append(f'<a class="button primary" target=_blank rel=noopener href="{esc(job["url"])}">'
+                       'Open the posting</a>')
     buttons.append(form(app, "/requeue", "Back to found", {"job_id": job["id"]}))
     hint = ("The fit check below is why: read it before deciding. Prepare anyway reuses it (no second fit "
             "check) and makes the rest of the packet." if actions.below_threshold(job) else
@@ -1185,7 +1189,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     if job["status"] in ("prepared", "approved", "needs_you", "rejected"):  # Applied outside the app.
         buttons.append(form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id}))
     if trace.runs(job_id):
-        docs = f'<a class="button primary" href="/job/{job_id}/trace">How this was made</a> ' + docs
+        docs = f'<a class=button href="/job/{job_id}/trace">How this was made</a> ' + docs
     t = packet["tailoring"]
     advice = strategy.Advisor(app.tracker, app.settings).advise(job, packet)
     tailoring = (f'<div class=card><h2>Tailoring the resume</h2><p><b>Matched:</b> {esc(joined(t["matched"]))}</p>'
