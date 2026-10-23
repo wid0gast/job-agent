@@ -44,3 +44,32 @@ def test_cut_at_the_platform_deadline_is_not_retried(monkeypatch):
     with pytest.raises(RuntimeError, match="90-second limit"):
         model.post({"messages": [{"role": "user", "content": "hi"}]})
     assert len(calls) == 1
+
+
+def test_an_empty_reply_in_strict_mode_is_asked_again_without_it(monkeypatch):
+    # DeepSeek V4.1 Flash answered every fit check with the schema's bare minimum in strict mode.
+    import json
+
+    monkeypatch.setenv("WORKSHOP_BROKER_URL", "http://broker.test")
+    monkeypatch.setenv("WORKSHOP_RUN_TOKEN", "run-token")
+    sent = []
+
+    def reply(request):
+        payload = json.loads(request.content)
+        sent.append((payload.get("response_format") or {}).get("type"))
+        answer = ({"score": 0, "summary": "", "requirements": []} if sent[-1] == "json_schema" else
+                  {"score": 72, "summary": "Reasonable fit.", "requirements": [{"requirement": "Python", "met": "yes"}]})
+        chunk = json.dumps({"choices": [{"delta": {"content": json.dumps(answer)}, "finish_reason": "stop"}]})
+        return httpx.Response(200, content=f"data: {chunk}\n\ndata: [DONE]\n\n".encode(),
+                              headers={"content-type": "text/event-stream"})
+
+    model = llm.Broker("deepseek/deepseek-v4.1-flash")
+    model.client = httpx.Client(transport=httpx.MockTransport(reply))
+    schema = {"type": "object", "required": ["score", "summary", "requirements"],
+              "properties": {"score": {"type": "integer"}, "summary": {"type": "string"},
+                             "requirements": {"type": "array", "items": {"type": "object"}}}}
+    assert model.json("Judge fit.", "{}", schema, "fit")["score"] == 72
+    assert sent == ["json_schema", "json_object"]
+    # An empty list of results is a real answer when nothing requires text.
+    assert not llm.says_something({"type": "object", "required": ["results"],
+                                   "properties": {"results": {"type": "array"}}})

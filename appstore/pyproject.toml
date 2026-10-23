@@ -1,6 +1,6 @@
 [project]
 name = "job-agent"
-version = "0.11.0"
+version = "0.12.0"
 description = "Finds jobs in any field, tailors resumes, drafts outreach and applies after you approve."
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -271,3 +271,11 @@ def test_a_job_your_filters_still_set_aside_isnt_offered_as_preparable(ctx):  # 
     problems = Assistant(ctx.tracker, ctx.settings, Cards().chat()).prepare_applications([job_id])["problems"]
     assert "set it aside again" in problems[0] and "update_search" in problems[0]
     assert not ctx.tracker.tasks(), "nothing queued"
+
+
+def test_many_prepares_at_once_need_the_users_go_ahead(ctx):  # noqa: F811 - pytest fixture
+    tools = Assistant(ctx.tracker, ctx.settings, Cards().chat())
+    asked = tools.prepare_applications([1, 2, 3, 4, 5])
+    assert not asked["queued"] and "confirm" in asked["problems"][0] and not ctx.tracker.tasks()
+    job_id = add_job(ctx, "4001")
+    assert tools.prepare_applications([job_id])["queued"], "a few at a time need no extra step"

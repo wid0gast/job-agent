@@ -234,21 +234,29 @@ def score_matches(ctx: Context, log) -> str:
             "(they keep their keyword score).")
 
 
-# Tasks with their own lane: they only call the model, so they run alongside the others
-# (a prepare needn't wait for a long ranking), one at a time.
-OWN_LANE = ("score_matches", "warmup")
+# Tasks with lanes of their own: they never open the browser, so they run alongside the
+# others, one at a time per lane. A prepare needn't wait for a long ranking, or for a
+# refresh (on the class platform reading every company board took over 15 minutes, most
+# of a session).
+LANES = (("score_matches", "warmup"), ("refresh", "discover"))
+OWN_LANE = tuple(kind for kinds in LANES for kind in kinds)
 
 
-def lane(ctx: Context, log, stop: threading.Event) -> None:
+def lane(ctx: Context, log, stop: threading.Event, kinds: tuple[str, ...] = LANES[0]) -> None:
     while not stop.is_set():
-        task = ctx.tracker.claim_task(kinds=OWN_LANE)
+        task = ctx.tracker.claim_task(kinds=kinds)
         if task is None:
             stop.wait(1)
             continue
         log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
         stopping.watch(lambda task_id=task["id"]: ctx.tracker.stop_asked(task_id))
         try:
-            ctx.tracker.set_task(task["id"], status="done", result=HANDLERS[task["kind"]](task, ctx, log)[:2000])
+            if task["kind"] in NEEDS_MODEL and ctx.llm is None:
+                raise ValueError(NOT_SET_UP)
+            # The handler directly, not run_task: that sets ctx.ask, the way a prepare's agent
+            # asks you things, and it must stay pointed at the prepare's task.
+            result = HANDLERS[task["kind"]](task, ctx, log)
+            ctx.tracker.set_task(task["id"], status="done", result=str(result)[:2000])
         except stopping.Stopped:
             ctx.tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
         except Exception as error:  # noqa: BLE001 - reported on the task, like any other.
@@ -264,8 +272,9 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
             log(f"Recovered: {note}")
         ctx = Context(settings, tracker)
         stop = threading.Event()
-        side = threading.Thread(target=lane, args=(ctx, log, stop), daemon=True)
-        side.start()
+        sides = [threading.Thread(target=lane, args=(ctx, log, stop, kinds), daemon=True) for kinds in LANES]
+        for side in sides:
+            side.start()
         idle_since = time.time()
         parent = os.getppid()
         try:
@@ -301,5 +310,6 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
                 idle_since = time.time()
         finally:
             stop.set()
-            side.join(timeout=5)
+            for side in sides:
+                side.join(timeout=5)
             ctx.close()

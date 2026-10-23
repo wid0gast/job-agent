@@ -37,6 +37,24 @@ TRANSIENT = re.compile(r"overloaded|\b5\d\d\b|timed? ?out|took more than|connect
                        r"temporar|ECONNRESET|socket|try again", re.I)
 
 
+def hollow(value) -> bool:
+    """Every field empty, blank or zero: a reply in the right shape that says nothing."""
+    if isinstance(value, dict):
+        return all(hollow(v) for v in value.values())
+    if isinstance(value, list):
+        return all(hollow(v) for v in value)
+    if isinstance(value, str):
+        return not value.strip()
+    return value in (None, 0, False)
+
+
+def says_something(schema: dict) -> bool:
+    """Whether a real answer always has some text: a required string field at the top. (An
+    empty list of results can be a real answer; a fit check with no summary can't.)"""
+    props = schema.get("properties") or {}
+    return any((props.get(k) or {}).get("type") == "string" for k in schema.get("required") or [])
+
+
 class SpendCapReached(RuntimeError):
     pass
 
@@ -172,6 +190,11 @@ class OpenRouter:
             try:
                 value = parse_json(text)
                 check(value, schema)
+                if says_something(schema) and hollow(value):
+                    # Strict schema mode let one model (DeepSeek V4.1 Flash) answer every fit check
+                    # with the schema's bare minimum. Ask again without it, for the rest of the run.
+                    self._json_format = max(self._json_format, 1)
+                    raise ValueError("the reply was empty: every field blank or zero")
                 return value
             except ValueError as problem:
                 error = str(problem)

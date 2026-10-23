@@ -786,8 +786,8 @@ def recent_prepares(app: Dashboard) -> tuple[str, bool]:
             continue
         seen.add(task["job_id"])
         job = app.tracker.get(task["job_id"])
-        if job is None:
-            continue
+        if job is None or (task["status"] == "stopped" and job["status"] == "found"):
+            continue  # Cancelled or stopped by you: nothing became of it to report.
         busy = task["status"] in ("queued", "running")
         running |= busy
         if busy:

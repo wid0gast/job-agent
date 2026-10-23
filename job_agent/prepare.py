@@ -220,6 +220,16 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                 "what_the_candidate_is_looking_for": profile.get("preferences", {}).get("description", ""),
                 "profile": profile, "resume": master}, ensure_ascii=False), FIT_SCHEMA, "fit")
             fit["score"] = max(0, min(100, int(fit["score"])))
+        # A reply that fits the schema but says nothing (no requirements, no summary, score 0)
+        # is a model failure, not a verdict: one model on the class platform returned exactly
+        # that for every posting, setting good jobs aside.
+        hollow = not fit.get("requirements") and not (fit.get("summary") or "").strip()
+        trace.check("The fit check has requirements and a summary", not hollow,
+                    "The model returned an empty fit check." if hollow else "")
+        if hollow:
+            raise Stop("failed", "The model returned an empty fit check (no requirements, no summary), so no "
+                                 "score was recorded and the job wasn't set aside. Prepare it again, or try "
+                                 "another model.")
         ctx.tracker.update(job["id"], fit_score=fit["score"], company_id=company_id,
                            ats_board=board, details={**details, "fit": fit})
         threshold = config.fit_threshold(profile, settings)
