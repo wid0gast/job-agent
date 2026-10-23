@@ -123,3 +123,18 @@ def test_the_progress_list_names_every_step_preparing_runs():
     source = inspect.getsource(prepare.build) + inspect.getsource(prepare.write_letter) + inspect.getsource(reader.add)
     named = set(re.findall(r'trace\.step\("([^"]+)"\)', source))
     assert named <= set(prepare.STEPS), named - set(prepare.STEPS)
+
+
+def test_prepare_top_matches_takes_one_job_per_company(tmp_path, monkeypatch):
+    from job_agent import actions, companies, config
+    from job_agent.tracker import Tracker
+
+    monkeypatch.setattr(companies, "COMPANIES_FILE", tmp_path / "companies.csv")
+    t = Tracker(tmp_path / "t.db")
+    for n, (company, title) in enumerate([("Acme", "ML Intern"), ("Acme", "Data Science Intern"),
+                                          ("Acme", "Research Intern"), ("Beta", "ML Intern")]):
+        t.add_lead(f"https://boards.greenhouse.io/{company.lower()}/jobs/{n}", "greenhouse", company, title, "NYC",
+                   posted_at=datetime.now(UTC).isoformat())
+    settings = config.Settings.from_env(require_model=False)
+    picks, _ = actions.top_picks(t, settings, 3)
+    assert sorted(j["company"] for j in picks) == ["Acme", "Beta"]

@@ -104,6 +104,29 @@ def prepare_anyway(tracker, job_id: int) -> int:
     return tracker.add_task("prepare", job_id)
 
 
+def top_picks(tracker, settings, count: int) -> tuple[list[dict], list[dict]]:
+    """The best-ranked found jobs to prepare: one per role and one per company (several at one
+    company would use up its limit at once), none at a company already at its limit, and none
+    the route says to think twice about. Returns (picks, passed over as not worth it)."""
+    from . import strategy, systems
+
+    found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
+    advisor, picks, passed, taken, known = strategy.Advisor(tracker, settings), [], [], set(), companies.Companies()
+    for job, _ in matching.grouped(found):  # One per role, best first.
+        if len(picks) == count:
+            break
+        company_id = job["company_id"] or known.resolve(job["company"])
+        if company_id in taken or companies.cap_problem(tracker, company_id, settings, job["id"]):
+            continue
+        advice = advisor.advise(job)
+        if advice and advice["route"] == "think_twice":
+            passed.append(job)
+            continue
+        picks.append(job)
+        taken.add(company_id)
+    return picks, passed
+
+
 def requeue(tracker, job_id: int) -> None:
     tracker.move(job_id, ("failed", "rejected", "skipped", "closed", "filtered_out"), "found",
                  reason="Requeued by you.")

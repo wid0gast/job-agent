@@ -2105,20 +2105,15 @@ def handler_for(app: Dashboard):
                 return "Queued for preparation.", (back if back.startswith("/jobs") else f"/job/{int(one['job_id'])}")
             if path == "/prepare-top":
                 count = max(1, min(20, int(one.get("count") or 3)))
-                found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
-                advisor, picks, passed = strategy.Advisor(tracker, app.settings), [], []
-                for job, _ in matching.grouped(found):  # One per role, best first; skip the ones not worth it.
-                    if len(picks) == count:
-                        break
-                    advice = advisor.advise(job)
-                    (passed if advice and advice["route"] == "think_twice" else picks).append(job)
+                picks, passed = actions.top_picks(tracker, app.settings, count)
                 app.ensure_worker()
                 for job in picks:
                     tracker.add_task("prepare", job["id"])
                 skipped = (f" Passed over {len(passed)} ranked higher that may not be worth it "
                            f"(e.g. {passed[0]['title']} at {passed[0]['company']}: open a job to see why)."
                            if passed else "")
-                return f"Queued the {len(picks)} best-ranked job(s) for preparation.{skipped}", "/"
+                return (f"Queued the {len(picks)} best-ranked job(s) for preparation, one per company.{skipped}"
+                        if picks else f"Nothing to prepare: no found job at a company with room under its limit.{skipped}"), "/"
             if path == "/score":
                 app.ensure_worker()
                 tracker.add_task("score_matches")
