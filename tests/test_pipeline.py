@@ -52,6 +52,11 @@ class ScriptedModel:
                     replies.append({"key": q["key"], "value": "", "values": [],
                                     "supported": False, "evidence": "not in profile"})
             return {"answers": replies}
+        if name == "first_read":  # One concern quotes the application; one quotes words that aren't in it.
+            line = next(x for x in data["application"]["resume"].splitlines() if x.startswith("- "))[2:40]
+            return {"pile": "maybe", "remembered": "The evaluation tools.", "missing": "", "concerns": [
+                {"where": "resume", "quote": line, "problem": "Vague.", "fix": "Name the dataset."},
+                {"where": "cover_letter", "quote": "I am a synergistic thought leader", "problem": "x", "fix": "y"}]}
         raise AssertionError(f"unexpected step {name}")
 
 
@@ -126,6 +131,8 @@ def test_prepare_approve_submit(ctx):
     asked = json.loads(next(u for n, u in ctx.llm.seen if n == "form_answers"))["questions"]
     assert {q["key"] for q in asked} == {"question_9003", "question_9005", "question_9006"}
     assert by_key(packet, "question_9006")["widget"] == "checkbox"
+    # The hiring manager's read keeps only concerns that quote the application.
+    assert packet["first_read"]["pile"] == "maybe" and len(packet["first_read"]["concerns"]) == 1
 
     actions.approve(ctx.tracker, ctx.settings, job_id)
     assert ctx.tracker.get(job_id)["status"] == "approved"
@@ -317,3 +324,23 @@ def test_a_school_the_form_doesnt_list_becomes_other_before_you_approve(ctx):
     actions.approve(ctx.tracker, ctx.settings, job_id)
     assert submit.submit(job_id, ctx, lambda q: demo_greenhouse.LAST_CODE["value"], log=lambda *_: None) == "submitted"
     assert demo_greenhouse.SUBMISSIONS[-1]["school--0"] == "Other"
+
+
+def test_a_job_below_your_threshold_says_why_and_can_be_prepared_anyway(ctx):
+    from job_agent import worker
+
+    job_id = add_job(ctx, "4001")
+    scripted = ctx.llm.json
+    ctx.llm.json = lambda *a: {**scripted(*a), "score": 40} if a[3] == "fit" else scripted(*a)
+    # The task's result says why, not just the status.
+    result = worker._prepare({"job_id": job_id, "arg": None}, ctx, lambda *_: None)
+    assert result == "Not prepared: Fit 40 is below your threshold of 60."
+    assert actions.below_threshold(ctx.tracker.get(job_id))
+
+    fits = sum(name == "fit" for name, _ in ctx.llm.seen)
+    actions.prepare_anyway(ctx.tracker, job_id)
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits, "the fit check you read is reused"
+    assert "prepare_anyway" not in json.loads(ctx.tracker.get(job_id)["details"])
+    with pytest.raises(ValueError):  # Only for jobs set aside by their fit score.
+        actions.prepare_anyway(ctx.tracker, job_id)

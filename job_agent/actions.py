@@ -5,6 +5,8 @@ answer is missing, an answer contradicts your profile, or the company or
 daily cap has no slot left. Approving reserves the slot.
 """
 
+import json
+import re
 from datetime import UTC, datetime
 
 import yaml
@@ -84,6 +86,22 @@ def resolve(tracker, job_id: int, outcome: str) -> None:
 def skip(tracker, job_id: int) -> None:
     """You're not interested in a found job: set aside, with the reason; requeue undoes it."""
     tracker.move(job_id, "found", "skipped", reason="Not interested (you).")
+
+
+def below_threshold(job: dict) -> bool:
+    """Set aside only because its fit check scored under your threshold (other filters still apply)."""
+    return job["status"] == "filtered_out" and bool(re.match(r"Fit \d+ is below your threshold", job["reason"] or ""))
+
+
+def prepare_anyway(tracker, job_id: int) -> int:
+    """Prepare a job whose fit scored under your threshold, reusing that fit check. Returns the task."""
+    job = tracker.get(job_id)
+    if job is None or not below_threshold(job):
+        raise ValueError("Prepare anyway is for jobs set aside only because their fit is below your threshold.")
+    details = json.loads(job["details"] or "{}")
+    tracker.update(job_id, details={**details, "prepare_anyway": True})
+    tracker.move(job_id, "filtered_out", "found", reason="Preparing anyway, as you chose.")
+    return tracker.add_task("prepare", job_id)
 
 
 def requeue(tracker, job_id: int) -> None:

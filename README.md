@@ -294,6 +294,15 @@ emailed code).
 - **Tracks what happens next.** Mark each application's outcome; ones with no reply in
   30 days are marked no response, and the Applications page shows which kinds of
   applications get answers. Ranked jobs can be searched, paged and set aside in one click.
+- **Says how to apply, not just whether.** Each job gets Reach out first, Apply or
+  Think twice, decided in code from the posting's dates, earlier listings of the
+  role, your own applications and the people found. A referral is about 9 times as
+  likely to lead to a hire, and roles open for months or posted again often aren't
+  really hiring.
+- **Read by a hiring manager's eye before you approve.** A separate request gives
+  each packet a 30-second first pass: which pile, what they'd remember, and up to
+  three quoted lines that hurt it, with fixes from your real material. Quotes not
+  found in the application are dropped.
 - **Quality over volume.** Tailored applications get roughly 3–4x the
   response rate of mass ones, and sites restrict accounts that behave like
   bots. Hence the daily cap and the review step.
@@ -332,6 +341,8 @@ emailed code).
 | `job_agent/static/chat.js` | The chat page: sending, live updates, cards |
 | `job_agent/web.py`, `pageview.py` | The explorer agent, its page view, and the coded replay |
 | `job_agent/people.py` | People to contact: the finder agent and its checks, drafts, sending and reminders |
+| `job_agent/strategy.py` | How to apply: Reach out first, Apply or Think twice, from signals in code |
+| `job_agent/first_read.py` | A hiring manager's first read of each packet, quotes checked in code |
 | `job_agent/research.py` | The research agent: search, read, quote-checked facts |
 | `job_agent/browser.py` | The headless browser (PDFs, visible text) and the Chrome window for submits |
 | `job_agent/tracker.py` | SQLite jobs with enforced status moves, caps, tasks |

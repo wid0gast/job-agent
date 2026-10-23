@@ -282,6 +282,14 @@ class Tracker:
         return None
 
     @locked
+    def listings(self, job: dict) -> list[dict]:
+        """The same role's other rows: other offices, or the role posted again (any status)."""
+        if not job.get("match_key"):
+            return []
+        rows = self.db.execute("SELECT * FROM jobs WHERE match_key = ? AND id != ?", (job["match_key"], job["id"]))
+        return [dict(row) for row in rows]
+
+    @locked
     def get(self, job_id: int) -> dict | None:
         row = self.db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
