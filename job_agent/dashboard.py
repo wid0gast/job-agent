@@ -584,7 +584,7 @@ def outreach_card(app: Dashboard) -> str:
 
 
 def page_queue(app: Dashboard, flash: str) -> bytes:
-    rows = []
+    rows, selectable = [], 0
     blank = {j["id"] for j in waiting_on_you(app)}
     advisor = strategy.Advisor(app.tracker, app.settings)
     for job in app.tracker.with_status(*QUEUE, order="fit_score DESC, id"):
@@ -594,6 +594,7 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
         # Only complete packets can be approved; the others link to what's missing.
         box = (f'<input type=checkbox name=ids value="{job["id"]}">'
                if job["status"] == "prepared" and job["id"] not in blank else "")
+        selectable += bool(box)
         rows.append(f'<tr><td>{box}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
                     f'<td>{esc(job["fit_score"])}</td><td style="max-width:320px">{route}</td>'
@@ -606,7 +607,9 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
     <form method=post action="/approve"><input type=hidden name=token value="{app.token}">
     <div class="card"><table><tr><th></th><th>Job</th><th>Fit</th><th>How to apply</th><th>Status</th></tr>
     {"".join(rows) or '<tr><td colspan=5 class=muted>Nothing waiting. Prepare some jobs from Today or Jobs.</td></tr>'}
-    </table><div class="row" style="margin-top:12px"><button class=primary>Approve selected</button></div></div></form>
+    </table><div class="row" style="margin-top:12px">{'<button class=primary>Approve selected</button>' if selectable else
+    '<span class=muted>Nothing here can be approved yet: open a job and answer its open questions first.</span>' if rows
+    else ""}</div></div></form>
     <div class="row">{send}</div>"""
     return layout(app, "/queue", body, flash)
 
@@ -1482,14 +1485,16 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
             f'<div class=muted style="font-size:12px">since {(job["outcome_at"] or "")[:10]}</div></td></tr>')
     body = f"""<h1>Applications</h1>
     <div class=stats>{tiles}</div>
-    <p class=muted>{stats["total"]} applications · {stats["response_rate"]}% heard back ·
-    {stats["positive_rate"]}% reached an assessment, interview or offer.
+    <p class=muted>{f"""{stats["total"]} application{"" if stats["total"] == 1 else "s"} · {stats["response_rate"]}% heard
+    back · {stats["positive_rate"]}% reached an assessment, interview or offer.""" if stats["total"] else
+    "No applications yet: submitted ones and ones you import appear here."}
     {'<a href="/applications">Show all</a>' if show else ''}</p>
     {rates}
     <div class=card><table><tr><th>Applied</th><th>Job</th><th>How</th><th>Outcome</th></tr>
     {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Import your job sheet below.</td></tr>'}
-    </table><p class=muted style="margin-top:10px"><span class=warn>?</span> = date unknown (imported
-    without one; counted from the import day for company caps). Set the real date on the job's page.</p></div>
+    </table>{"" if "class=warn title=" not in "".join(rows) else """<p class=muted style="margin-top:10px">
+    <span class=warn>?</span> = date unknown (imported without one; counted from the import day for company caps).
+    Set the real date on the job's page.</p>"""}</div>
     <div class=card><h2>Import or export</h2>
     <p class=muted>Import a CSV job sheet with a link, company, role and a status column
     (Applied, OA, Interview, Offer, Rejected…). Rows matching jobs in your lists are marked applied, so
