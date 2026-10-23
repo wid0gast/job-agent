@@ -106,3 +106,61 @@ def test_no_account_without_the_users_yes(ctx, site, monkeypatch):  # noqa: F811
     assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
     assert "didn't allow an account" in ctx.tracker.get(job_id)["reason"]
     assert ctx.tracker.db.execute("select count(*) from accounts").fetchone()[0] == 0
+
+
+def test_a_posting_inside_a_frame_is_read_and_page_data_stays_text(ctx, site):  # noqa: F811
+    from job_agent import web
+
+    company, title, _, desc = demo_site.JOBS["102"]
+    posting = web.fetch(ctx, {"url": f"{site}/framed/102", "title": title})
+    text = ctx.headless.visible_text(posting["html"])  # As prepare reads a page: no second unescape.
+    assert desc.split(".")[0] in text and web.title_found(text, title)
+    assert text.index(title) < text.index("Personal Data"), "the posting comes before the page's own text"
+    assert not any("navbar" in h for h in ctx.headless.last_hidden), "page data isn't reported as hidden text"
+
+
+def test_title_found_allows_word_forms_but_not_another_page():
+    from job_agent.web import title_found
+
+    page = "Machine Learning Internship (Summer) at Contoso. Responsibilities: train models."
+    assert title_found(page, "Machine Learning Intern - Summer 2027 (MS/PhD)")
+    assert title_found("R&D Engineering Intern, Cleveland", "R&D Engineer Intern - Research & Development Engineering")
+    assert not title_found("This Website collects some Personal Data from its Users. " * 50,
+                           "Quantitative Research Internship - PhD")
+
+
+def test_a_page_that_never_names_the_job_stops_before_any_guessing(ctx, site, monkeypatch):  # noqa: F811
+    from job_agent import web
+
+    ctx.tracker.add_lead(f"{site}/jobs/102", "test", "Contoso AI", "Quantitative Research Internship", "Remote",
+                         ats="other", job_type="internship", details={"locations": ["Remote"]})
+    job_id = ctx.tracker.leads(10)[-1]["id"]
+    monkeypatch.setattr(web, "fetch", lambda ctx, job: {
+        "html": "<p>This Website collects some Personal Data from its Users.</p>" * 40, "url": job["url"]})
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
+    assert "never mentions" in ctx.tracker.get(job_id)["reason"]
+    assert not any(name == "fit" for name, _ in ctx.llm.seen)
+
+
+def test_prepare_reads_a_framed_posting_whole(ctx, site):  # noqa: F811
+    # Unescaping a rendered page again once turned "&lt;!--" in page data into a comment that hid
+    # the whole posting. With no model set up, prepare stops right after reading.
+    ctx.llm = None
+    for n, path in enumerate(("framed", "inline")):  # Different companies, or they'd be one job.
+        ctx.tracker.add_lead(f"{site}/{path}/102", "test", f"Contoso AI {n}", "Machine Learning Intern", "Remote",
+                             ats="other", job_type="internship", details={"locations": ["Remote"]})
+        job = ctx.tracker.leads(10)[-1]
+        assert job["url"].endswith(f"/{path}/102")
+        assert prepare.prepare(job["id"], ctx, log=lambda *_: None) == "found", ctx.tracker.get(job["id"])["reason"]
+
+
+def test_a_site_that_refuses_the_reader_says_so(ctx, site, monkeypatch):  # noqa: F811
+    from job_agent import web
+
+    ctx.tracker.add_lead(f"{site}/jobs/101", "test", "Keysight", "EDA Software Intern", "Remote",
+                         ats="other", job_type="internship", details={"locations": ["Remote"]})
+    job_id = ctx.tracker.leads(10)[-1]["id"]
+    monkeypatch.setattr(web, "fetch", lambda ctx, job: {"html": "<h1>403 Forbidden</h1>", "url": job["url"],
+                                                        "status": 403})
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
+    assert "answered 403" in ctx.tracker.get(job_id)["reason"]

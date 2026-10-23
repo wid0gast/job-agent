@@ -56,7 +56,7 @@ def posting_signals(job: dict, listings: list[dict], now: datetime) -> tuple[lis
                    f"{'Internship postings' if limit == INTERN_STALE_DAYS else 'Postings'} open {limit}+ days "
                    "are more often not really hiring.")
     elif mine and (now - mine).days <= FRESH_DAYS:
-        age = (now - mine).days
+        age = (now.astimezone().date() - mine.astimezone().date()).days  # Calendar days where you are.
         good.append(f"Posted {'today' if age == 0 else 'yesterday' if age == 1 else f'{age} days ago'}: "
                     "early applications are read first.")
     return bad, good

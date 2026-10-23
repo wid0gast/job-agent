@@ -124,7 +124,8 @@ def check(job: dict, details: dict, profile: dict) -> str | None:
     max_age = prefs.get("max_posting_age_days")
     posted = posted_date(job.get("posted_at"))
     if max_age and posted and datetime.now(UTC) - posted > timedelta(days=int(max_age)):
-        return f"Posted more than {max_age} days ago."
+        return (f"Posted {posted:%b %-d, %Y}, {(datetime.now(UTC) - posted).days} days ago; your limit "
+                f"is {max_age} days (Search page).")
     return None
 
 

@@ -112,8 +112,8 @@ background:var(--card);color:var(--text);cursor:pointer;text-decoration:none;dis
 transition:background .15s,border-color .15s,transform .05s}
 button:hover,.button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));text-decoration:none}
 button:active{transform:translateY(1px)}
-button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
-box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover{filter:brightness(1.06)}
+button.primary,.button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
+box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover,.button.primary:hover{filter:brightness(1.06);text-decoration:none}
 input[type=text],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
 padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);
 transition:border-color .15s,box-shadow .15s}
@@ -198,6 +198,13 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
 .prompts button{text-align:left;font-weight:500;padding:12px 14px}
 @media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
+.start{padding:12px 16px;border-radius:12px;margin-bottom:16px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}.start ol{margin:6px 0 6px;padding-left:22px}.start li{margin:2px 0;color:var(--muted)}.start li.next{color:var(--text);font-weight:600}
+@media (max-width:1200px){header nav a{padding:6px 7px}.brand{margin-right:6px}}
+@media (max-width:640px){.card table{display:block;overflow-x:auto}select{max-width:100%}
+header{position:static;flex-wrap:wrap;padding:8px 12px}header nav{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
+header nav a{white-space:nowrap}
+table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:auto!important}
+table.stack td:last-child{padding-top:0}}
 .person{border-top:1px solid var(--line);padding:16px 0 4px}.person:first-of-type{border-top:0;padding-top:4px}
 .person .draft{display:grid;gap:8px;margin:10px 0}.person .draft label{font-size:12px;color:var(--muted);font-weight:600}
 .person textarea.short{min-height:60px}.person .sent{color:var(--good);font-weight:600}
@@ -317,6 +324,30 @@ NAV = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jo
        ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
 
 
+def labeler(answers: list[dict]):
+    """A question's label, told apart from others with the same wording by its choices
+    (a form once asked "select the combination that matches your results" four times)."""
+    from collections import Counter
+
+    counts = Counter(a["label"] for a in answers)
+    seen = Counter()
+
+    def label(a: dict) -> str:
+        if counts[a["label"]] < 2:
+            return a["label"]
+        options = a.get("options") or []
+        if 1 < len(options) <= 6:
+            return f'{a["label"]} ({" / ".join(map(str, options))})'
+        seen[a["key"]] = seen.get(a["key"]) or len(seen) + 1
+        return f'{a["label"]} (#{seen[a["key"]]})'
+    return label
+
+
+def joined(items: list[str]) -> str:
+    """Notes joined into one line, without the ".;" of notes that end in a period."""
+    return "; ".join(i.strip().rstrip(".;") for i in items if i.strip()) + ("." if items else "")
+
+
 def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: bool = False,
            title: str = "") -> bytes:
     """A page: the header with `active` highlighted, then `body`. `title` names the browser tab
@@ -377,11 +408,25 @@ def start_here(app: Dashboard, active: str) -> str:
                'Set <code>OPENROUTER_API_KEY</code> and <code>OPENROUTER_MODEL</code> in <code>.env</code> and restart.')
         parts.append(f'<div class="flash bad"><b>No model connected.</b> {how} '
                      '<a href="/connect">Details</a>.</div>')
-    if not (config.PROFILE_DIR / "resume.md").exists() and active not in ("/resumes",):
-        parts.append('<div class="flash warn">Start here: <a href="/resumes">upload your resume PDF(s)</a>, '
-                     'accept the merged master resume, then describe the jobs you want on '
-                     '<a href="/search">Search</a>. Optional: import your job sheet on '
-                     '<a href="/applications">Applications</a>.</div>')
+    try:
+        prefs = config.load_profile().get("preferences") or {}
+    except SystemExit:  # No profile yet.
+        prefs = {}
+    steps = [
+        (not app.llm_missing, '<a href="/connect">Connect a model</a>'),
+        ((config.PROFILE_DIR / "resume.md").exists(),
+         '<a href="/resumes">Add your resume</a> (PDFs are merged into one master resume you review)'),
+        (bool(prefs.get("description") or prefs.get("roles")),
+         'Say what you want on <a href="/search">Search</a>: roles, places, season'),
+        (bool(app.tracker.status_counts()), 'Find jobs: <b>Refresh job lists</b> on <a href="/">Today</a>'),
+    ]
+    if not all(done for done, _ in steps) and active not in ("/resumes", "/connect"):
+        nxt = next(i for i, (done, _) in enumerate(steps) if not done)
+        items = "".join(f'<li{" class=next" if i == nxt else ""}>{"✓ " if done else ""}{text}</li>'
+                        for i, (done, text) in enumerate(steps))
+        parts.append('<div class=start><b>Start here</b><ol>' + items + '</ol>'
+                     '<span class=muted>Optional: import the applications you already sent on '
+                     '<a href="/applications">Applications</a>, so they\'re never prepared again.</span></div>')
     return "".join(parts)
 
 
@@ -600,7 +645,7 @@ def outreach_card(app: Dashboard) -> str:
 
 
 def page_queue(app: Dashboard, flash: str) -> bytes:
-    rows = []
+    rows, selectable = [], 0
     blank = {j["id"] for j in waiting_on_you(app)}
     advisor = strategy.Advisor(app.tracker, app.settings)
     for job in app.tracker.with_status(*QUEUE, order="fit_score DESC, id"):
@@ -610,6 +655,7 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
         # Only complete packets can be approved; the others link to what's missing.
         box = (f'<input type=checkbox name=ids value="{job["id"]}">'
                if job["status"] == "prepared" and job["id"] not in blank else "")
+        selectable += bool(box)
         rows.append(f'<tr><td>{box}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
                     f'<td>{esc(job["fit_score"])}</td><td style="max-width:320px">{route}</td>'
@@ -622,7 +668,9 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
     <form method=post action="/approve"><input type=hidden name=token value="{app.token}">
     <div class="card"><table><tr><th></th><th>Job</th><th>Fit</th><th>How to apply</th><th>Status</th></tr>
     {"".join(rows) or '<tr><td colspan=5 class=muted>Nothing waiting. Prepare some jobs from Today or Jobs.</td></tr>'}
-    </table><div class="row" style="margin-top:12px"><button class=primary>Approve selected</button></div></div></form>
+    </table><div class="row" style="margin-top:12px">{'<button class=primary>Approve selected</button>' if selectable else
+    '<span class=muted>Nothing here can be approved yet: open a job and answer its open questions first.</span>' if rows
+    else ""}</div></div></form>
     <div class="row">{send}</div>"""
     return layout(app, "/queue", body, flash)
 
@@ -916,10 +964,14 @@ def not_prepared_card(app: Dashboard, job: dict) -> str:
     if actions.below_threshold(job):
         buttons.append(form(app, "/prepare-anyway", "Prepare anyway", {"job_id": job["id"]}, True))
         buttons.append('<a class=button href="/search">Change your threshold</a>')
+    if job["status"] == "failed" and job["url"]:  # Most often a page it couldn't read: you can.
+        buttons.append(f'<a class="button primary" target=_blank rel=noopener href="{esc(job["url"])}">'
+                       'Open the posting</a>')
     buttons.append(form(app, "/requeue", "Back to found", {"job_id": job["id"]}))
     hint = ("The fit check below is why: read it before deciding. Prepare anyway reuses it (no second fit "
             "check) and makes the rest of the packet." if actions.below_threshold(job) else
-            "Your filters are on the Search page." if job["status"] == "filtered_out" else "")
+            "Your filters are on the Search page; after changing one, Back to found puts the job up "
+            "for preparing again." if job["status"] == "filtered_out" else "")
     trail = (f' <a href="/job/{job["id"]}/trace">How it decided</a>' if trace.runs(job["id"]) else "")
     return (f'<div class="card" id=why><h2>{NOT_PREPARED[job["status"]]}</h2>'
             f'<p style="margin:0">{esc(job["reason"] or "No reason was recorded.")}{trail}</p>'
@@ -1086,11 +1138,11 @@ def tabbed(panels: list[tuple[str, str, str]], default: str) -> str:
     return f'<div class=tabbed><div class="tabs tabbar">{bar}</div>{body}</div>'
 
 
-def prepare_button(app: Dashboard, job: dict) -> str:
+def prepare_button(app: Dashboard, job: dict, primary: bool = False) -> str:
     """Coded systems prepare directly; others are filled by the browser agent (slower)."""
     if job["ats"] in systems.SUPPORTED:
-        return form(app, "/prepare", "Prepare", {"job_id": job["id"]})
-    return form(app, "/prepare", "Prepare (agent)", {"job_id": job["id"]}).replace(
+        return form(app, "/prepare", "Prepare", {"job_id": job["id"]}, primary)
+    return form(app, "/prepare", "Prepare (agent)", {"job_id": job["id"]}, primary).replace(
         "<button", '<button title="No coded filler for this site: a browser agent fills the form"', 1)
 
 
@@ -1114,7 +1166,8 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         if preparing:
             note = progress_card(app, job_id)
         elif job["status"] == "found":
-            note = '<p class=muted>Not prepared yet.</p>' + prepare_button(app, job)
+            note = (f'<div class=row style="margin:0 0 14px">{prepare_button(app, job, True)}<span class=muted>Not '
+                    'prepared yet: reads the posting, checks your fit, then writes the application.</span></div>')
         elif job["status"] in ("rejected", "skipped"):
             note = form(app, "/requeue", "Back to found", {"job_id": job_id}) + " "
         mark = (form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id})
@@ -1129,10 +1182,15 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     problems = packets.missing(packet)
     checks = packet["checks"]
     warn = []
+    shown = labeler(packet["answers"])
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
-             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(a["label"])}</a></li>' for a in problems)
-             + "</ul></div>") if problems else ""
+             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(shown(a))}</a></li>' for a in problems)
+             + "</ul>" + ('<p style="margin:8px 0 0">Your work authorization isn\'t set: choose it once on the '
+                          '<a href="/profile#authorization">Profile page</a> and these questions are answered in '
+                          'code on applications prepared from then on.</p>'
+                          if any("work_authorization" in (a.get("note") or "") for a in problems) else "")
+             + "</div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
     if checks.get("resume_pages", 1) > 1:
         warn.append(f"The resume is {checks['resume_pages']} pages.")
@@ -1142,15 +1200,15 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
     rows = "".join(
-        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(a["label"])}</b>{" *" if a["required"] else ""}'
+        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
         f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
         f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
         for a in packet["answers"])
     answers_card = (f'<form method=post action="/edit-all" class=card><input type=hidden name=token value="{app.token}">'
-                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table>{rows}</table>'
+                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table class=stack>{rows}</table>'
                     '<div class=save><button class=primary>Save changes</button>'
                     '<span class=muted>Only answers you changed are saved.</span></div></form>'
-                    if editable else f'<div class=card><h2>Answers</h2><table>{rows}</table></div>')
+                    if editable else f'<div class=card><h2>Answers</h2><table class=stack>{rows}</table></div>')
     tail = packet.get("submission")
     researched = recorded = proof = ""
     if packet.get("research"):  # Company facts the letter and "why us" answers could use.
@@ -1192,12 +1250,12 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     if job["status"] in ("prepared", "approved", "needs_you", "rejected"):  # Applied outside the app.
         buttons.append(form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id}))
     if trace.runs(job_id):
-        docs = f'<a class="button primary" href="/job/{job_id}/trace">How this was made</a> ' + docs
+        docs = f'<a class=button href="/job/{job_id}/trace">How this was made</a> ' + docs
     t = packet["tailoring"]
     advice = strategy.Advisor(app.tracker, app.settings).advise(job, packet)
-    tailoring = (f'<div class=card><h2>Tailoring the resume</h2><p><b>Matched:</b> {esc("; ".join(t["matched"]))}</p>'
-                 f'<p><b>Emphasized:</b> {esc("; ".join(t["emphasized"]))}</p>'
-                 f'<p><b>Gaps:</b> {esc("; ".join(t["gaps"]))}</p></div>')
+    tailoring = (f'<div class=card><h2>Tailoring the resume</h2><p><b>Matched:</b> {esc(joined(t["matched"]))}</p>'
+                 f'<p><b>Emphasized:</b> {esc(joined(t["emphasized"]))}</p>'
+                 f'<p><b>Gaps:</b> {esc(joined(t["gaps"]))}</p></div>')
     listed = [p for p in (packet.get("people") or {}).get("people", []) if not p.get("removed")]
     panels = [
         ("review", "Review", route_card(advice) + first_read_card(app, job, packet)),
@@ -1340,7 +1398,7 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
             flags.append(f"words not in the PDF: {', '.join(checks['unknown_words'][:12])}")
         rows.append(
             f'<tr><td><a target=_blank href="/file?path={esc(resumes.folder() / v["source"])}">{esc(v["source"])}</a>'
-            f'<div class="muted src">{esc(re.sub(r"[*`]+", "", v.get("notes") or ""))}</div>'
+            f'<div class="muted src" style="white-space:pre-line">{esc(re.sub(r"[*`]+", "", v.get("notes") or ""))}</div>'
             f'{"".join(f"<div class=warn>{esc(f)}</div>" for f in flags)}</td>'
             f'<td>{esc(v["latest_date"] or "unknown")}</td>'
             f'<td>{form(app, "/resumes/remove", "Remove", {"stem": v["stem"]})}</td></tr>')
@@ -1435,6 +1493,23 @@ def page_profile(app: Dashboard, flash: str) -> bytes:
              f'<pre>{esc(derived.read_text(encoding="utf-8"))}</pre></div>') if derived.exists() else (
         '<div class=card><h2>From your resume</h2><p class=muted>Nothing yet: add your '
         '<a href="/resumes">master resume</a> and your details are read from it.</p></div>')
+    auth = config.load_profile().get("work_authorization") or {}
+    if "authorized_in_us" in auth:
+        status = (f'<div class=card><h2>Work authorization</h2><p style="margin:0">{esc(auth.get("rule") or auth.get("status") or "From your profile")}: '
+                  f'authorized in the U.S. {"yes" if auth["authorized_in_us"] else "no"}; sponsorship now '
+                  f'{"yes" if auth.get("requires_sponsorship_now") else "no"}, later '
+                  f'{"yes" if auth.get("requires_sponsorship_future") else "no"}.</p><p class=muted '
+                  f'style="margin:6px 0 0">Forms\' authorization and sponsorship questions are answered from this, '
+                  f'in code. Change it under work_authorization in Profile settings.</p></div>')
+    else:
+        options = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in actions.AUTHORIZATION.items())
+        status = (f'<div class="card" id=authorization><h2>Work authorization</h2><p class=muted>Not set, so every '
+                  f'form\'s "authorized to work?" and "need sponsorship?" questions are left for you. Choose once '
+                  f'and they\'re answered in code from fixed rules. Not listed? Add it in Profile settings.</p>'
+                  f'<form method=post action="/profile/authorization" class=row><input type=hidden name=token '
+                  f'value="{app.token}"><select name=choice required style="width:auto"><option value="" selected disabled>'
+                  f'Choose your status…</option>{options}</select>'
+                  f'<button class=primary>Save</button></form></div>')
     cards = []
     for name, title, help_text in PROFILE_SECTIONS:
         text = config.read_optional(name) or ""
@@ -1449,7 +1524,7 @@ def page_profile(app: Dashboard, flash: str) -> bytes:
     body = f"""<h1>Profile</h1>
     <p class=muted style="margin-top:-8px">Stays on your computer; sent to the model only to tailor resumes and answer
     application questions.</p>
-    {facts}{"".join(cards)}"""
+    {status}{facts}{"".join(cards)}"""
     return layout(app, "/profile", body, flash)
 
 
@@ -1496,14 +1571,16 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
             f'<div class=muted style="font-size:12px">since {(job["outcome_at"] or "")[:10]}</div></td></tr>')
     body = f"""<h1>Applications</h1>
     <div class=stats>{tiles}</div>
-    <p class=muted>{stats["total"]} applications · {stats["response_rate"]}% heard back ·
-    {stats["positive_rate"]}% reached an assessment, interview or offer.
+    <p class=muted>{f"""{stats["total"]} application{"" if stats["total"] == 1 else "s"} · {stats["response_rate"]}% heard
+    back · {stats["positive_rate"]}% reached an assessment, interview or offer.""" if stats["total"] else
+    "No applications yet: submitted ones and ones you import appear here."}
     {'<a href="/applications">Show all</a>' if show else ''}</p>
     {rates}
     <div class=card><table><tr><th>Applied</th><th>Job</th><th>How</th><th>Outcome</th></tr>
     {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Import your job sheet below.</td></tr>'}
-    </table><p class=muted style="margin-top:10px"><span class=warn>?</span> = date unknown (imported
-    without one; counted from the import day for company caps). Set the real date on the job's page.</p></div>
+    </table>{"" if "class=warn title=" not in "".join(rows) else """<p class=muted style="margin-top:10px">
+    <span class=warn>?</span> = date unknown (imported without one; counted from the import day for company caps).
+    Set the real date on the job's page.</p>"""}</div>
     <div class=card><h2>Import or export</h2>
     <p class=muted>Import a CSV job sheet with a link, company, role and a status column
     (Applied, OA, Interview, Offer, Rejected…). Rows matching jobs in your lists are marked applied, so
@@ -2119,20 +2196,15 @@ def handler_for(app: Dashboard):
                 return "Queued for preparation.", (back if back.startswith("/jobs") else f"/job/{int(one['job_id'])}")
             if path == "/prepare-top":
                 count = max(1, min(20, int(one.get("count") or 3)))
-                found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
-                advisor, picks, passed = strategy.Advisor(tracker, app.settings), [], []
-                for job, _ in matching.grouped(found):  # One per role, best first; skip the ones not worth it.
-                    if len(picks) == count:
-                        break
-                    advice = advisor.advise(job)
-                    (passed if advice and advice["route"] == "think_twice" else picks).append(job)
+                picks, passed = actions.top_picks(tracker, app.settings, count)
                 app.ensure_worker()
                 for job in picks:
                     tracker.add_task("prepare", job["id"])
                 skipped = (f" Passed over {len(passed)} ranked higher that may not be worth it "
                            f"(e.g. {passed[0]['title']} at {passed[0]['company']}: open a job to see why)."
                            if passed else "")
-                return f"Queued the {len(picks)} best-ranked job(s) for preparation.{skipped}", "/"
+                return (f"Queued the {len(picks)} best-ranked job(s) for preparation, one per company.{skipped}"
+                        if picks else f"Nothing to prepare: no found job at a company with room under its limit.{skipped}"), "/"
             if path == "/score":
                 app.ensure_worker()
                 tracker.add_task("score_matches")
@@ -2309,6 +2381,9 @@ def handler_for(app: Dashboard):
                     tracker.add_task("sync_profile")
                     message += " Updating your profile facts from it."
                 return message, "/resumes"
+            if path == "/profile/authorization":
+                auth = actions.set_work_authorization(tracker, one.get("choice", ""))
+                return f"Saved: {auth['rule']}.", "/profile"
             if path == "/profile/save":
                 name = one.get("file", "")
                 actions.save_profile(tracker, name, one.get("content", ""))

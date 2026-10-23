@@ -24,6 +24,7 @@ from playwright.sync_api import Error as PlaywrightError
 from . import answers, config, forms
 from .harness import AgentRun, StopRun, Tool, schema
 from .pageview import FINAL_SUBMIT, PageView, follow_new_tab
+from .tracker import NOISE, normalize
 
 MAX_QUESTIONS = 3
 KEYCHAIN = "job-agent"
@@ -46,9 +47,40 @@ def fetch(ctx, job: dict) -> dict:
             page.wait_for_load_state("networkidle", timeout=8000)
         except PlaywrightError:
             pass
-        return {"html": page.inner_html("body"), "url": page.url}
+        return {"html": with_frames(page, job.get("title") or ""), "url": page.url,
+                "status": response.status if response else None}
     finally:
         page.close()
+
+
+def title_found(text: str, title: str) -> bool:
+    """Whether the page names this job: most of the title's words, in any form (intern or
+    internship), seasons, years and degree tags aside. A page that doesn't is a sign-in
+    wall, a search page or the wrong page, however many words it has."""
+    words = [w for w in normalize(title).split()
+             if w not in NOISE and len(w) > 1 and not w.isdigit()]
+    if not words:
+        return True
+    present = set(normalize(text).split())
+    stems = {w[:6] for w in present}
+    found = sum(w in present or w[:6] in stems for w in words)
+    return found >= max(1, round(0.6 * len(words)))
+
+
+def with_frames(page, title: str) -> str:
+    """The page's HTML plus its embedded frames'. Some sites (iCIMS) put the posting in a
+    frame, so the page alone was its privacy policy. A frame that names the job goes first,
+    so the posting isn't cut off behind the page's own text."""
+    first, rest = [], [page.inner_html("body")]
+    for frame in page.frames[1:]:
+        try:
+            body = frame.evaluate("() => document.body ? document.body.innerHTML : ''")
+            text = frame.evaluate("() => document.body ? document.body.innerText : ''")
+        except PlaywrightError:
+            continue  # Detached while loading, or a frame with nothing to read.
+        if len(text.split()) >= 20:  # Ads and trackers are empty frames.
+            (first if title and title_found(text, title) else rest).append(body)
+    return "\n".join(f"<section>{part}</section>" for part in first + rest)
 
 
 # ----- explore -------------------------------------------------------------

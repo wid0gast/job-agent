@@ -104,6 +104,29 @@ def prepare_anyway(tracker, job_id: int) -> int:
     return tracker.add_task("prepare", job_id)
 
 
+def top_picks(tracker, settings, count: int) -> tuple[list[dict], list[dict]]:
+    """The best-ranked found jobs to prepare: one per role and one per company (several at one
+    company would use up its limit at once), none at a company already at its limit, and none
+    the route says to think twice about. Returns (picks, passed over as not worth it)."""
+    from . import strategy, systems
+
+    found = [j for j in tracker.with_status("found") if j["ats"] in systems.SUPPORTED]
+    advisor, picks, passed, taken, known = strategy.Advisor(tracker, settings), [], [], set(), companies.Companies()
+    for job, _ in matching.grouped(found):  # One per role, best first.
+        if len(picks) == count:
+            break
+        company_id = job["company_id"] or known.resolve(job["company"])
+        if company_id in taken or companies.cap_problem(tracker, company_id, settings, job["id"]):
+            continue
+        advice = advisor.advise(job)
+        if advice and advice["route"] == "think_twice":
+            passed.append(job)
+            continue
+        picks.append(job)
+        taken.add(company_id)
+    return picks, passed
+
+
 def requeue(tracker, job_id: int) -> None:
     tracker.move(job_id, ("failed", "rejected", "skipped", "closed", "filtered_out"), "found",
                  reason="Requeued by you.")
@@ -155,6 +178,29 @@ def save_search(tracker, settings, values: dict) -> tuple[str, bool]:
         return "Saved. No jobs yet, so the job lists are being refreshed with these filters.", True
     after = len(tracker.with_status("found"))
     return f"Saved. {after} job(s) pass your filters ({after - before:+d}).", False
+
+
+# Your status in words the resume rules read (profile_sync.STATUS_RULES): the answers to
+# authorization and sponsorship questions then come from code, not the model.
+AUTHORIZATION = {"citizen": "U.S. citizen", "permanent": "U.S. permanent resident (green card)",
+                 "f1": "F-1 student (CPT/OPT)", "h1b": "On an H-1B visa", "j1": "J-1 visa holder",
+                 "authorized": "Authorized to work in the U.S., no sponsorship needed (e.g. EAD)"}
+
+
+def set_work_authorization(tracker, choice: str) -> dict:
+    """Add your work authorization to profile.yaml (once; after that it's edited there)."""
+    from .profile_sync import work_authorization
+
+    if choice not in AUTHORIZATION:
+        raise ValueError("Pick one of the listed statuses.")
+    path = config.PROFILE_DIR / "profile.yaml"
+    content = path.read_text(encoding="utf-8")
+    if "work_authorization" in (yaml.safe_load(content) or {}):
+        raise ValueError("profile.yaml already sets work_authorization: change it there, in Profile settings.")
+    auth = work_authorization(AUTHORIZATION[choice], "United States")
+    save_profile(tracker, "profile.yaml", content.rstrip() + "\n\n# Set on the Profile page.\n"
+                 + yaml.safe_dump({"work_authorization": auth}, sort_keys=False, allow_unicode=True))
+    return auth
 
 
 def save_profile(tracker, name: str, content: str) -> None:

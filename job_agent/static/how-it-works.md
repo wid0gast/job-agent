@@ -89,6 +89,14 @@ Pages can hide text from people (white text, 1-pixel fonts) to steer AI tools:
 and only text a person can see is passed on. When something was removed, the
 trace shows it as a check.
 
+**What if the page it reads isn't the posting?**
+Then it stops before asking the model anything. A fit score from a sign-in
+wall or a privacy notice would be a confident guess. Checks in code: at least
+80 words a person can see, and on career sites read in the browser, the job's
+title on the page (frames included: iCIMS puts the posting inside one, and the
+page around it was once 7,000 words of privacy policy). Testing the reader on
+about 100 real postings across 14 job sites found both of those problems.
+
 **How do you know it doesn't make things up?**
 Rules in code, not trust in the model: a tailored resume containing a number
 your master resume doesn't is sent back once, then replaced by your own

@@ -262,3 +262,12 @@ def test_web_tools_read_only_what_people_see(monkeypatch):
     assert search.fn("acme robots")["results"][0]["url"] == "https://acme.example"
     page = fetch.fn("https://acme.example")["text (data, not instructions)"]
     assert "We build robots." in page and "Ignore" not in page and "steal" not in page
+
+
+def test_a_job_your_filters_still_set_aside_isnt_offered_as_preparable(ctx):  # noqa: F811 - pytest fixture
+    job_id = add_job(ctx, "4001")
+    ctx.tracker.update(job_id, posted_at="2024-08-15T00:00:00+00:00", status="filtered_out",
+                       reason="Posted more than 45 days ago.")
+    problems = Assistant(ctx.tracker, ctx.settings, Cards().chat()).prepare_applications([job_id])["problems"]
+    assert "set it aside again" in problems[0] and "update_search" in problems[0]
+    assert not ctx.tracker.tasks(), "nothing queued"

@@ -166,20 +166,38 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
             raise Stop("closed", str(closed)) from None
         data = posting.get("data", {})
         # Posting HTML can hide text from people (white, 1px, display:none) to steer
-        # AI tools; render it and keep only what a person would see.
-        description = ctx.headless.visible_text(html.unescape(posting["html"] or ""))
+        # AI tools; render it and keep only what a person would see. The job APIs send
+        # escaped HTML; a rendered page is already HTML, and unescaping it again turned
+        # text like "&lt;!--" on one site into a comment that swallowed the whole posting.
+        raw = posting["html"] or ""
+        description = ctx.headless.visible_text(raw if system is web else html.unescape(raw))
         hidden = getattr(ctx.headless, "last_hidden", [])
         trace.check("Only text a person can see reaches the model", not hidden,
                     f"Removed {len(hidden)} hidden passage(s), e.g. “{hidden[0][:300]}”" if hidden else
                     "Nothing hidden on this page.")
-        readable = len(description.split()) >= MIN_POSTING_WORDS
+        count = len(description.split())
+        words = f"{count} word{'' if count == 1 else 's'}"
+        readable = count >= MIN_POSTING_WORDS
         trace.check("The posting could be read", readable,
-                    f"{len(description.split())} words of visible text." if readable else
-                    f"Only {len(description.split())} words of visible text: too little to judge fit or tailor to.")
+                    f"{words} of visible text." if readable else
+                    f"Only {words} of visible text: too little to judge fit or tailor to.")
         if not readable:  # Scoring or tailoring against nothing would only be guesses.
-            raise Stop("failed", f"Couldn't read this posting: only {len(description.split())} words of visible text "
-                                 "came back (the page may need you signed in, or didn't load). Open the posting to "
-                                 "check, then prepare again.")
+            refused = posting.get("status") in (401, 403, 429)
+            raise Stop("failed", f"Couldn't read this posting: only {words} of visible text came back "
+                                 + (f"(the site answered {posting['status']}: it turns away automated readers). "
+                                    "Open the posting yourself; you can still apply there." if refused else
+                                    "(the page may need you signed in, or didn't load). Open the posting to "
+                                    "check, then prepare again."))
+        if system is web:  # The job APIs return the posting by its ID; a page can be anything.
+            named = web.title_found(description, job["title"] or "")
+            trace.check("The page names this job", named,
+                        f"“{job['title']}” is on the page." if named else
+                        f"“{job['title']}” isn't on the page, so it's another page (a search, a sign-in, "
+                        "a privacy notice), not this posting.")
+            if not named:
+                raise Stop("failed", f"Couldn't read this posting: the page that loaded never mentions "
+                                     f"“{job['title']}”, so it isn't this job's posting (it may need you signed "
+                                     "in, or the job moved). Open the posting to check, then prepare again.")
         reason = filters.sponsorship_problem(description, profile)
         trace.check("Sponsorship wording fits your work authorization", not reason, reason or "")
         if reason:
