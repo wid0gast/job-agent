@@ -198,7 +198,7 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
 .prompts button{text-align:left;font-weight:500;padding:12px 14px}
 @media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
-.start ol{margin:6px 0 6px;padding-left:22px}.start li{margin:2px 0;color:var(--muted)}.start li.next{color:var(--text);font-weight:600}
+.start{padding:12px 16px;border-radius:12px;margin-bottom:16px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}.start ol{margin:6px 0 6px;padding-left:22px}.start li{margin:2px 0;color:var(--muted)}.start li.next{color:var(--text);font-weight:600}
 @media (max-width:1200px){header nav a{padding:6px 7px}.brand{margin-right:6px}}
 @media (max-width:640px){.card table{display:block;overflow-x:auto}
 header{position:static;flex-wrap:wrap;padding:8px 12px}header nav{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
@@ -400,7 +400,7 @@ def start_here(app: Dashboard, active: str) -> str:
         nxt = next(i for i, (done, _) in enumerate(steps) if not done)
         items = "".join(f'<li{" class=next" if i == nxt else ""}>{"✓ " if done else ""}{text}</li>'
                         for i, (done, text) in enumerate(steps))
-        parts.append('<div class="flash warn start"><b>Start here</b><ol>' + items + '</ol>'
+        parts.append('<div class=start><b>Start here</b><ol>' + items + '</ol>'
                      '<span class=muted>Optional: import the applications you already sent on '
                      '<a href="/applications">Applications</a>, so they\'re never prepared again.</span></div>')
     return "".join(parts)
