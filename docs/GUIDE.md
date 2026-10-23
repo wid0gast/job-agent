@@ -36,8 +36,11 @@ Then:
    words, plus fields, job types, seniority and other filters. Your name,
    contact details, links, education and work authorization are read from your
    master resume (step 2) into `profile/resume-profile.yaml`; you don't type
-   them. The **Profile** page lets you edit everything else (preferences,
-   standard answers, saved answers, story bank, writing sample) at any time.
+   them. If your resume doesn't state your work authorization, choose it once
+   on the **Profile** page, so forms' authorization and sponsorship questions
+   are answered in code instead of left for you. The Profile page also lets
+   you edit everything else (preferences, standard answers, saved answers,
+   story bank, writing sample) at any time.
 2. Build your **master resume** (everything true you might ever include) in
    one of two ways. Either upload your resume PDFs on the dashboard's
    Resumes page (or `uv run job-agent resumes import a.pdf b.pdf`): each is
@@ -142,8 +145,9 @@ uv run job-agent dashboard        # http://127.0.0.1:8770
    person found at the company shares your background or works in the role
    and hasn't heard from you (or you're waiting on them, or they replied).
    It shows on Ranked jobs, the Approval queue and each job's page.
-2. **Prepare** (per job, or "Prepare top matches", which takes the best-ranked
-   and passes over Think twice jobs, saying which) reads the posting and the
+2. **Prepare** (per job, or "Prepare top matches", which takes the best-ranked,
+   one per company and none at a company already at its limit, and passes over
+   Think twice jobs, saying which) reads the posting and the
    application form without signing in or clicking anything, scores fit,
    tailors your resume, and drafts every answer, recording where each came
    from: your profile, saved answers, answers you approved before, or the
