@@ -148,6 +148,16 @@ def test_same_job_on_two_systems_is_one_job(tmp_path):
     assert match_key("acme", "Software Engineer Intern") != match_key("acme", "Software Engineer New Grad")
 
 
+def test_a_listing_that_names_no_company_takes_the_boards_name(tmp_path):
+    # Simplify once listed an Interplay job under the company "Internship".
+    tracker, known = Tracker(tmp_path / "t.db"), companies.Companies(tmp_path / "companies.csv")
+    job = {"site": "simplify-intern", "url": "https://jobs.ashbyhq.com/interplay/1a2b", "company": "Internship",
+           "title": "AI Labs Intern", "location": "New York", "active": True, "job_type": "internship", "details": {}}
+    sources.ingest(tracker, known, [job], [], {"new": 0, "seen": 0, "closed": 0})
+    assert tracker.leads(5)[0]["company"] == "Interplay"
+    assert known.name(known.by_board("ashby", "interplay")) == "Interplay"
+
+
 def test_jobs_you_already_applied_to_are_set_aside(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     shutil.copytree(config.ROOT / "profile.example", profile)

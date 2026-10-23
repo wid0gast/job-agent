@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 from . import config, filters
 from .ats import identify
-from .tracker import job_key
+from .tracker import job_key, normalize
 from .companies import Companies, reassign
 
 RAW = "https://raw.githubusercontent.com/SimplifyJobs/{repo}/dev/.github/scripts/listings.json"
@@ -382,6 +382,22 @@ def each_board(client, todo: list[tuple[str, dict]], fields: list[str], counts: 
                    for job in board_jobs if matches_field(job["title"], fields)]
 
 
+# Listings sometimes carry a word from the posting as the company (Simplify listed one of
+# Interplay's jobs under "Internship"); the job board then says whose job it is.
+NOT_A_COMPANY = {"", "internship", "internships", "intern", "interns", "new grad", "careers", "jobs",
+                 "job", "hiring", "company", "unknown", "n a", "remote"}
+
+
+def company_name(companies, name: str, ats: str, board: str | None) -> str:
+    if normalize(name) not in NOT_A_COMPANY or not board:
+        return name
+    owner = companies.by_board(ats, board)
+    if owner and normalize(companies.name(owner)) not in NOT_A_COMPANY:
+        return companies.name(owner)
+    token = re.sub(r"[-_]+", " ", board.split("/")[0]).strip()
+    return token.title() if token.islower() else token
+
+
 def ingest(tracker, companies, jobs: list[dict], fields: list[str], counts: dict, keep=None) -> None:
     """Add new postings as found; close ones the lists show as closed; skip ones already known.
     keep(job): False drops a new posting without storing it (see wanted)."""
@@ -400,6 +416,7 @@ def ingest(tracker, companies, jobs: list[dict], fields: list[str], counts: dict
                 tracker.update(existing["id"], status="closed", reason="Posting closed on the list.")
                 counts["closed"] += 1
             continue
+        job["company"] = company_name(companies, job["company"] or "", posting.ats, board)
         company_id = companies.record(job["company"], ats=posting.ats if board else "",
                                       board=board or "", source=job["site"],
                                       tags=",".join(fields))

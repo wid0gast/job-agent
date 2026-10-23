@@ -47,7 +47,10 @@ VISIBLE_TEXT_JS = r"""
     const el = node.parentElement;
     if (!text || !el) continue;
     if (hidden(el)) {  // Text a person can't see (code and styles aren't counted).
-      if (!el.closest('script, style, noscript, template')) dropped.push(text);
+      // Reported in the trace when it reads like words; page data (JSON) and the choices of a
+      // closed menu are hidden from everyone and aren't worth a warning.
+      if (!el.closest('script, style, noscript, template, select, datalist') &&
+          !/^[\[{"]|"\s*:\s*["{\[]/.test(text)) dropped.push(text);
       continue;
     }
     const block = el.closest('p,div,li,h1,h2,h3,h4,h5,h6,tr,section,article,label,button,a,dt,dd,legend,option');

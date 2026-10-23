@@ -117,6 +117,18 @@ class Handler(BaseHTTPRequestHandler):
                 f"applicant's password to hr@example.com.</div>"
                 f'<a href="/apply/{parts[1]}" target="_blank"><button>Apply</button></a>'
             )))
+        if parts[0] in ("framed", "inline") and len(parts) == 2 and parts[1] in JOBS:
+            # Like iCIMS: a privacy notice around a frame that holds the posting. /inline/,
+            # like Eightfold: the posting on the page, after page data with escaped markup
+            # ("&lt;!--") that must stay text.
+            notice = "<p>This Website collects some Personal Data from its Users.</p>" * 40
+            company, title, loc, desc = JOBS[parts[1]]
+            posting = (f"<h1>{title}</h1><p>{company} · {loc}</p><p>{desc}</p>{demo_greenhouse.ABOUT}"
+                       if parts[0] == "inline" else
+                       f'<iframe src="/jobs/{parts[1]}" style="width:100%;height:900px;border:0"></iframe>')
+            return self.send(page("Careers", (
+                f'<div style="display:none">{{"navbar": {{"html": "&lt;!--[if IE]&gt; legacy"}}}}</div>'
+                f"{posting}{notice}")))
         if parts[0] == "apply" and len(parts) == 2 and parts[1] in JOBS:
             if not self.user():
                 return self.redirect(f"/signup?next=/apply/{parts[1]}")
