@@ -1333,7 +1333,7 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
             flags.append(f"words not in the PDF: {', '.join(checks['unknown_words'][:12])}")
         rows.append(
             f'<tr><td><a target=_blank href="/file?path={esc(resumes.folder() / v["source"])}">{esc(v["source"])}</a>'
-            f'<div class="muted src">{esc(re.sub(r"[*`]+", "", v.get("notes") or ""))}</div>'
+            f'<div class="muted src" style="white-space:pre-line">{esc(re.sub(r"[*`]+", "", v.get("notes") or ""))}</div>'
             f'{"".join(f"<div class=warn>{esc(f)}</div>" for f in flags)}</td>'
             f'<td>{esc(v["latest_date"] or "unknown")}</td>'
             f'<td>{form(app, "/resumes/remove", "Remove", {"stem": v["stem"]})}</td></tr>')
