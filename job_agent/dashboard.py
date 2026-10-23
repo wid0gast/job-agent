@@ -1137,10 +1137,10 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     problems = packets.missing(packet)
     checks = packet["checks"]
     warn = []
-    label = labeler(packet["answers"])
+    shown = labeler(packet["answers"])
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
-             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(label(a))}</a></li>' for a in problems)
+             + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(shown(a))}</a></li>' for a in problems)
              + "</ul>" + ('<p style="margin:8px 0 0">Your work authorization isn\'t set: choose it once on the '
                           '<a href="/profile#authorization">Profile page</a> and these questions are answered in '
                           'code on applications prepared from then on.</p>'
@@ -1155,7 +1155,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
     rows = "".join(
-        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(label(a))}</b>{" *" if a["required"] else ""}'
+        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
         f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
         f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
         for a in packet["answers"])
