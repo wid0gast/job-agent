@@ -1078,11 +1078,11 @@ def tabbed(panels: list[tuple[str, str, str]], default: str) -> str:
     return f'<div class=tabbed><div class="tabs tabbar">{bar}</div>{body}</div>'
 
 
-def prepare_button(app: Dashboard, job: dict) -> str:
+def prepare_button(app: Dashboard, job: dict, primary: bool = False) -> str:
     """Coded systems prepare directly; others are filled by the browser agent (slower)."""
     if job["ats"] in systems.SUPPORTED:
-        return form(app, "/prepare", "Prepare", {"job_id": job["id"]})
-    return form(app, "/prepare", "Prepare (agent)", {"job_id": job["id"]}).replace(
+        return form(app, "/prepare", "Prepare", {"job_id": job["id"]}, primary)
+    return form(app, "/prepare", "Prepare (agent)", {"job_id": job["id"]}, primary).replace(
         "<button", '<button title="No coded filler for this site: a browser agent fills the form"', 1)
 
 
@@ -1106,7 +1106,8 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         if preparing:
             note = progress_card(app, job_id)
         elif job["status"] == "found":
-            note = '<p class=muted>Not prepared yet.</p>' + prepare_button(app, job)
+            note = (f'<div class=row style="margin:0 0 14px">{prepare_button(app, job, True)}<span class=muted>Not '
+                    'prepared yet: reads the posting, checks your fit, then writes the application.</span></div>')
         elif job["status"] in ("rejected", "skipped"):
             note = form(app, "/requeue", "Back to found", {"job_id": job_id}) + " "
         mark = (form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id})
