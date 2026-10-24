@@ -35,6 +35,8 @@ def test_pages_and_request_checks(tmp_path, monkeypatch):
             status, body, _ = request(port, "GET", path)
             assert status == 200, path
         assert "ML Intern" in request(port, "GET", "/jobs?status=found")[1]
+        # The class platform's no-referrer header made form posts send "Origin: null", refused as cross-origin.
+        assert "<meta name=referrer content=same-origin>" in request(port, "GET", "/")[1]
         token = re.search(r'name=token value="([^"]+)"', request(port, "GET", "/")[1]).group(1)
 
         # DNS rebinding: wrong Host header.
