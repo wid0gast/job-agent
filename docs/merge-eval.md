@@ -72,6 +72,14 @@ lost, but its output showed what a weaker model leaves for code to do:
 - It didn't group two wordings of one pipeline that share "…used by 4 analytics teams through
   a shared API".
 
+A second live run converted the same PDFs differently: schools as plain lines
+with no headings (so the older version's headed schools were added again),
+every paper link in the contact line, a sentence wrapped onto the next line, and
+section names in capitals. Also handled in code now: an older entry already said
+in its section in another shape isn't added, paper links leave the contact line
+(listed in the changes), wrapped sentences are joined and capitalized section
+names are title-cased.
+
 All are now handled in code: the PDF's text is repaired before the model sees it
 and again after (`rejoin`), a labeled part of the contact line ("Work
 Authorization: …") becomes its own line, a bare link label goes, and two lines

@@ -114,12 +114,26 @@ KERNED = re.compile(r"(?<![A-Za-z&])((?:[A-Z][a-z]+)?[TVWYPF]) ([a-z]{2,})\b")
 LONE = {"is", "in", "on", "or", "an", "as", "at", "to", "of", "and", "the", "for", "by", "it", "be", "cells"}
 
 
+SECTION_WORDS = STRUCTURE | {"focus", "service", "teaching", "volunteer", "additional", "information",
+                              "achievements", "involvement", "objective", "profile", "employment", "history",
+                              "academic", "industry", "community", "extracurricular", "references", "honours"}
+
+
+def section_case(name: str) -> str:
+    """"SELECTED PUBLICATIONS" as "Selected Publications"."""
+    return " ".join(w if w == "&" else w.lower() if i and w.lower() in {"and", "the", "of"} else w.capitalize()
+                    for i, w in enumerate(name.split()))
+
+
 def rejoin(text: str) -> str:
     """Undo what PDF text extraction breaks, in code (one model kept "T owards" and "PyT orch"
     whatever the prompt said): kerned splits, "RoBERT a", "CPT -eligible", "author ,", an email
     written as a web address."""
     text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
-    text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b(?! [a-z])", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
+    text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
+    text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
+    text = re.sub(r"^(## +)([A-Z][A-Z &]+)$", lambda m: m.group(1) + section_case(m.group(2))
+                  if set(m.group(2).lower().replace("&", " ").split()) <= SECTION_WORDS else m.group(0), text, flags=re.M)
     text = re.sub(r"(?<=[A-Za-z]) -(?=[a-z])", "-", text)
     text = re.sub(r"(?<=[\w)%+]) +(?=[,;.:)](?:\s|$))", "", text, flags=re.M)
     text = re.sub(r"\( +", "(", text)

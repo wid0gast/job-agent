@@ -150,3 +150,26 @@ def test_older_skill_lines_take_the_newest_style():
     new = "# A\n## Skills\n- **Engineering:** Python, SQL\n"
     skills = merged(old, new)["markdown"].split("## Skills")[1].strip().splitlines()
     assert skills == ["- **Engineering:** Python, SQL", "- **Data:** Excel"]
+
+
+def test_a_school_written_as_a_plain_line_is_not_added_again():
+    old = "# A\n## Education\n### Example University — Springfield, USA\nMaster of Science, Data Science. May 2028\n"
+    new = "# A\n## EDUCATION\nExample University, Springfield, USA\nMaster of Science, Data Science. May 2028\n"
+    md = merged(old, new)["markdown"]
+    assert md.count("Example University") == 1 and md.count("Master of Science") == 1
+
+
+def test_paper_links_leave_the_contact_line():
+    old = "# A\na@example.com\n## Skills\nGo\n"
+    new = "# A\na@example.com · https://arxiv.org/pdf/2501.00001 · https://github.com/a\n## Skills\nGo\n"
+    result = merged(old, new)
+    assert "arxiv" not in result["markdown"].splitlines()[1] and "github.com/a" in result["markdown"]
+    assert any("arxiv" in c for c in result["changes"])
+
+
+def test_wrapped_lines_and_shouted_section_names_are_tidied():
+    from job_agent.resumes import rejoin
+
+    assert rejoin("## RESEARCH FOCUS\nNLP researcher, complemented by two\nyears in production.\n## AI PROJECTS") == \
+        "## Research Focus\nNLP researcher, complemented by two years in production.\n## AI PROJECTS"
+    assert rejoin("BERT and RoBERT a toxicity classifiers") == "BERT and RoBERTa toxicity classifiers"
