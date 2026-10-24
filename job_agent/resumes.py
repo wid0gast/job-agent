@@ -281,6 +281,13 @@ def restore(markdown: str, source: str, missing: list[str]) -> str:
     return "\n".join(lines)
 
 
+def unpresent(markdown: str, source: str) -> str:
+    """"2025 – Present" where the PDF says "2025": a model added the end, so it goes."""
+    if re.search(r"[–—-]\s*(present|current|now|ongoing)\b", source, re.I):
+        return markdown
+    return re.sub(r"\s*[–—-]+\s*(?:Present|Current|Now|Ongoing)\b", "", markdown)
+
+
 def add_links(markdown: str, source: str) -> str:
     """The PDF's contact links the conversion didn't write (one model kept the labels "marcuslee"
     and "a mlee" for linkedin.com/in/marcuslee and github.com/mlee): added to the contact line."""
@@ -327,7 +334,7 @@ def parse(llm, pdf: Path, log=print) -> dict:
         checked = problems(again["markdown"], [text])
         if sum(map(len, checked.values())) <= sum(map(len, found.values())):
             result, found = again, checked
-    result["markdown"] = add_links(result["markdown"], text)
+    result["markdown"] = unpresent(add_links(result["markdown"], text), text)
     if found.get("left_out"):  # Whatever's still missing, put back from the PDF's own lines.
         result["markdown"] = restore(result["markdown"], text, found["left_out"])
         found = problems(result["markdown"], [text])
@@ -478,7 +485,7 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
     for v in versions:  # Repairs again here, for resumes read before them.
         text, markdown = rejoin(v["text"]), rejoin(v["markdown"])
         if v.get("text") != v.get("markdown"):
-            markdown = add_links(restore(markdown, text, dropped_words(markdown, text)), text)
+            markdown = unpresent(add_links(restore(markdown, text, dropped_words(markdown, text)), text), text)
         sources.append((f"{v['source']} (content through {v['latest_date'] or 'unknown'})", markdown, text))
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)
