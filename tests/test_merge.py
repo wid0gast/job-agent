@@ -180,3 +180,13 @@ def test_spaced_out_headings_are_rejoined_into_words():
 
     assert rejoin("R E S E A R C H F O C U S\n## S E L E C T E D P U B L I C A T I O N S") == \
         "RESEARCH FOCUS\n## Selected Publications"
+
+
+def test_two_wordings_sharing_a_number_and_their_subject_are_compared_without_the_model():
+    old = "# A\n" + ROLE + "- Owned Recheck, which re-verified answers against their sources, cutting hallucination reports by 61%.\n"
+    new = "# A\n" + ROLE + "- Added on-demand checks of each answer claim against its sources; reduced hallucination reports by 61%.\n"
+    assert merged(old, new)["markdown"].count("61%") == 1
+    other = "# A\n" + ROLE + "- Reduced p95 latency by 40% by caching embeddings.\n"
+    again = "# A\n" + ROLE + "- Cut inference costs by 40% by moving to spot instances.\n"
+    md = merged(other, again)["markdown"]  # Same number, different work: both stay.
+    assert "latency" in md and "inference costs" in md

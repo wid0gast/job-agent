@@ -369,7 +369,8 @@ def dedupe(pools: dict, owners: dict, llm, log) -> tuple[list[dict], list[dict]]
             for j in range(i):
                 a, b = lines[i]["text"], lines[j]["text"]
                 if same_text(a, b) or len(numbers(a) & numbers(b)) >= 2 or (numbers(a) & numbers(b) and half_alike(a, b)) \
-                        or (lines[i]["rank"] != lines[j]["rank"] and run(a, b) >= 6):
+                        or (lines[i]["rank"] != lines[j]["rank"] and (run(a, b) >= 6 or (numbers(a) & numbers(b) and
+                                                                         len(content(a) & content(b)) >= 4))):
                     groups.append([j, i])
         units.append({"lines": lines, "groups": groups})
     if llm is not None:
@@ -504,6 +505,11 @@ def updated(a: str, b: str) -> bool:
     wa = {w for w in words(strip_bullet(a)) if not w.isdigit()}
     wb = {w for w in words(strip_bullet(b)) if not w.isdigit()}
     return len(wa) >= 4 and wa == wb and nums(a) != nums(b)
+
+
+def content(text: str) -> set[str]:
+    """Stems that carry meaning: "hallucination", "answer", not "by" or "61"."""
+    return {w for w in stems(text) if len(w) > 3 and not w.isdigit()}
 
 
 def run(a: str, b: str) -> int:
