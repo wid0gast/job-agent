@@ -430,8 +430,11 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
     if master:
         # Your master may hold edits made by hand; it counts as the oldest version.
         sources.append(("your current master resume", master, master))
-    sources += [(f"{v['source']} (content through {v['latest_date'] or 'unknown'})",
-                 rejoin(v["markdown"]), rejoin(v["text"])) for v in versions]  # Also ones read before rejoin().
+    for v in versions:  # Repairs again here, for resumes read before them.
+        text, markdown = rejoin(v["text"]), rejoin(v["markdown"])
+        if v.get("text") != v.get("markdown"):
+            markdown = restore(markdown, text, dropped_words(markdown, text))
+        sources.append((f"{v['source']} (content through {v['latest_date'] or 'unknown'})", markdown, text))
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)
     raw = [text for _, _, text in sources] + [md for _, md, _ in sources]
