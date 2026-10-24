@@ -173,3 +173,10 @@ def test_wrapped_lines_and_shouted_section_names_are_tidied():
     assert rejoin("## RESEARCH FOCUS\nNLP researcher, complemented by two\nyears in production.\n## AI PROJECTS") == \
         "## Research Focus\nNLP researcher, complemented by two years in production.\n## AI PROJECTS"
     assert rejoin("BERT and RoBERT a toxicity classifiers") == "BERT and RoBERTa toxicity classifiers"
+
+
+def test_spaced_out_headings_are_rejoined_into_words():
+    from job_agent.resumes import rejoin
+
+    assert rejoin("R E S E A R C H F O C U S\n## S E L E C T E D P U B L I C A T I O N S") == \
+        "RESEARCH FOCUS\n## Selected Publications"

@@ -39,7 +39,7 @@ You convert the text of one resume (extracted from a PDF, so spacing and line
 breaks may be broken) into clean Markdown with this structure:
 
 # Full Name
-Springfield, USA · name@example.com · (555) 010-0100 · https://www.linkedin.com/in/name
+(one line: the resume's own contact details, separated by " · ")
 ## Section (Education, Experience, Projects, Skills, ...)
 ### Title — Organization
 dates · location
@@ -125,10 +125,23 @@ def section_case(name: str) -> str:
                     for i, w in enumerate(name.split()))
 
 
+def unspaced(letters: str) -> str:
+    """"RESEARCHFOCUS" as "RESEARCH FOCUS": split into section words where possible."""
+    lower, best = letters.lower(), {0: []}
+    for end in range(1, len(lower) + 1):
+        for start in range(end):
+            if start in best and lower[start:end] in SECTION_WORDS | {"&"}:
+                best[end] = best[start] + [letters[start:end]]
+                break
+    return " ".join(best[len(lower)]) if len(lower) in best else letters
+
+
 def rejoin(text: str) -> str:
     """Undo what PDF text extraction breaks, in code (one model kept "T owards" and "PyT orch"
     whatever the prompt said): kerned splits, "RoBERT a", "CPT -eligible", "author ,", an email
     written as a web address."""
+    text = re.sub(r"^(#+ +)?((?:[A-Z&] ){3,}[A-Z&])$", lambda m: (m.group(1) or "") + unspaced(m.group(2).replace(" ", "")),
+                  text, flags=re.M)  # "R E S E A R C H F O C U S", a heading spaced out for looks.
     text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
     text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
@@ -219,14 +232,20 @@ def parse(llm, pdf: Path, log=print) -> dict:
     result = llm.json(PARSE_PROMPT, text[:30000], PARSE_SCHEMA, "resume_markdown")
     result["markdown"] = rejoin(result["markdown"])
     found = problems(result["markdown"], [text])
-    if any(found.values()):
+    for _ in range(2):  # One model dropped every advisor's name twice running, then kept them.
+        if not any(found.values()):
+            break
         log(f"  retrying: {found}")
         retry = (f"{text[:30000]}\n\n---\nYour previous Markdown didn't match the resume: "
                  + "; ".join(f"{k.replace('_', ' ')}: {', '.join(map(str, v))}" for k, v in found.items() if v)
                  + ". Use only the resume's own words and numbers, and leave none of them out.")
-        result = llm.json(PARSE_PROMPT, retry, PARSE_SCHEMA, "resume_markdown")
-        result["markdown"] = rejoin(result["markdown"])
-        found = problems(result["markdown"], [text])
+        again = llm.json(PARSE_PROMPT, retry, PARSE_SCHEMA, "resume_markdown")
+        again["markdown"] = rejoin(again["markdown"])
+        checked = problems(again["markdown"], [text])
+        if sum(map(len, checked.values())) <= sum(map(len, found.values())):
+            result, found = again, checked
+    if not re.search(r"unreadable|illegible|could ?n[o']t|missing|left out|unclear", result.get("notes") or "", re.I):
+        result["notes"] = ""  # "Links were converted as requested": nothing for you to act on.
     parsed_folder().mkdir(parents=True, exist_ok=True)
     md_path = parsed_folder() / f"{pdf.stem}.md"
     md_path.write_text(result["markdown"].strip() + "\n", encoding="utf-8")
