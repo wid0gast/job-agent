@@ -257,6 +257,23 @@ def restore(markdown: str, source: str, missing: list[str]) -> str:
     return "\n".join(lines)
 
 
+def add_links(markdown: str, source: str) -> str:
+    """The PDF's contact links the conversion didn't write (one model kept the labels "marcuslee"
+    and "a mlee" for linkedin.com/in/marcuslee and github.com/mlee): added to the contact line."""
+    links = source.split("\n\nLinks in the PDF:")[1].split() if "\n\nLinks in the PDF:" in source else []
+    bare = lambda u: re.sub(r"^https?://(www\.)?", "", u.lower()).rstrip("/")  # noqa: E731
+    have = markdown.lower()
+    missing = [u for u in links if u.startswith("http") and bare(u) not in have
+               and not re.search(r"\.pdf\b|doi|/abs/|/article/|arxiv|aclanthology|/paper", u.lower())
+               and (re.search(r"linkedin|github|scholar\.google|gitlab|behance|dribbble", u.lower())
+                    or bare(u).count("/") == 0)]
+    lines = markdown.splitlines()
+    at = next((i for i, l in enumerate(lines[:4]) if "@" in l or "http" in l), None)
+    if missing and at is not None:
+        lines[at] = lines[at].rstrip() + "".join(f" · {u}" for u in missing)
+    return "\n".join(lines)
+
+
 def problems(markdown: str, sources: list[str]) -> dict:
     found = {"invented_numbers": documents.unsupported_numbers(markdown, "\n".join(sources)),
              "unknown_words": unsupported_words(markdown, sources)}
@@ -286,6 +303,7 @@ def parse(llm, pdf: Path, log=print) -> dict:
         checked = problems(again["markdown"], [text])
         if sum(map(len, checked.values())) <= sum(map(len, found.values())):
             result, found = again, checked
+    result["markdown"] = add_links(result["markdown"], text)
     if found.get("left_out"):  # Whatever's still missing, put back from the PDF's own lines.
         result["markdown"] = restore(result["markdown"], text, found["left_out"])
         found = problems(result["markdown"], [text])
@@ -434,7 +452,7 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
     for v in versions:  # Repairs again here, for resumes read before them.
         text, markdown = rejoin(v["text"]), rejoin(v["markdown"])
         if v.get("text") != v.get("markdown"):
-            markdown = restore(markdown, text, dropped_words(markdown, text))
+            markdown = add_links(restore(markdown, text, dropped_words(markdown, text)), text)
         sources.append((f"{v['source']} (content through {v['latest_date'] or 'unknown'})", markdown, text))
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)

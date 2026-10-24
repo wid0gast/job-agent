@@ -321,8 +321,9 @@ def merge_header(headers: list[list[str]], changes: list) -> list[str]:
         changes.append(f"Left {len(papers)} paper link(s) out of the contact line: {', '.join(papers)}.")
     # A link's label left beside its address ("Scholar" next to scholar.google.com/…).
     links = " ".join(i.lower() for i in items if contact_kind(i) != "other")
-    items = [i for i in items if contact_kind(i) != "other" or len(i.split()) > 2 or
-             norm(i).replace(" ", "") not in re.sub(r"[^a-z0-9]", "", links)]
+    flat = re.sub(r"[^a-z0-9]", "", links)  # "Scholar", or a handle: "marcuslee", "a mlee" (an icon read as "a").
+    items = [i for i in items if contact_kind(i) != "other" or len(i.split()) > 2 or not flat or
+             not (norm(i).replace(" ", "") in flat or (len(norm(i).split()[-1]) >= 3 and norm(i).split()[-1] in flat))]
     return ([" · ".join(items)] if items else []) + lines
 
 
@@ -465,9 +466,19 @@ def settle(members: list[dict], combined: list, possible: list) -> None:
         combined.append({"kept": [k["text"] for k in keepers], "left_out": dropped})
 
 
+DEGREES = [(r"\bM\.?S\.?(?=\s|,|$)|\bM\.Sc\.?", "Master of Science"), (r"\bB\.?S\.?(?=\s|,|$)|\bB\.Sc\.?", "Bachelor of Science"),
+           (r"\bB\.?A\.?(?=\s|,|$)", "Bachelor of Arts"), (r"\bM\.?A\.?(?=\s|,|$)", "Master of Arts"),
+           (r"\bB\.?E\.?(?=\s|,|$)", "Bachelor of Engineering"), (r"\bB\.?Tech\.?", "Bachelor of Technology"),
+           (r"\bM\.?Eng\.?", "Master of Engineering"), (r"\bPh\.?D\.?", "Doctor of Philosophy"),
+           (r"\bMBA\b", "Master of Business Administration")]
+
+
 def stems(text: str) -> set[str]:
-    """Words with their endings trimmed, so "showing", "showed" and "shows" are one word."""
+    """Words with their endings trimmed, so "showing", "showed" and "shows" are one word; a
+    degree's abbreviation as its name ("M.S." is "Master of Science")."""
     out = set()
+    for pattern, name in DEGREES:
+        text = re.sub(pattern, name, text)
     for word in words(strip_bullet(text)):
         for end in ("ing", "ed", "es", "s"):
             if len(word) > len(end) + 3 and word.endswith(end):

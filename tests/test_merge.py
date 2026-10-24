@@ -190,3 +190,18 @@ def test_two_wordings_sharing_a_number_and_their_subject_are_compared_without_th
     again = "# A\n" + ROLE + "- Cut inference costs by 40% by moving to spot instances.\n"
     md = merged(other, again)["markdown"]  # Same number, different work: both stay.
     assert "latency" in md and "inference costs" in md
+
+
+def test_a_degree_abbreviated_in_one_version_is_the_same_degree():
+    old = "# A\n## Education\n### Example University — Springfield, USA\nM.S. Machine Learning, May 2022\n"
+    new = "# A\n## Education\n### Master of Science in Machine Learning — Example University\nMay 2022 · Springfield, USA\n"
+    assert merged(old, new)["markdown"].count("Example University") == 1
+
+
+def test_contact_links_the_conversion_skipped_are_added_and_bare_handles_go():
+    from job_agent.resumes import add_links
+
+    text = "A\na@example.com | marcuslee | a mlee\n\nLinks in the PDF:\nmailto:a@example.com\nhttps://linkedin.com/in/marcuslee\nhttps://github.com/mlee"
+    md = add_links("# A\na@example.com · marcuslee · a mlee\n## Skills\nGo", text)
+    header = merged(md, md)["markdown"].splitlines()[1]
+    assert header == "a@example.com · https://linkedin.com/in/marcuslee · https://github.com/mlee"
