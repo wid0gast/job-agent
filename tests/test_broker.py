@@ -73,3 +73,37 @@ def test_an_empty_reply_in_strict_mode_is_asked_again_without_it(monkeypatch):
     # An empty list of results is a real answer when nothing requires text.
     assert not llm.says_something({"type": "object", "required": ["results"],
                                    "properties": {"results": {"type": "array"}}})
+
+
+def test_broker_errors_are_said_plainly():
+    # As the live platform sent it (trimmed): the raw form once filled a job's page.
+    raw = {"code": "UPSTREAM_UNCERTAIN", "message": "The model request was stopped; its provider outcome and "
+           "charge remain unconfirmed", "correlationId": "1e08414a-2c1c-40ac-8e8f-31b60e8fec04", "retryable": False,
+           "details": {"providerName": "OpenInference", "partialResponse": {"body": "data: {...}"}}}
+    said = llm.broker_problem(None, raw)
+    assert "OpenInference didn't finish" in said and "ref 1e08414a" in said
+    assert "partialResponse" not in said and len(said) < 260
+    http = llm.broker_problem(402, '{"error": {"code": "ALLOWANCE_EXHAUSTED", "message": "needs $0.22", '
+                                   '"correlationId": "43186022-x"}}')
+    assert "reserves room" in http and "ALLOWANCE_EXHAUSTED" in http
+    assert "HTTP 500" in llm.broker_problem(500, "upstream exploded")
+
+
+def test_a_request_the_service_stopped_is_asked_once_more(monkeypatch):
+    # About a third of live prepares failed this way, on two models.
+    import json
+
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    stopped = ('data: ' + json.dumps({"error": {"code": "UPSTREAM_UNCERTAIN", "message": "stopped",
+                                                "correlationId": "abc12345", "retryable": False}}) + "\n\n").encode()
+    for replies, ok in (([stopped, DONE], True), ([stopped, stopped, DONE], False)):
+        queue, calls = list(replies), []
+        model, _ = broker(monkeypatch, DONE)
+        model.client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(
+            200, content=queue.pop(0), headers={"content-type": "text/event-stream"})))
+        if ok:
+            assert model.post({"messages": []})["choices"][0]["message"]["content"] == "Hello" and len(calls) == 2
+        else:
+            with pytest.raises(RuntimeError, match="stopped this request partway"):
+                model.post({"messages": []})
+            assert len(calls) == 2, "only one more try"

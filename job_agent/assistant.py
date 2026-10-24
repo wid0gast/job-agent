@@ -174,12 +174,14 @@ class Assistant:
     def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False,
                              confirmed: bool = False):
         ids = list(dict.fromkeys(int(i) for i in job_ids))
-        if len(ids) > MAX_UNASKED and not confirmed:
+        if len(ids) > MAX_UNASKED and not (confirmed and asked_for(self.chat.said(), len(ids))):
             # Each prepare is minutes of model work and spend. Asked to "submit everything", a
-            # model on the class platform once queued twelve without asking.
+            # model on the class platform once queued twelve without asking; another passed
+            # confirmed=true on its own, so the number has to be in the user's own words.
             return {"queued": [], "problems": [
                 f"That's {len(ids)} prepares at once (each takes a few minutes and model spend). Ask the user "
-                f"to confirm they want all {len(ids)}, then call again with confirmed=true."]}
+                f"whether they want all {len(ids)}; once they say so (with the number), call again with "
+                "confirmed=true."]}
         queued, problems = [], []
         for job_id in ids:
             job = self.tracker.get(job_id)
@@ -616,6 +618,20 @@ class Assistant:
 
 
 # ----- helpers ------------------------------------------------------------------
+
+
+NUMBER_WORDS = {w: n for n, w in enumerate("zero one two three four five six seven eight nine ten eleven "
+                                           "twelve thirteen fourteen fifteen sixteen seventeen eighteen "
+                                           "nineteen twenty".split())}
+
+
+def asked_for(said: list[str], count: int) -> bool:
+    """Whether the user's own messages name at least `count` (as a number: "6", "six")."""
+    for text in said:
+        for word in re.findall(r"\b(\d{1,3}|[a-z]+)\b", text.lower()):
+            if (int(word) if word.isdigit() else NUMBER_WORDS.get(word, -1)) >= count:
+                return True
+    return False
 
 
 def brief(job: dict) -> dict:

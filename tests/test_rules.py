@@ -151,3 +151,14 @@ def test_companies_found_are_saved_in_data_when_the_app_folder_is_read_only(tmp_
     registry.save()
     assert (tmp_path / "data" / "companies.csv").exists() and "globex" not in bundled.read_text()
     assert companies.Companies().resolve("Globex") == "globex"  # Read back from data/ next time.
+
+
+def test_a_graduation_month_answers_a_list_of_terms():
+    # A model picked "None of the above/Beyond 2027" for a May 2027 graduate.
+    from job_agent import answers
+
+    field = {"key": "q", "label": "What is your graduation date? (anticipated or completed)", "kind": "select",
+             "options": ["Fall 2026", "Spring 2027", "Summer 2027", "None of the above/Beyond 2027"],
+             "section": "", "required": True}
+    profile = {"education": [{"graduation": "May 2027"}], "contact": {}, "work_authorization": {}}
+    assert answers.from_profile(field, profile, {}) == ("Spring 2027", "profile")

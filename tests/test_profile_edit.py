@@ -124,3 +124,21 @@ def test_work_authorization_is_chosen_once_on_the_profile_page(app, profile):
     assert 'action="/profile/authorization"' not in page and "F-1 student" in page
     _, where, _ = request(app, "POST", "/profile/authorization", {"choice": "citizen"})
     assert "already%20sets" in where  # Once set, it's changed in profile.yaml.
+
+
+def test_a_form_about_a_job_returns_to_it_when_no_referer_is_sent(app, profile):
+    # The class platform's sandboxed frame sends no Referer; Save changes used to land on Today.
+    app.tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "test", "Acme", "ML Intern", "NYC")
+    job_id = app.tracker.leads(5)[0]["id"]
+    app.tracker.update(job_id, status="skipped")
+    status, where, _ = request(app, "POST", "/requeue", {"job_id": str(job_id)})
+    assert status == 303 and where.startswith(f"/job/{job_id}")
+
+
+def test_a_school_the_forms_search_lacks_is_named_in_its_note():
+    from job_agent import answers
+
+    field = {"key": "school--0", "label": "School", "kind": "search", "options": [], "required": True,
+             "section": "education", "unlisted": {"value": "New York University", "instead": None}}
+    drafted, _ = answers.draft([field], {"education": [{"school": "New York University"}]}, {}, {})
+    assert "New York University" in drafted[0]["note"] and "Not in your resume" not in drafted[0]["note"]

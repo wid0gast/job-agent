@@ -48,6 +48,33 @@ def hollow(value) -> bool:
     return value in (None, 0, False)
 
 
+TRANSIENT_BROKER = ("UPSTREAM_UNCERTAIN", "RUNTIME_UNAVAILABLE")
+BROKER_PROBLEMS = {
+    "UPSTREAM_UNCERTAIN": "The class model service stopped this request partway ({provider} didn't finish it). "
+                          "Try again; if it keeps happening, start a new session with another model.",
+    "RUNTIME_UNAVAILABLE": "The class platform's model service was briefly unavailable. Try again in a minute.",
+    "ALLOWANCE_EXHAUSTED": "This session's AI budget can't cover the request right now: each request first "
+                           "reserves room for its longest possible answer, and requests running at once add "
+                           "up. Wait for running tasks to finish, or start a session with a higher ceiling.",
+}
+
+
+def broker_problem(status: int | None, error) -> str:
+    """The broker's error, said plainly, with its reference for the organizers. Its raw form
+    (provider details, partial responses) once filled a job's page."""
+    if isinstance(error, str):
+        try:
+            error = (json.loads(error) or {}).get("error") or error
+        except ValueError:
+            pass
+    if not isinstance(error, dict):
+        return f"The class model service answered HTTP {status}: {str(error)[:200]}"
+    code, details = error.get("code") or "", error.get("details") or {}
+    text = BROKER_PROBLEMS.get(code, "The class model service refused the request: {message}").format(
+        provider=details.get("providerName") or "the model's provider", message=str(error.get("message"))[:200])
+    return f"{text} ({code or status}, ref {str(error.get('correlationId') or '')[:8]})"
+
+
 def says_something(schema: dict) -> bool:
     """Whether a real answer always has some text: a required string field at the top. (An
     empty list of results can be a real answer; a fit check with no summary can't.)"""
@@ -257,6 +284,7 @@ class Broker(OpenRouter):
             raise SpendCapReached(f"This visit's model budget (${self.spend_cap_usd:.2f}) is used up.")
         payload = {"model": self.model.split(",")[0].strip(), "max_tokens": 4096,
                    "provider": {"data_collection": self.data_collection}, **payload}
+        retried = False
         for attempt in range(4):
             headers = {"Authorization": f"Bearer {self.token}", "X-Workshop-Contract-Version": "workshop.app.v1",
                        "X-Workshop-Operation-ID": str(uuid.uuid4()), "X-Workshop-Expected-Profile": self.profile_id,
@@ -279,7 +307,7 @@ class Broker(OpenRouter):
                         time.sleep(5 * (attempt + 1))
                         continue
                     if response.status_code != 200:
-                        raise RuntimeError(f"Model broker HTTP {response.status_code}: {response.text[:300]}")
+                        raise RuntimeError(broker_problem(response.status_code, response.text))
                     body = response.json()
             except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ReadTimeout) as error:
                 # The class proxy ends any request at 90 s; a retry would be cut (and charged) again.
@@ -291,7 +319,16 @@ class Broker(OpenRouter):
                                    + (": longer than the class platform's 90-second limit per request."
                                       if at_limit else ".")) from None
             if "error" in body:
-                raise RuntimeError(f"Model broker error: {body['error']}")
+                code = (body["error"] or {}).get("code") if isinstance(body["error"], dict) else None
+                if code in TRANSIENT_BROKER and not retried:
+                    # Marked not retryable (the first attempt's charge is unconfirmed), but in two
+                    # live sessions about a third of prepares failed this way, on two models;
+                    # one more try costs a fraction of a cent. Recorded in the trace.
+                    retried = True
+                    trace.note(f"The class model service stopped a request ({code}); asked once more.")
+                    time.sleep(3)
+                    continue
+                raise RuntimeError(broker_problem(None, body["error"]))
             self.count(body)
             return body
         raise RuntimeError("The model service kept refusing the request.")
@@ -309,7 +346,7 @@ class Broker(OpenRouter):
                     return None
                 if response.status_code in (429, 502, 503):
                     return "busy"
-                raise RuntimeError(f"Model broker HTTP {response.status_code}: {text[:300]}")
+                raise RuntimeError(broker_problem(response.status_code, text))
             content, calls, finish, usage, model, done = [], {}, None, {}, None, False
             for line in response.iter_lines():
                 if not line.startswith("data:"):
