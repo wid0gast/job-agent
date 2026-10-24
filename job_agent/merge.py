@@ -418,7 +418,9 @@ def dedupe(pools: dict, owners: dict, llm, log) -> tuple[list[dict], list[dict]]
                 continue
             others = [o for o in lines if o is not line and not o.get("dropped")]
             joined = " ".join(o["text"] for o in others)
-            if others and inside(line["text"], joined) and not adds(line["text"], joined):
+            missing = stems(line["text"]) - stems(joined)  # But for a verb: "Applied" for "Used".
+            if others and len(stems(line["text"])) >= 2 and len(missing) <= max(1, len(stems(line["text"])) // 10) \
+                    and set(re.findall(r"\d+", line["text"])) <= set(re.findall(r"\d+", joined)) and not adds(line["text"], joined):
                 line["dropped"] = True
                 combined.append({"kept": [o["text"] for o in others if words(strip_bullet(o["text"])) &
                                           words(strip_bullet(line["text"]))], "left_out": [line["text"]]})
