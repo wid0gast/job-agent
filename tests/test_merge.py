@@ -205,3 +205,21 @@ def test_contact_links_the_conversion_skipped_are_added_and_bare_handles_go():
     md = add_links("# A\na@example.com · marcuslee · a mlee\n## Skills\nGo", text)
     header = merged(md, md)["markdown"].splitlines()[1]
     assert header == "a@example.com · https://linkedin.com/in/marcuslee · https://github.com/mlee"
+
+
+def test_a_venue_on_its_own_line_joins_its_bullet_and_a_links_section_joins_the_contact_line():
+    from job_agent.resumes import rejoin
+
+    assert rejoin("- Built corpora.\nWASSA @ ACL 2024\n- Built a parser.\n### Stripe 2022") == \
+        "- Built corpora. (WASSA @ ACL 2024)\n- Built a parser.\n### Stripe 2022"
+    md = merged("# A\na@example.com\n## Skills\nGo\n", "# A\n## Skills\nGo\n## Links\na@example.com https://github.com/a\n")["markdown"]
+    assert md.splitlines()[1] == "a@example.com · https://github.com/a" and "## Links" not in md
+
+
+def test_the_same_pdf_uploaded_twice_is_one_version(tmp_path, monkeypatch):
+    from job_agent import config, resumes
+
+    monkeypatch.setattr(config, "PROFILE_DIR", tmp_path)
+    first = resumes.save_upload("cv.pdf", b"%PDF-1.4 one")
+    assert resumes.save_upload("cv.pdf", b"%PDF-1.4 one") == first
+    assert resumes.save_upload("cv.pdf", b"%PDF-1.4 two") != first

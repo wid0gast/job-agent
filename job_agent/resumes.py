@@ -145,6 +145,9 @@ def rejoin(text: str) -> str:
     text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
     text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
+    # A venue set to the right of its bullet, read onto a line of its own: "WASSA @ ACL 2024".
+    text = re.sub(r"^(\s*[-–•*] .*[^)\s])\n(?:[-–•*] +)?((?=[^\n]*(?:@|\b[A-Z]{2,}\b))(?:[A-Z][A-Za-z]*|@) "
+                  r"(?:(?:[A-Z][A-Za-z]*|@) ){0,4}(?:19|20)\d\d)$", r"\1 (\2)", text, flags=re.M)
     text = re.sub(r"\bcontact line \(([^()\n]*)\)", r"\1", text, flags=re.I)  # A prompt's placeholder, copied.
     text = re.sub(r"^\(([^()\n]*@[^()\n]*)\)", r"\1", text, flags=re.M)  # A contact line in brackets.
     text = re.sub(r"^(## +)([A-Z][A-Z &]+)$", lambda m: m.group(1) + section_case(m.group(2))
@@ -161,6 +164,9 @@ def save_upload(filename: str, data: bytes) -> Path:
         raise ValueError("Upload a PDF under 10 MB.")
     stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(filename).stem).strip("_")[:60] or "resume"
     folder().mkdir(parents=True, exist_ok=True)
+    same = next((f for f in sorted(folder().glob("*.pdf")) if f.read_bytes() == data), None)
+    if same:  # The same file again (uploaded twice): read it again, not as another version.
+        return same
     path, n = folder() / f"{stem}.pdf", 2
     while path.exists():
         path, n = folder() / f"{stem}_{n}.pdf", n + 1
