@@ -138,11 +138,24 @@ def unspaced(letters: str) -> str:
 
 def levels(markdown: str) -> str:
     """Headings one level too high ("# Experience", "## Role — Org") down a level, after the name;
-    a "## Role — Org" heading followed by its dates is a role. One model wrote them so."""
+    a "## Role — Org" heading followed by its dates is a role. One model wrote them so. And the
+    name and contact details on one line ("# Jane Doe jane@example.com · …") are two lines."""
+    markdown = re.sub(r"^(# [^\n@·|]+?)[ ,·|]+((?:[\w.+-]+@[\w-]+\.|https?://|www\.|\(?\+?\d[\d ().-]{7,})[^\n]*)$",
+                      r"\1\n\2", markdown, count=1, flags=re.M)
     lines = markdown.splitlines()
     first = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
     if first is not None and sum(l.startswith("# ") for l in lines[first + 1:]) >= 2:
         lines = lines[:first + 1] + [("#" + l if re.match(r"#{1,2} ", l) else l) for l in lines[first + 1:]]
+    section, skills = "", []  # "## Skills" / "### Modeling" / "Encoder-only…": a skill line, "- **Modeling:** Encoder-only…".
+    for i, line in enumerate(lines):
+        if re.match(r"#{1,2} ", line):
+            section = line
+        if re.search(r"skill|technolog|tools", section, re.I) and line.startswith("### ") and "—" not in line:
+            rest = next((j for j in range(i + 1, len(lines)) if lines[j].strip()), None)
+            if rest is not None and not re.match(r"#|\s*[-*•] ", lines[rest]):
+                lines[rest] = f"- **{line[4:].strip()}:** {lines[rest].strip()}"
+                skills.append(i)
+    lines = [l for i, l in enumerate(lines) if i not in skills]
     for i, line in enumerate(lines):  # "### Education": a section written a level too low.
         name = line[4:].strip() if line.startswith("### ") else ""
         if name and len(name.split()) <= 4 and set(name.lower().replace("&", " ").split()) <= SECTION_WORDS:
@@ -163,9 +176,10 @@ def rejoin(text: str) -> str:
     text = re.sub(r"^(#+ +)?((?:[A-Z&] ){3,}[A-Z&])$", lambda m: (m.group(1) or "") + unspaced(m.group(2).replace(" ", "")),
                   text, flags=re.M)  # "R E S E A R C H F O C U S", a heading spaced out for looks.
     text = levels(text)
+    text = re.sub(r"\n+\**Notes?\**:\**\s[^\n]*\s*$", "\n", text)  # The model's notes, written into the resume.
     text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
-    text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
+    text = re.sub(r"^((?!#)[^\n]*[a-z,])\n(?=[a-z])", r"\1 ", text, flags=re.M)  # A sentence wrapped onto the next line.
     # A venue set to the right of its bullet, read onto a line of its own: "NLPW @ ACL 2025".
     text = re.sub(r"^(#{2,4} +[A-Z][\w ]*@[\w ]+?)\n\n?((?:19|20)\d\d)$", r"\1 \2", text, flags=re.M)  # "### NLPW @ ACL" / "2025"
     # After a bullet, or the wrapped end of one ("…human-likeness."); as a line, a bullet or a heading.
@@ -343,6 +357,21 @@ def heading_from_pdf(markdown: str, source: str, unknown: list[str]) -> str:
     return "\n".join(lines)
 
 
+def contact_from_pdf(markdown: str, source: str) -> str:
+    """A contact-line item the PDF doesn't have (a prompt's example place, "Springfield, USA") goes."""
+    from .merge import contact_kind
+
+    lines = markdown.splitlines()
+    at = next((i for i, l in enumerate(lines[:4]) if "@" in l or "http" in l), None)
+    if at is None:
+        return markdown
+    have = words(source)
+    parts = [p.strip() for p in re.split(r"\s+[·|•]\s+", lines[at])]
+    kept = [p for p in parts if contact_kind(p) != "other" or not words(p) or words(p) <= have]
+    lines[at] = " · ".join(kept)
+    return "\n".join(lines)
+
+
 def add_links(markdown: str, source: str) -> str:
     """The PDF's contact links the conversion didn't write (one model kept the labels "marcuslee"
     and "a mlee" for linkedin.com/in/marcuslee and github.com/mlee): added to the contact line."""
@@ -389,7 +418,7 @@ def parse(llm, pdf: Path, log=print) -> dict:
         checked = problems(again["markdown"], [text])
         if sum(map(len, checked.values())) <= sum(map(len, found.values())):
             result, found = again, checked
-    result["markdown"] = unpresent(add_links(unlinked(result["markdown"]), text), text)
+    result["markdown"] = contact_from_pdf(unpresent(add_links(unlinked(result["markdown"]), text), text), text)
     unknown = problems(result["markdown"], [text])["unknown_words"]
     result["markdown"] = heading_from_pdf(result["markdown"], text, unknown)
     if found.get("left_out"):  # Whatever's still missing, put back from the PDF's own lines.
@@ -543,8 +572,15 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
         text, markdown = rejoin(v["text"]), rejoin(v["markdown"])
         if v.get("text") != v.get("markdown"):
             markdown = unpresent(add_links(restore(unlinked(markdown), text, dropped_words(markdown, text)), text), text)
+            markdown = contact_from_pdf(markdown, text)
             markdown = heading_from_pdf(markdown, text, unsupported_words(markdown, [text]))
         sources.append((f"{v['source']} (content through {v['latest_date'] or 'unknown'})", markdown, text))
+    if master and len(sources) > 1:
+        # Nothing newer than your master (the same PDFs uploaded again): your master is the base, so a
+        # fresh, differently formatted reading only adds what it lacks rather than restyling it.
+        newest = max(latest_date(text) for _, _, text in sources[1:])
+        if newest <= latest_date(master):
+            sources = sources[1:] + sources[:1]
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)
     if master and same_content(master, result["markdown"]):

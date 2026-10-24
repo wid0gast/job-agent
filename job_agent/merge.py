@@ -133,7 +133,9 @@ def merge(versions: list[tuple[str, str]], llm=None, log=print) -> dict:
             pool(section, entry)
 
     early: list[dict] = []  # Older lines already said in their section, before any pooling.
-    header = merge_header([d["header"] for d in docs], changes)
+    from .resumes import render as _render
+
+    header = merge_header([d["header"] for d in docs], changes, _render(docs[-1]))
     for index in range(len(docs) - 2, -1, -1):  # Next-newest first: newer wins over older.
         doc, label = docs[index], labels[index]
         for old_section in doc["sections"]:
@@ -142,7 +144,7 @@ def merge(versions: list[tuple[str, str]], llm=None, log=print) -> dict:
             pending = []
             for entry in old_section["entries"]:
                 if entry["heading"]:
-                    target = best_role(base, entry)
+                    target = best_role(base, entry, kind)
                     if target:
                         section, match = target
                         placed[id(section)] = placed.get(id(section), 0) + 1
@@ -232,8 +234,16 @@ def BULLETED(text: str) -> bool:  # noqa: N802 - reads like a test.
     return bool(BULLET.match(text))
 
 
-def best_role(base: dict, entry: dict):
-    scored = [(role_score(entry, e), s, e) for s in base["sections"] for e in s["entries"] if e["heading"]]
+def best_role(base: dict, entry: dict, kind: str | None = None):
+    """The base role or school this entry is. From a section of another kind, only a close match:
+    "BITS Pilani" (an activities heading) is inside "Teaching Assistant | BITS Pilani" but isn't it."""
+    def fits(section: dict, other: dict) -> bool:
+        if kind is None or kind_of(section["name"]) == kind:
+            return True
+        wa, wb = role_words(entry), role_words(other)
+        return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= 0.6
+
+    scored = [(role_score(entry, e), s, e) for s in base["sections"] for e in s["entries"] if e["heading"] and fits(s, e)]
     scored = [x for x in scored if x[0] > 0]
     if not scored:
         return None
@@ -250,7 +260,9 @@ def said_in(section: dict, text: str, record: list) -> bool:
             record.append({"kept": [line], "left_out": [text]})
             return True
     joined = " ".join(lines)
-    if lines and inside(text, joined) and not adds(text, joined) and len(words(strip_bullet(text))) >= 3:
+    # All its words (and digits) among the section's lines: the same things, said as one line or several.
+    covered = stems(text) <= stems(joined) and set(re.findall(r"\d+", text)) <= set(re.findall(r"\d+", joined))
+    if lines and covered and not adds(text, joined) and len(words(strip_bullet(text))) >= 3:
         record.append({"kept": [l for l in lines if words(l) & words(text)][:3], "left_out": [text]})
         return True
     return False
@@ -297,7 +309,7 @@ def insert_entry(section: dict, entry: dict) -> None:
     section["entries"].append(entry)
 
 
-def merge_header(headers: list[list[str]], changes: list) -> list[str]:
+def merge_header(headers: list[list[str]], changes: list, said: str = "") -> list[str]:
     """Contact details from every version; the newest wins for one of a kind (a phone, an
     email, a LinkedIn); other lines (work authorization) come from the newest that has one."""
     newest_first = list(reversed(headers))
@@ -315,6 +327,8 @@ def merge_header(headers: list[list[str]], changes: list) -> list[str]:
                     kind = contact_kind(part)
                     if kind in seen_kinds and kind != "other":
                         continue
+                    if kind == "other" and n and norm(part) and norm(part) in norm(said):
+                        continue  # An older version's "New York, USA": the newest already says it (under Education).
                     if kind == "other" and any(norm(part) == norm(p) for p in items):
                         continue
                     seen_kinds.add(kind)
