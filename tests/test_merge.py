@@ -273,3 +273,16 @@ def test_a_tailored_resume_with_shifted_sections_is_put_back_in_line():
                 "entries": [{"title": "Engineer", "organization": "Lumen", "dates": "Jan 2024 – Dec 2025", "location": "",
                              "bullets": ["Built the ranking service for 2M users."]}]}]}
     assert documents.realign(faithful, MASTER)[1] == []
+
+
+def test_an_unusable_tailoring_reply_falls_back_to_the_master_resume():
+    from types import SimpleNamespace
+
+    from job_agent import prepare
+
+    class Broken:
+        def json(self, *args):
+            raise ValueError("Model did not return valid JSON")
+
+    doc = prepare.tailor(SimpleNamespace(llm=Broken()), {"company": "Acme", "title": "Engineer"}, "", {}, MASTER, 1)
+    assert doc["untailored"] and [s["title"] for s in doc["sections"]][:2] == ["Professional Summary", "Experience"]
