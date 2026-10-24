@@ -166,6 +166,11 @@ def merge(versions: list[tuple[str, str]], llm=None, log=print) -> dict:
                     section = {"name": old_section["name"], "entries": []}
                     base["sections"].append(section)
                     changes.append(f"Added section “{old_section['name']}” from {label}.")
+                said: list = []  # Already there in another shape ("School, City" as a plain line).
+                if entry["heading"] and section["entries"] and all(
+                        said_in(section, t, said) for t in [entry["heading"], *entry["meta"], *entry["items"]]):
+                    early += said
+                    continue
                 if entry["heading"]:
                     new = copy.deepcopy(entry)
                     insert_entry(section, new)
@@ -309,6 +314,11 @@ def merge_header(headers: list[list[str]], changes: list) -> list[str]:
                     not any(norm(line) == norm(l) for l in lines) and kind_of_line(line) not in \
                     {kind_of_line(l) for l in lines}:
                 lines.append(line)
+    # A paper's link isn't a contact detail; the resume lists the paper itself.
+    papers = [i for i in items if re.search(r"\.pdf\b|doi\.org|/doi/|/abs/|/article/|arxiv\.org|aclanthology", i.lower())]
+    if papers:
+        items = [i for i in items if i not in papers]
+        changes.append(f"Left {len(papers)} paper link(s) out of the contact line: {', '.join(papers)}.")
     # A link's label left beside its address ("Scholar" next to scholar.google.com/…).
     links = " ".join(i.lower() for i in items if contact_kind(i) != "other")
     items = [i for i in items if contact_kind(i) != "other" or len(i.split()) > 2 or
