@@ -308,7 +308,7 @@ def test_one_field_that_wont_fill_never_leaves_the_rest_empty(ctx):
 
 
 def test_a_school_the_form_doesnt_list_becomes_other_before_you_approve(ctx):
-    """Greenhouse's school list may not have yours (BITS Pilani wasn't on a real form): found while
+    """Greenhouse's school list may not have yours (a school abroad wasn't on a real form): found while
     preparing, so the packet says "Other" with the reason, and submit types exactly that."""
     import yaml
 

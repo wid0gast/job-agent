@@ -53,7 +53,7 @@ Keep every fact and keep the wording exactly as written: fix only spacing,
 broken line breaks and hyphenation, including words the extraction split
 ("RoBERT a" is "RoBERTa", "CPT -eligible" is "CPT-eligible"). Anything else on
 a role's line stays in its heading, e.g. an advisor: "### Research Intern —
-National University of Singapore, with Prof. Kokil Jaidka". Do not summarize,
+Example University, with Prof. Maria Lopez". Do not summarize,
 rephrase, reorder within a section, or add anything. If a part is unreadable,
 leave it out and say so in notes.
 """.strip()
@@ -158,7 +158,7 @@ def unsupported_words(markdown: str, sources: list[str]) -> list[str]:
 
 def dropped_words(markdown: str, source: str) -> list[str]:
     """Names, numbers and capitalized words in the PDF's text that the Markdown left out. One
-    model dropped every advisor ("with Prof. Kokil Jaidka") from role headings."""
+    model dropped every advisor ("with Prof. Maria Lopez") from role headings."""
     body = source.split("\n\nLinks in the PDF:")[0]
     haystack = re.sub(r"[^a-z0-9]", "", plain(markdown).lower())
     missing = []
@@ -362,7 +362,7 @@ def merge_versions(versions: list[tuple[str, str]]) -> dict:
         return next((s for s in base["sections"] if words(s["name"]) == words(name)), None)
 
     def find_entry(heading: str):
-        # Strict: "Machine Learning Intern — Clientell" isn't "Machine Learning Research Intern —
+        # Strict: "Machine Learning Intern — Northwind" isn't "Machine Learning Research Intern —
         # Adobe" (at half the words they matched, and one role vanished into the other).
         return next((e for s in base["sections"] for e in s["entries"]
                      if e["heading"] and overlap(heading, e["heading"]) >= SAME_ROLE), None)
