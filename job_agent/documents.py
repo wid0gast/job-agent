@@ -150,6 +150,30 @@ def realign(doc: dict, master: str) -> tuple[dict, list[str]]:
     return doc, fixes
 
 
+YOU = {"has": "have", "is": "are", "was": "were", "lacks": "lack", "holds": "hold", "shows": "show",
+       "meets": "meet", "does": "do", "brings": "bring", "demonstrates": "demonstrate", "seems": "seem",
+       "appears": "appear", "would": "would", "will": "will", "can": "can", "built": "built", "led": "led",
+       "worked": "worked", "studied": "studied", "graduated": "graduated", "needs": "need", "wants": "want"}
+
+
+def to_you(value):
+    """Text written to you about you, said to "you": "He has an MS" is "You have an MS"."""
+    if isinstance(value, dict):
+        return {k: to_you(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [to_you(v) for v in value]
+    if not isinstance(value, str):
+        return value
+    verbs = "|".join(YOU)
+
+    def swap(m):
+        you = "You" if m.group(1)[0].isupper() else "you"
+        return f"{you} {YOU[m.group(2)]}"
+
+    # Only "he"/"she" doing something: "her lab" may be an advisor's, so possessives stay.
+    return re.sub(rf"\b(He|She|he|she|The candidate|the candidate) ({verbs})\b", swap, value)
+
+
 STOP = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "by", "at", "from", "as", "that",
         "it", "its", "is", "was", "were", "be", "this", "so", "into", "using", "used"}
 
