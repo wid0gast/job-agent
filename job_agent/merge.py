@@ -335,6 +335,9 @@ def merge_header(headers: list[list[str]], changes: list) -> list[str]:
     flat = re.sub(r"[^a-z0-9]", "", links)  # "Scholar", or a handle: "marcuslee", "a mlee" (an icon read as "a").
     items = [i for i in items if contact_kind(i) != "other" or len(i.split()) > 2 or not flat or
              not (norm(i).replace(" ", "") in flat or (len(norm(i).split()[-1]) >= 3 and norm(i).split()[-1] in flat))]
+    # One order whatever the version wrote, so a fresh reading of the same PDF changes nothing.
+    place = {"email": 0, "phone": 1, "other": 2, "linkedin": 3, "github": 4, "scholar.google": 5}
+    items.sort(key=lambda i: place.get(contact_kind(i), 6))
     return ([" · ".join(items)] if items else []) + lines
 
 
