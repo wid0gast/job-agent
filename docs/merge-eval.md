@@ -114,7 +114,7 @@ whatever the model writes:
 - Links left as labels ("marcuslee", "a mlee"): the PDF's contact links are
   added and bare handles dropped; a "Links" section or entry joins the contact line.
 - Headings spaced out ("R E S E A R C H"), a venue read onto its own line
-  ("WASSA @ ACL 2024"), dates on or off the role line, three bullet styles: made
+  ("NLP4X @ ACL 2025"), dates on or off the role line, three bullet styles: made
   consistent in code, so a re-merge over an accepted master shows no differences.
 - Grouping: two wordings sharing a number and four content words, or a
   six-word stretch, are compared in code; an older line that sums up others, but
