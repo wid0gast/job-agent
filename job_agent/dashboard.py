@@ -339,9 +339,9 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     live = ' data-live' if refresh else ""
     banner = start_here(app, active)
     note = f'<div class="flash">{esc(flash)}</div>' if flash else ""
-    # The class platform serves pages with "Referrer-Policy: no-referrer", so a form POST carried
-    # "Origin: null" and the platform refused it as cross-origin (FORBIDDEN). Our own origin may
-    # go to ourselves.
+    # The class platform serves pages with "Referrer-Policy: no-referrer", so a form POST carried no
+    # Referer and the platform refused it as cross-origin (FORBIDDEN). Pages may name themselves to
+    # themselves: the same posts then went through every time, live and in a local stand-in.
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=referrer content=same-origin><meta name=viewport "
             f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
             f"<title>{esc(title + ' · ' if title else '')}Job Agent</title><style>{FIRST_PAINT}</style>"
