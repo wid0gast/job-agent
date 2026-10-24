@@ -146,8 +146,14 @@ def derive(llm, resume: str) -> tuple[dict, list[str]]:
         location = education[0].get("location", "")
     country = "United States" if re.search(r"\b(usa|united states|u\.s\.)\b|, [A-Z]{2}$",
                                            location or "", re.I) else ""
-    contact = {"name": keep("name", reply["name"]), "email": keep("email", reply["email"]),
-               "phone": keep("phone", reply["phone"]), "location": location,
+    # Read in code where the resume says them plainly: one model wrote "mohammed" for "mohammad".
+    block = "\n".join(resume.splitlines()[:4])
+    email = re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", block)
+    phone = re.search(r"\+?\d?[\s.-]?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b", block)
+    title = re.match(r"#\s+(.+)", resume.strip())
+    contact = {"name": keep("name", reply["name"]) or (title.group(1).strip() if title else ""),
+               "email": email.group(0) if email else keep("email", reply["email"]),
+               "phone": phone.group(0).strip() if phone else keep("phone", reply["phone"]), "location": location,
                "country": country, **links(resume)}
     status = keep("work authorization", reply["work_authorization_text"])
     authorization = work_authorization(status, country)

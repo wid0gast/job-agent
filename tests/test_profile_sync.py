@@ -110,3 +110,14 @@ def test_work_authorization_reads_negation_and_sponsorship_sentences():
     assert auth("Currently on an H-1B", "United States")["requires_sponsorship_now"] is True
     unclear = auth("Non-citizen", "United States")
     assert "requires_sponsorship_now" not in unclear and "nothing assumed" in unclear["rule"]
+
+
+def test_email_and_phone_are_read_from_the_contact_line_in_code():
+    class Typo(Model):  # One model wrote "mohammed" for "mohammad".
+        def json(self, *args):
+            reply = super().json(*args)
+            return {**reply, "email": "alx@example.com"}
+
+    resume = RESUME.replace("\n", "\nalex@example.com · (415) 555-0100\n", 1)
+    contact = profile_sync.derive(Typo(), resume)[0]["contact"]
+    assert contact["email"] == "alex@example.com" and contact["phone"] == "(415) 555-0100"
