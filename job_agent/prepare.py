@@ -238,6 +238,11 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                 "profile": profile, "resume": master}, ensure_ascii=False), FIT_SCHEMA, "fit")
             fit["score"] = max(0, min(100, int(fit["score"])))
             fit = documents.to_you(fit)  # One model wrote "He has an MS…" despite being asked for "you".
+            missing = [r["requirement"] for r in fit.get("requirements", []) if r.get("must_have") and r.get("met") == "no"]
+            if missing and fit["score"] > 55:  # One model scored 65 while saying a PhD was required and missing.
+                trace.check("A must-have you don't meet keeps the score below 60", False,
+                            f"Scored {fit['score']} with “{missing[0]}” unmet; capped at 55.")
+                fit["score"] = 55
         # A reply that fits the schema but says nothing (no requirements, no summary, score 0)
         # is a model failure, not a verdict: one model on the class platform returned exactly
         # that for every posting, setting good jobs aside.
@@ -537,6 +542,20 @@ def numbered(master: str) -> tuple[dict, str]:
     return doc, "\n".join(lines)
 
 
+MINOR = re.compile(r"teach|award|honou?r|service|activit|leadership|volunteer|interest|language|certific|skill", re.I)
+
+
+def ordered(sections: list[dict]) -> list[dict]:
+    """A summary first; Education next while you're still studying; then the main evidence in the
+    model's order; minor sections (teaching, awards, service, skills) last. One model led with
+    Teaching Experience."""
+    year = date.today().year
+    studying = lambda s: bool(re.search(r"education", s["title"], re.I) and any(  # noqa: E731
+        int(y) >= year for e in s.get("entries", []) for y in re.findall(r"(?:19|20)\d\d", e.get("dates", "") + e.get("title", ""))))
+    rank = lambda s: 0 if s["kind"] == "paragraph" else 1 if studying(s) else 3 if MINOR.search(s["title"]) else 2  # noqa: E731
+    return sorted(sections, key=rank)
+
+
 def select(ctx, job: dict, description: str, profile: dict, master: str, pages: int, problem: str = "") -> dict:
     """A tailored resume the model only chooses and orders, by id; every line is the master's,
     so nothing can be added, merged or misplaced (docs/merge-eval.md: the same design as the merge)."""
@@ -649,6 +668,7 @@ def select(ctx, job: dict, description: str, profile: dict, master: str, pages: 
             at = next((i for i, s_ in enumerate(sections) if s_["kind"] == "skills"), len(sections))
             sections.insert(at, {**{k: sec[k] for k in ("title", "kind", "text", "items", "skills")}, "entries": [
                 {k: e[k] for k in ("title", "organization", "dates", "location", "bullets")} for e in sec["entries"]]})
+    sections = ordered(sections)
     result = {"header_note": doc.get("header_note", ""), "sections": sections, "selected": True,
               "matched": reply.get("matched", []), "emphasized": reply.get("emphasized", []), "gaps": reply.get("gaps", [])}
     return latex.ensure_education(result, master)

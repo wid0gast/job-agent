@@ -310,10 +310,10 @@ def test_a_resume_chosen_by_id_is_built_from_the_masters_own_lines():
 
     out = prepare.select(SimpleNamespace(llm=Chooser()), {"company": "Acme", "title": "Engineer"}, "", {}, master, 1)
     titles = [s["title"] for s in out["sections"]]
-    assert titles[:3] == ["Research Focus", "Publications", "Experience"] and "Education" in titles
-    assert out["sections"][1]["items"] == ["A. Paper two. EMNLP, 2025."]
-    assert out["sections"][2]["entries"][0]["bullets"] == ["Built the ranking service for 2M users."]
-    assert out["sections"][2]["entries"][0]["organization"] == "Lumen, with Prof. Lee"
+    assert titles[:4] == ["Research Focus", "Education", "Publications", "Experience"]  # Still studying: Education next.
+    assert out["sections"][2]["items"] == ["A. Paper two. EMNLP, 2025."]
+    assert out["sections"][3]["entries"][0]["bullets"] == ["Built the ranking service for 2M users."]
+    assert out["sections"][3]["entries"][0]["organization"] == "Lumen, with Prof. Lee"
 
 
 def test_lines_chosen_by_their_text_and_under_the_wrong_section_go_home():
@@ -335,3 +335,14 @@ def test_lines_chosen_by_their_text_and_under_the_wrong_section_go_home():
     assert by_title["Publications"]["items"] == ["A. Paper two. EMNLP, 2025."]
     assert by_title["Skills"]["skills"] == [{"label": "Languages", "items": "Python, Go"}]
     assert "Education" in by_title and "Professional Summary" in by_title
+
+
+def test_tailored_sections_put_the_summary_first_and_minor_sections_last():
+    from job_agent import prepare
+
+    sec = lambda title, kind="entries", dates="": {"title": title, "kind": kind, "text": "x" if kind == "paragraph" else "",  # noqa: E731
+                                                   "entries": [{"title": "", "dates": dates}] if dates else [], "items": [], "skills": []}
+    got = prepare.ordered([sec("Teaching Experience"), sec("Industry Experience"), sec("Skills", "skills"),
+                           sec("Education", dates="May 2099"), sec("Research Focus", "paragraph"), sec("Research Experience")])
+    assert [s["title"] for s in got] == ["Research Focus", "Education", "Industry Experience", "Research Experience",
+                                         "Teaching Experience", "Skills"]

@@ -142,6 +142,17 @@ def wrong_kind(description: str, job: dict) -> bool:
     return (interns and not full and kind == "full_time") or (full and not interns and kind == "internship")
 
 
+def wrong_level(description: str, job: dict, resume: str) -> bool:
+    """A title that asks for a PhD when the resume has none, or a senior one when you want
+    internships. One model scored a "Data Scientist, Intern (PhD)" 95 for an MS student."""
+    title = job.get("title") or ""
+    if re.search(r"\bph\.?\s?d\b|doctoral", title, re.I) and not re.search(r"\bm\.?s\.?\b|master", title, re.I) \
+            and not re.search(r"\bph\.?\s?d\b|doctor of philosophy|doctoral", resume or "", re.I):
+        return True
+    return bool(re.search(r"\bintern", description or "", re.I) and
+                re.search(r"\b(senior|sr\.?|staff|principal|lead|manager|director|head of)\b", title, re.I))
+
+
 def score(llm, tracker, limit: int | None = None, log=print) -> dict:
     """Model match scores for the best `limit` (default SHORTLIST) keyword matches not yet scored,
     PARALLEL calls at a time."""
@@ -178,6 +189,8 @@ def score(llm, tracker, limit: int | None = None, log=print) -> dict:
             value = max(0, min(100, int(item["score"])))
             if wrong_kind(prefs.get("description", ""), job):  # Said plainly by both: no model needed.
                 value = min(value, 35)
+            if wrong_level(prefs.get("description", ""), job, resume):
+                value = min(value, 45)
             # Caps in code: one model said "but it's full-time" and still scored it 90.
             if item.get("kind_fits") is False:
                 value = min(value, 35)

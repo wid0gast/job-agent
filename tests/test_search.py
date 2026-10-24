@@ -292,3 +292,12 @@ def test_a_top_pick_that_falls_short_is_replaced_by_the_next(tracker, monkeypatc
     queued = tracker.db.execute("SELECT job_id, arg FROM tasks WHERE kind = 'prepare'").fetchall()
     assert [tuple(r) for r in queued] == [(2, f"{worker.TOP_PICK}0")]
     assert "next match" not in worker._prepare({"job_id": 2, "arg": f"{worker.TOP_PICK}0"}, ctx, print)
+
+
+def test_a_phd_or_senior_title_is_capped_by_level():
+    resume = "## Education\n### Master of Science — NYU\nMay 2028"
+    assert matching.wrong_level("ML internships", {"title": "Data Scientist, Intern (PhD)"}, resume)
+    assert not matching.wrong_level("ML internships", {"title": "Research Intern (PhD or MS)"}, resume)
+    assert not matching.wrong_level("ML internships", {"title": "PhD Intern"}, resume + "\n### Ph.D. — MIT")
+    assert matching.wrong_level("ML internships", {"title": "Senior Machine Learning Engineer"}, resume)
+    assert not matching.wrong_level("ML internships", {"title": "Machine Learning Intern"}, resume)
