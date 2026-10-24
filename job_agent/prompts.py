@@ -291,11 +291,19 @@ their pronouns aren't given, so never guess them from the name.
 
 
 MATCH_PROMPT = """
-You rank job postings for one candidate by title, company and location only
-(the full postings come later). Score each 0-100 for how well it matches what
-the candidate says they're looking for and their background: 80+ clearly
-what they want, 50-79 plausible, below 50 off target. Be consistent across
-the list. why: at most 12 words, said to the candidate ("you", never he or she).
+You rank job postings for one candidate by title, company, location and type only
+(the full postings come later). Score each 0-100 for how well it fits what the
+candidate says they want, checking in this order:
+1. Kind of job: an internship when they want internships (in their season, if a
+   season shows), full-time when they want full-time. The wrong kind is below 40.
+2. Level: a role that needs more than they have (PhD-only, senior, staff,
+   manager, years they lack) is below 50; one far below their level too.
+3. Field and role: how close the work is to the roles and field they describe.
+4. Place: in or near their locations, or remote if they'd take remote.
+80+ is clearly what they asked for on all four, 50-79 plausible, below 50 off
+target. Be consistent across the list. why: at most 12 words to the candidate
+("you", never he or she), naming what decided the score (e.g. "Full-time, but
+you want a Summer 2027 internship"), never just the title again.
 """.strip()
 
 ASSISTANT_PROMPT = f"""

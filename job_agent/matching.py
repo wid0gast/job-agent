@@ -46,7 +46,8 @@ SCHEMA = {
 def basis(profile: dict, resume: str) -> str:
     """What a match score depends on; when it changes, scores are stale."""
     prefs = profile.get("preferences", {})
-    text = json.dumps([prefs.get("description", ""), prefs.get("roles", []), resume[:3000]])
+    text = json.dumps([prefs.get("description", ""), prefs.get("roles", []), prefs.get("job_types", []),
+                       prefs.get("terms", []), prefs.get("locations", []), resume[:3000], MATCH_PROMPT])
     return hashlib.sha1(text.encode()).hexdigest()[:12]
 
 
@@ -146,7 +147,8 @@ def score(llm, tracker, limit: int | None = None, log=print) -> dict:
     todo = todo[:limit or SHORTLIST]
     current = basis(profile, resume)
     wanted = {"looking_for": prefs.get("description", ""), "roles": prefs.get("roles", []),
-              "background (resume start)": resume[:2500]}
+              "job_types": prefs.get("job_types", []), "seasons": prefs.get("terms", []),
+              "locations": prefs.get("locations", []), "background (resume start)": resume[:2500]}
     batches = [todo[start:start + BATCH] for start in range(0, len(todo), BATCH)]
     log(f"  scoring {len(todo)} job(s) in {len(batches)} model call(s), {PARALLEL} at a time")
 
