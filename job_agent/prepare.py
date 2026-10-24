@@ -495,8 +495,13 @@ def tailor(ctx, job: dict, description: str, profile: dict, master: str, pages: 
                "what_the_candidate_is_looking_for": profile.get("preferences", {}).get("description", "")}
     if problem:
         request["fix_this"] = problem
-    result = ctx.llm.json(TAILOR_PROMPT, json.dumps(request, ensure_ascii=False),
-                          TAILOR_SCHEMA, "tailored_resume")
+    try:
+        result = ctx.llm.json(TAILOR_PROMPT, json.dumps(request, ensure_ascii=False),
+                              TAILOR_SCHEMA, "tailored_resume")
+    except ValueError as error:  # No usable reply, twice: your resume as is, rather than no application.
+        trace.check("Tailored resume came back", False, f"{error}; your master resume is used unchanged.")
+        return {**latex.from_markdown(master), "invented": [], "untailored": True,
+                "gaps": ["The model's tailored version came back unusable; this is your master resume as is."]}
     invented = documents.unsupported_numbers(latex.plain(result), master)
     if invented:
         trace.check(NUMBERS_CHECK, False, f"The draft added {invented}; sent back once to fix.")
@@ -537,7 +542,7 @@ def tailored_resume(ctx, job, description, profile, master, folder, stem, full_n
         len(sec.get("items", [])) for sec in tailored["sections"])
     if used >= 0.9 * master_lines:  # Nothing much left to add: a short page is just a short resume.
         return tailored, saved
-    if not tailored.get("invented") and saved.get("fill", 1) < FILL_TARGET and saved["pages"] <= pages:
+    if not tailored.get("invented") and not tailored.get("untailored") and saved.get("fill", 1) < FILL_TARGET and saved["pages"] <= pages:
         # Too little material to fill the page even before trimming: ask once for more.
         log(f"  filling: the last page is {round(100 * saved['fill'])}% used")
         trace.note(f"The last page was only {round(100 * saved['fill'])}% full, so it asked once for more of "
