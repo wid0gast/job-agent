@@ -61,6 +61,13 @@ These read as machine-written to recruiters, so never use them:
   exclamation marks, no Markdown bold or headings.
 """.strip()
 
+# An essay once said a paper "appeared at ICWSM 2027"; the resume says "to appear".
+STATUS = """
+Keep each claim's status exactly as the material states it: a paper "to
+appear" or "under review" hasn't appeared, an "expected" degree isn't
+finished, a pending result isn't in. Never move these into the past tense.
+""".strip()
+
 TAILOR_PROMPT = f"""
 You tailor a candidate's master resume to one job and return it as structured
 sections, which are typeset in the candidate's own LaTeX style. A recruiter
@@ -192,6 +199,8 @@ What makes an essay good:
   false, evidence "Optional; nothing to add") unless the material has a useful
   fact the rest of the application lacks.
 
+{STATUS}
+
 {VOICE}
 
 evidence: one line naming where the answer came from (e.g. "story bank:
@@ -238,6 +247,8 @@ bank; no invented experience, numbers, motives or reasoning (don't add what
 they weighed or felt unless the material says it), and no durations or effort
 the material doesn't state ("most of my internship", "several weeks"). Claims about the company
 only from company_facts (verified quotes from its pages) or the posting.
+
+{STATUS}
 
 {VOICE}
 
@@ -499,6 +510,8 @@ history, meetings, numbers, interest from them, or the candidate's effort or
 familiarity ("I've followed your work", "I've spent a lot of time with your
 paper") unless the material says it. If fix_these is given, fix exactly those
 problems. If user_note is given, follow it.
+
+{STATUS}
 
 {VOICE}
 
