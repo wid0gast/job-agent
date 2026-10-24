@@ -285,13 +285,16 @@ def merge_header(headers: list[list[str]], changes: list) -> list[str]:
     """Contact details from every version; the newest wins for one of a kind (a phone, an
     email, a LinkedIn); other lines (work authorization) come from the newest that has one."""
     newest_first = list(reversed(headers))
-    items, seen_kinds, lines = [], set(), []
-    for header in newest_first:
+    items, seen_kinds, lines, labeled = [], set(), [], {}
+    for n, header in enumerate(newest_first):
         for line in header:
             if re.search(r"@|https?://|linkedin|github|\+?\(?\d{3}\)?[\s.-]\d{3}", line):
                 for part in re.split(r"\s+[·|•]\s+|\s{2,}", line.strip()):
                     part = part.strip(" ·|")
                     if not part:
+                        continue
+                    if re.match(r"[A-Za-z][A-Za-z -]{2,30}:\s", part):  # "Work Authorization: …" is a line of its own.
+                        labeled.setdefault(n, []).append(part)
                         continue
                     kind = contact_kind(part)
                     if kind in seen_kinds and kind != "other":
@@ -300,12 +303,16 @@ def merge_header(headers: list[list[str]], changes: list) -> list[str]:
                         continue
                     seen_kinds.add(kind)
                     items.append(part)
-    for header in newest_first:
-        for line in header:
+    for n, header in enumerate(newest_first):
+        for line in labeled.get(n, []) + header:
             if not re.search(r"@|https?://|linkedin|github|\+?\(?\d{3}\)?[\s.-]\d{3}", line) and \
                     not any(norm(line) == norm(l) for l in lines) and kind_of_line(line) not in \
                     {kind_of_line(l) for l in lines}:
                 lines.append(line)
+    # A link's label left beside its address ("Scholar" next to scholar.google.com/…).
+    links = " ".join(i.lower() for i in items if contact_kind(i) != "other")
+    items = [i for i in items if contact_kind(i) != "other" or len(i.split()) > 2 or
+             norm(i).replace(" ", "") not in re.sub(r"[^a-z0-9]", "", links)]
     return ([" · ".join(items)] if items else []) + lines
 
 
@@ -351,7 +358,8 @@ def dedupe(pools: dict, owners: dict, llm, log) -> tuple[list[dict], list[dict]]
         for i in range(len(lines)):
             for j in range(i):
                 a, b = lines[i]["text"], lines[j]["text"]
-                if same_text(a, b) or len(numbers(a) & numbers(b)) >= 2 or (numbers(a) & numbers(b) and half_alike(a, b)):
+                if same_text(a, b) or len(numbers(a) & numbers(b)) >= 2 or (numbers(a) & numbers(b) and half_alike(a, b)) \
+                        or (lines[i]["rank"] != lines[j]["rank"] and run(a, b) >= 6):
                     groups.append([j, i])
         units.append({"lines": lines, "groups": groups})
     if llm is not None:
@@ -486,6 +494,21 @@ def updated(a: str, b: str) -> bool:
     return len(wa) >= 4 and wa == wb and nums(a) != nums(b)
 
 
+def run(a: str, b: str) -> int:
+    """The longest stretch of words two lines share. One model missed "…used by 4 analytics
+    teams through a shared API" in two wordings of one pipeline; a six-word stretch is no accident."""
+    wa, wb = norm(strip_bullet(a)).split(), norm(strip_bullet(b)).split()
+    best, prev = 0, [0] * (len(wb) + 1)
+    for x in wa:
+        cur = [0] * (len(wb) + 1)
+        for j, y in enumerate(wb, 1):
+            if x == y:
+                cur[j] = prev[j - 1] + 1
+                best = max(best, cur[j])
+        prev = cur
+    return best
+
+
 def half_alike(a: str, b: str) -> bool:
     wa, wb = words(strip_bullet(a)), words(strip_bullet(b))
     return bool(wa and wb) and len(wa & wb) / len(wa) >= 0.5 and len(wa & wb) / len(wb) >= 0.5
@@ -563,8 +586,10 @@ def merge_skills(section: dict, older: list[dict]) -> None:
             for text in entry["items"] + entry["meta"]:
                 take(text, "- " if re.match(r"^\s*[-*•]", text) else "")
     bolded = any("**" in t for e in entries for t in e["items"])
+    bulleted = any(re.match(r"^\s*[-*•]", t) for e in entries for t in e["items"])
     out = []
     for label, items, prefix in lines:
+        prefix = "- " if bulleted else prefix  # Older lines take the newest version's style.
         body = ", ".join(items)
         if label:
             out.append(f"{prefix}{f'**{label}:**' if bolded else f'{label}:'} {body}")

@@ -116,3 +116,37 @@ def test_the_model_only_groups_and_bad_ids_are_ignored():
     new = "# A\n" + ROLE + "- Built search for 2M users.\n## Projects\n### Tool\n- Wrote a CLI tool.\n"
     md = merged(old, new, Wild())["markdown"]
     assert "Built search" in md and "Wrote a CLI" in md
+
+
+def test_pdf_extraction_breaks_are_undone_in_code():
+    from job_agent.resumes import rejoin
+
+    text = ("T owards Fair T ext Generation · PyT orch, BERT/RoBERT a · Prof. Y vonne Park · Multi-T ask\n"
+            "CPT -eligible · first author , complemented · by 61% .\n"
+            "https://a@example.com · Q&A summaries · BERT a model · T is")
+    assert rejoin(text) == ("Towards Fair Text Generation · PyTorch, BERT/RoBERTa · Prof. Yvonne Park · Multi-Task\n"
+                            "CPT-eligible · first author, complemented · by 61%.\n"
+                            "a@example.com · Q&A summaries · BERT a model · T is")
+
+
+def test_a_labeled_part_of_the_contact_line_is_its_own_line_and_a_bare_label_goes():
+    old = "# A\na@example.com\nWork Authorization: F-1 student, CPT-eligible.\n## Skills\nGo\n"
+    new = ("# A\na@example.com · https://scholar.google.com/citations?user=x | Scholar | "
+           "Work Authorization: F-1 student, CPT-eligible\n## Skills\nGo\n")
+    header = merged(old, new)["markdown"].split("## Skills")[0]
+    assert header.count("Work Authorization") == 1 and "| Scholar" not in header and "· Scholar" not in header
+    assert "scholar.google.com" in header
+
+
+def test_two_wordings_sharing_a_long_stretch_are_caught_without_the_model():
+    old = "# A\n" + ROLE + "- Built the summarization pipeline with rollups across 120 regions; used by 4 analytics teams through a shared API.\n"
+    new = "# A\n" + ROLE + "- Architected a summarization pipeline for 20K+ reports a quarter, now used by 4 analytics teams through a shared API.\n"
+    result = merged(old, new)
+    assert "120 regions" in result["markdown"] and "20K+" in result["markdown"] and len(result["possible"]) == 1
+
+
+def test_older_skill_lines_take_the_newest_style():
+    old = "# A\n## Skills\n**Data:** SQL, Excel\n"
+    new = "# A\n## Skills\n- **Engineering:** Python, SQL\n"
+    skills = merged(old, new)["markdown"].split("## Skills")[1].strip().splitlines()
+    assert skills == ["- **Engineering:** Python, SQL", "- **Data:** Excel"]
