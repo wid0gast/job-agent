@@ -193,3 +193,12 @@ def test_a_name_the_conversion_left_out_is_put_back_from_the_pdf_line():
     out = restore(md, text, ["maria", "lopez"])
     assert "### Research Intern — Example University, with Prof. Maria Lopez\n" in out + "\n"
     assert out.count("Aug 2023") == 1
+
+
+def test_a_whole_line_the_conversion_left_out_is_put_back_beside_its_neighbour():
+    from job_agent.resumes import restore
+
+    text = "JANE DOE\njane@example.com | site.dev\nWork Authorization: F-1 student, CPT-eligible.\nEDUCATION\nExample University"
+    md = "# JANE DOE\njane@example.com · https://site.dev\n\n## Education\nExample University"
+    out = restore(md, text, ["authorization", "cpteligible"])
+    assert out.splitlines()[2] == "Work Authorization: F-1 student, CPT-eligible."
