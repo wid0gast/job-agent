@@ -286,3 +286,31 @@ def test_an_unusable_tailoring_reply_falls_back_to_the_master_resume():
 
     doc = prepare.tailor(SimpleNamespace(llm=Broken()), {"company": "Acme", "title": "Engineer"}, "", {}, MASTER, 1)
     assert doc["untailored"] and [s["title"] for s in doc["sections"]][:2] == ["Professional Summary", "Experience"]
+
+
+def test_a_resume_chosen_by_id_is_built_from_the_masters_own_lines():
+    from types import SimpleNamespace
+
+    from job_agent import prepare
+
+    master = MASTER + "## Research Focus\nRetrieval for high-stakes domains.\n## Publications\n- A. Paper one. ACL, 2024.\n- A. Paper two. EMNLP, 2025.\n"
+    doc, text = prepare.numbered(master)
+    assert "B1 Built the ranking service for 2M users." in text and "K1 Languages: Python, Go" in text
+
+    class Chooser:
+        def json(self, system, user, schema, name):
+            assert "B1 Built" in json.loads(user)["resume (numbered)"]
+            return {"sections": [{"id": "S5", "entries": [], "items": [], "skills": []},       # Research Focus
+                                 {"id": "S1", "entries": [], "items": [], "skills": []},       # a second summary: one only
+                                 {"id": "S6", "entries": [], "items": ["I2", "I2", "I9"], "skills": []},
+                                 {"id": "S2", "entries": [{"id": "E1", "bullets": ["B1", "B7"]}], "items": [], "skills": []},
+                                 {"id": "S2", "entries": [], "items": [], "skills": []},       # repeated: ignored
+                                 {"id": "S99", "entries": [], "items": [], "skills": []}],     # unknown: ignored
+                    "matched": ["Ranking"], "emphasized": [], "gaps": []}
+
+    out = prepare.select(SimpleNamespace(llm=Chooser()), {"company": "Acme", "title": "Engineer"}, "", {}, master, 1)
+    titles = [s["title"] for s in out["sections"]]
+    assert titles[:3] == ["Research Focus", "Publications", "Experience"] and "Education" in titles
+    assert out["sections"][1]["items"] == ["A. Paper two. EMNLP, 2025."]
+    assert out["sections"][2]["entries"][0]["bullets"] == ["Built the ranking service for 2M users."]
+    assert out["sections"][2]["entries"][0]["organization"] == "Lumen, with Prof. Lee"
