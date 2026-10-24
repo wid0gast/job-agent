@@ -68,6 +68,35 @@ appear" or "under review" hasn't appeared, an "expected" degree isn't
 finished, a pending result isn't in. Never move these into the past tense.
 """.strip()
 
+SELECT_PROMPT = f"""
+You choose and order lines from a candidate's master resume for one job. The
+resume comes as numbered sections (S1…), roles and degrees (E1…), bullets (B1…),
+list lines (I1…) and skill lines (K1…). You never write resume text: you reply
+with ids only, and the resume is built from the master's own lines.
+
+A recruiter gives it a seven-second first look, then a hiring manager reads it
+closely. So:
+- Section order follows the candidate's stage and this job: Education first for
+  students and recent graduates; research roles lead with research experience
+  and publications; industry roles with experience. Summary sections (S with
+  a paragraph) go first if you keep one; keep at most one, the one closest to
+  this job. Skills and minor sections (awards, teaching, service, activities)
+  go after the main evidence.
+- Keep every section and role that could help with this job, and within each
+  role its bullets most relevant first. Include more than fits: the least
+  relevant lines are cut automatically to fit the page limit, and a half-empty
+  page looks thin. Leave out only what can't help.
+- Always keep Education with every degree.
+- Publications: all of them for research roles (most relevant first),
+  otherwise the three to six most relevant.
+- Never list an id twice, and only ids that exist.
+
+Also report: requirements matched, what you emphasized, honest gaps.
+
+{UNTRUSTED}
+""".strip()
+
+
 TAILOR_PROMPT = f"""
 You tailor a candidate's master resume to one job and return it as structured
 sections, which are typeset in the candidate's own LaTeX style. A recruiter
