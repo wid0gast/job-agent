@@ -269,13 +269,27 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
     else:
         with trace.step("Reading the application form") as step:
             log("  reading the application form")
-            page = ctx.headless.new_page()
-            try:
-                fields, form_notes = system.read_form(page, board, job_key, data)
-            except systems.Closed as closed:
-                raise Stop("closed", str(closed)) from None
-            finally:
-                page.close()
+            from playwright.sync_api import TimeoutError as PageTimeout
+
+            fields, form_notes = None, []
+            for wait in (None, 45000):  # A slow form page (through the class platform's relay) gets a second, longer try.
+                page = ctx.headless.new_page()
+                if wait:
+                    page.set_default_timeout(wait)
+                try:
+                    fields, form_notes = system.read_form(page, board, job_key, data)
+                    break
+                except systems.Closed as closed:
+                    raise Stop("closed", str(closed)) from None
+                except PageTimeout as slow:
+                    trace.check("The application form loaded", False,
+                                f"{str(slow).splitlines()[0][:160]}; " + ("trying once more, waiting longer." if not wait else
+                                                                           "preparing without its questions."))
+                finally:
+                    page.close()
+            if fields is None:  # Still not loading: everything else is prepared; its questions wait for you.
+                fields, form_notes = [], ["The application form didn't load, so its questions aren't here: "
+                                          "you'll see them when you open the form to apply."]
             step.summary = f"{len(fields)} questions"
 
     with trace.step("Answers from your profile") as step:
