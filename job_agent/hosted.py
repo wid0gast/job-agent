@@ -62,6 +62,8 @@ def prepare_environment() -> Path:
         "TMPDIR": str(work / "tmp"),  # The platform's /tmp holds only 32 MB.
         "PATH": f"{TECTONIC.parent}:{os.environ.get('PATH', '')}",
         "BROWSER_CHANNEL": "",
+        # The class models choose resume lines by id rather than write the resume (see prepare.select).
+        "JOB_AGENT_TAILOR": os.environ.get("JOB_AGENT_TAILOR", "select"),
     })
     profile = work / "profile" / "profile.yaml"
     if not profile.exists():
