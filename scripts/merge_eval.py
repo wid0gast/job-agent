@@ -231,8 +231,9 @@ def main() -> None:
     from dataclasses import replace
 
     settings = config.Settings.from_env(require_model=False)
-    tiers = {**settings.tier_models, **({"standard": args.tier} if args.tier else {})}
-    model = llm.client(replace(settings, tier_models=tiers))
+    if args.tier and hasattr(settings, "tier_models"):  # The class-platform build has one model per visit.
+        settings = replace(settings, tier_models={**settings.tier_models, "standard": args.tier})
+    model = llm.client(settings)
     cases = yaml.safe_load(CASES.read_text())
     if args.real:  # Your own resume: its cached conversions live next to your key, not in the repo.
         global CACHE
