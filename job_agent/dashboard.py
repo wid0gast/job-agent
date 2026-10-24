@@ -2060,6 +2060,10 @@ def handler_for(app: Dashboard):
             referer = urlsplit(self.headers.get("Referer") or "/")
             keep = {k: v[0] for k, v in parse_qs(referer.query).items() if k != "msg"}
             back = (referer.path or "/") + (f"?{urlencode(keep)}" if keep else "")
+            if not self.headers.get("Referer") and one.get("job_id", "").isdigit():
+                # The class platform's sandboxed frame sends no Referer: a form about a job
+                # goes back to that job, not to Today.
+                back = f"/job/{one['job_id']}"
             try:
                 message, back = self.act(urlsplit(self.path).path, one, fields, back)
             except ValueError as error:

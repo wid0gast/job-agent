@@ -301,6 +301,11 @@ def test_a_job_your_filters_still_set_aside_isnt_offered_as_preparable(ctx):  # 
 def test_many_prepares_at_once_need_the_users_go_ahead(ctx):  # noqa: F811 - pytest fixture
     tools = Assistant(ctx.tracker, ctx.settings, Cards().chat())
     asked = tools.prepare_applications([1, 2, 3, 4, 5])
-    assert not asked["queued"] and "confirm" in asked["problems"][0] and not ctx.tracker.tasks()
+    assert not asked["queued"] and "want all 5" in asked["problems"][0] and not ctx.tracker.tasks()
+    # A model's own confirmed=true isn't enough: the number must be in the user's words.
+    assert "want all 5" in tools.prepare_applications([1, 2, 3, 4, 5], confirmed=True)["problems"][0]
+    from job_agent.assistant import asked_for
+    assert asked_for(["Prepare my six best matches"], 6) and asked_for(["yes, all 5 please"], 5)
+    assert not asked_for(["Submit every application I have right now"], 4)
     job_id = add_job(ctx, "4001")
     assert tools.prepare_applications([job_id])["queued"], "a few at a time need no extra step"

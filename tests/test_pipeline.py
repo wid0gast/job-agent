@@ -398,3 +398,12 @@ def test_an_empty_fit_check_is_a_failure_not_a_score_of_zero(ctx):
     assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "failed"
     job = ctx.tracker.get(job_id)
     assert "empty fit check" in job["reason"] and job["fit_score"] is None, "no score recorded, not set aside"
+
+
+def test_the_fit_check_knows_todays_date(ctx):
+    # Without it a model called a finished internship "in the future".
+    from datetime import date
+
+    prepare.prepare(add_job(ctx, "4001"), ctx, log=lambda *_: None)
+    sent = next(json.loads(user) for name, user in ctx.llm.seen if name == "fit")
+    assert sent["today"] == date.today().isoformat()

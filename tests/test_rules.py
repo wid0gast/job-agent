@@ -131,3 +131,14 @@ def test_greenhouse_board_guesses_from_company_and_site():
 
     guesses = board_guesses({"company": "Pinterest", "url": "https://www.pinterestcareers.com/jobs/?gh_jid=1"})
     assert guesses[0] == "pinterest" and "pinterestcareers" in guesses
+
+
+def test_a_graduation_month_answers_a_list_of_terms():
+    # A model picked "None of the above/Beyond 2027" for a May 2027 graduate.
+    from job_agent import answers
+
+    field = {"key": "q", "label": "What is your graduation date? (anticipated or completed)", "kind": "select",
+             "options": ["Fall 2026", "Spring 2027", "Summer 2027", "None of the above/Beyond 2027"],
+             "section": "", "required": True}
+    profile = {"education": [{"graduation": "May 2027"}], "contact": {}, "work_authorization": {}}
+    assert answers.from_profile(field, profile, {}) == ("Spring 2027", "profile")

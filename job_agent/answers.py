@@ -88,6 +88,12 @@ def still_student(month: str | None, year: str | None) -> str | None:
     return "Yes" if finish >= (today.year, today.month) else "No"
 
 
+# The term a month falls in, the way schools and forms name graduations.
+SEASONS = {"January": "Winter", "February": "Spring", "March": "Spring", "April": "Spring", "May": "Spring",
+           "June": "Summer", "July": "Summer", "August": "Summer", "September": "Fall", "October": "Fall",
+           "November": "Fall", "December": "Fall"}
+
+
 def graduation(profile: dict) -> tuple[str | None, str | None]:
     return month_year((profile.get("education") or [{}])[0].get("graduation"))
 
@@ -128,6 +134,15 @@ EDUCATION_ROW = re.compile(r"^(school|degree|discipline|start-year|end-year|star
 
 
 ROW_NOTE = "Not in your resume (or profile.yaml's education): enter it yourself."
+
+
+def unlisted_note(field: dict) -> str:
+    """Your school or field is known but this form's search didn't offer it (and has no Other)."""
+    missing = field.get("unlisted") or {}
+    if not missing.get("value") or missing.get("instead"):
+        return ""
+    return (f"“{missing['value']}” (from your resume) didn't come up in this form's search, and it offers "
+            "no Other: pick the closest yourself.")
 
 
 def education_value(profile: dict, part: str, index: int):
@@ -265,6 +280,10 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
             return None
     if field["kind"] in ("select", "multiselect") and field["options"]:
         index = pick_option(field["options"], str(value), loose=True)
+        if index is None and re.search(r"\bgraduat", label) and month:
+            # Forms often list terms, not months: May 2027 is "Spring 2027". A model once
+            # picked "Beyond 2027" here.
+            index = pick_option(field["options"], f"{SEASONS[month]} {year}", loose=True)
         if index is None and str(value).lower() in ("yes", "no"):
             index = next((i for i, o in enumerate(field["options"])
                           if norm(o).startswith(str(value).lower())), None)
@@ -291,7 +310,7 @@ def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[li
             answer["value"], answer["source"] = hit
         elif EDUCATION_ROW.match(field["key"]):
             # One row per degree: only your resume knows which degree's dates these are.
-            answer["note"] = ROW_NOTE
+            answer["note"] = unlisted_note(field) or ROW_NOTE
         elif norm(field["label"]) in saved_by_label:
             answer["value"], answer["source"] = saved_by_label[norm(field["label"])], "saved"
         elif answer["fingerprint"] in bank:
@@ -416,7 +435,7 @@ def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dic
     """Fill open_fields in place from one model call. `letter`: the cover letter, if one was
     written, so the essays tell other stories."""
     for field in [f for f in open_fields if EDUCATION_ROW.match(f["key"])]:
-        field["note"] = ROW_NOTE  # Never the model's guess.
+        field["note"] = unlisted_note(field) or ROW_NOTE  # Never the model's guess.
     open_fields = [f for f in open_fields if not EDUCATION_ROW.match(f["key"])]
     if not open_fields:
         return
