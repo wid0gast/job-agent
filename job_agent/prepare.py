@@ -512,6 +512,9 @@ def tailor(ctx, job: dict, description: str, profile: dict, master: str, pages: 
     trace.check("Tailored bullets keep your wording", not drifted,
                 "Reworded more than usual, worth a read: " + " | ".join(f"“{b}” (yours: “{m}”)" for b, m in drifted[:6])
                 if drifted else "Every bullet stays close to a line in your master resume.")
+    result, fixes = documents.realign(result, master)
+    trace.check("The resume's sections and roles match your master", not fixes,
+                " ".join(fixes[:6]) if fixes else "Every section, organization, date and place is your master's.")
     result = latex.ensure_education(result, master)
     if invented:
         # Never ship invented facts: fall back to your own resume, unchanged.

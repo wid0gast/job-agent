@@ -202,3 +202,24 @@ def test_a_whole_line_the_conversion_left_out_is_put_back_beside_its_neighbour()
     md = "# JANE DOE\njane@example.com · https://site.dev\n\n## Education\nExample University"
     out = restore(md, text, ["authorization", "cpteligible"])
     assert out.splitlines()[2] == "Work Authorization: F-1 student, CPT-eligible."
+
+
+def test_an_end_date_the_pdf_never_gave_is_removed():
+    from job_agent.resumes import unpresent
+
+    assert unpresent("### Fellow — Lab\n2025 – Present", "Fellow, Lab 2025") == "### Fellow — Lab\n2025"
+    assert unpresent("### Engineer — Co\nJan 2025 – Present", "Engineer, Co Jan 2025 – Present") == \
+        "### Engineer — Co\nJan 2025 – Present"
+
+
+def test_schools_written_one_fact_per_line_are_read_as_schools():
+    from job_agent import latex
+
+    md = ("# A\n## Education\nExample University\nMaster of Science, Data Science\nSpringfield, USA\nMay 2028\n"
+          "Other Institute of Technology\nBachelor of Engineering. GPA: 3.7/4.0\nShelbyville, USA\nJuly 2024\n"
+          "## Skills\n- **Research:** Interpretability, robustness\n")
+    sections = latex.from_markdown(md)["sections"]
+    assert [(e["organization"], e["title"], e["dates"], e["location"]) for e in sections[0]["entries"]] == [
+        ("Example University", "Master of Science, Data Science", "May 2028", "Springfield, USA"),
+        ("Other Institute of Technology", "Bachelor of Engineering. GPA: 3.7/4.0", "July 2024", "Shelbyville, USA")]
+    assert sections[1]["kind"] == "skills" and sections[1]["skills"][0]["label"] == "Research"

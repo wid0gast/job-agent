@@ -262,6 +262,9 @@ def plain(doc: dict) -> str:
     return "\n".join(out).strip() + "\n"
 
 
+BULLET_RE = re.compile(r"^\s*(?:[-*•▪◦]|\d+\.)\s+")
+
+
 def from_markdown(markdown: str) -> dict:
     """Your master resume (Markdown) as structured sections, unchanged in content."""
     from .resumes import BULLET, structure
@@ -286,6 +289,12 @@ def from_markdown(markdown: str) -> dict:
                                "bullets": [BULLET.sub("", b) for b in e["items"]]})
             sections.append({"title": sec["name"].title(), "kind": "entries", "text": "", "entries": parsed,
                              "items": [BULLET.sub("", i) for i in loose], "skills": []})
+        elif loose and re.search(r"skill|technolog|tools", sec["name"], re.I) and \
+                all(re.match(r"^\**[^:]{2,40}:\**", BULLET.sub("", i)) for i in loose):  # "- **Research:** …" too.
+            loose = [BULLET.sub("", i) for i in loose]
+            skills = [{"label": i.split(":", 1)[0].strip("* "), "items": i.split(":", 1)[1].strip(" *")} for i in loose]
+            sections.append({"title": sec["name"].title(), "kind": "skills", "text": "", "entries": [],
+                             "items": [], "skills": skills})
         elif loose and all(BULLET.match(i) for i in loose):
             sections.append({"title": sec["name"].title(), "kind": "list", "text": "", "entries": [],
                              "items": [BULLET.sub("", i) for i in loose], "skills": []})
@@ -316,8 +325,34 @@ def split_heading(heading: str) -> tuple[str, str, str]:
     return heading.strip(), "", dates
 
 
+SCHOOL = re.compile(r"universit|college|institut|school|academy|polytechnic", re.I)
+DEGREE = re.compile(r"\b(bachelor|master|doctor|ph\.?\s?d|mba|associate|diploma|b\.?\s?(s|a|e|tech|sc)|m\.?\s?(s|a|eng|sc))\b", re.I)
+
+
 def education_entries(lines: list[str]) -> list[dict]:
-    """Pairs of lines: "School, City, Country" then "Degree. Date"."""
+    """Schools written as plain lines: "School, City, Country" then "Degree. Date", or one
+    line each for school, degree, place and date (one model wrote them so)."""
+    lines = [BULLET_RE.sub("", l).strip() for l in lines if l.strip()]
+    if sum(bool(SCHOOL.search(l)) and not DEGREE.search(l) for l in lines) and len(lines) > 2 * sum(
+            bool(SCHOOL.search(l)) and not DEGREE.search(l) for l in lines):
+        out = []
+        for line in lines:
+            if SCHOOL.search(line) and not DEGREE.search(line):
+                parts = [p.strip() for p in line.split(",")]
+                place = ", ".join(parts[-2:]) if len(parts) > 2 else (parts[1] if len(parts) == 2 else "")
+                out.append({"title": "", "organization": ", ".join(parts[:-2]) if len(parts) > 2 else parts[0],
+                            "dates": "", "location": place, "bullets": []})
+            elif out and DATES.fullmatch(" " + line) and not out[-1]["dates"]:
+                out[-1]["dates"] = line
+            elif out and DEGREE.search(line) and not out[-1]["title"]:
+                match = DATES.search(line)
+                out[-1]["title"] = line[:match.start()].strip() if match else line
+                out[-1]["dates"] = out[-1]["dates"] or (match.group(1).strip() if match else "")
+            elif out and not out[-1]["location"] and len(line.split()) <= 5:
+                out[-1]["location"] = line
+            elif out:
+                out[-1]["bullets"].append(line)
+        return out
     out = []
     for i in range(0, len(lines) - 1, 2):
         school, degree = lines[i].strip(), lines[i + 1].strip()

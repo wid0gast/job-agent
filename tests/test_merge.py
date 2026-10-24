@@ -233,3 +233,43 @@ def test_conversion_formatting_is_made_consistent():
     md = merged("# A\na@example.com\n## Skills\nGo\n",
                 "# A\na@example.com\n## Awards\n- Dean's list 2024\n**Links:**\n- https://github.com/a\n- https://arxiv.org/pdf/1\n")["markdown"]
     assert "https://github.com/a" in md.splitlines()[1] and "Links" not in md and "arxiv" not in md.split("## Awards")[1]
+
+
+MASTER = """# A
+a@example.com
+## Professional Summary
+Engineer with 3 years in ranking systems. Currently studying at Example University.
+## Experience
+### Engineer — Lumen, with Prof. Lee
+Jan 2024 – Dec 2025
+- Built the ranking service for 2M users.
+## Education
+### Master of Science — Example University
+May 2028
+## Skills
+- **Languages:** Python, Go
+"""
+
+
+def test_a_tailored_resume_with_shifted_sections_is_put_back_in_line():
+    from job_agent import documents
+
+    shifted = {"header_note": "", "sections": [
+        {"title": "Professional Summary (tailored) - Engineer with 3 years in ranking systems, focusing on fraud detection.",
+         "kind": "entries", "text": "", "items": [], "skills": [],
+         "entries": [{"title": "Engineer", "organization": "Lumen (Engineer)", "dates": "Jan 2024 – Dec 2025",
+                      "location": "London, UK", "bullets": ["Built the ranking service for 2M users."]}]},
+        {"title": "Skills", "kind": "education", "text": "", "items": [], "skills": [],
+         "entries": [{"title": "Master of Science", "organization": "Example University", "dates": "May 2028",
+                      "location": "", "bullets": []}]},
+        {"title": "", "kind": "skills", "text": "", "entries": [], "items": [],
+         "skills": [{"label": "Languages", "items": "Python, Go"}]}]}
+    doc, fixes = documents.realign(shifted, MASTER)
+    assert [s["title"] for s in doc["sections"]] == ["Professional Summary", "Experience", "Education", "Skills"]
+    assert "fraud" not in doc["sections"][0]["text"] and "ranking systems" in doc["sections"][0]["text"]
+    role = doc["sections"][1]["entries"][0]
+    assert role["organization"] == "Lumen, with Prof. Lee" and role["location"] == ""
+    faithful = {"header_note": "", "sections": [{"title": "Experience", "kind": "entries", "text": "", "items": [], "skills": [],
+                "entries": [{"title": "Engineer", "organization": "Lumen", "dates": "Jan 2024 – Dec 2025", "location": "",
+                             "bullets": ["Built the ranking service for 2M users."]}]}]}
+    assert documents.realign(faithful, MASTER)[1] == []

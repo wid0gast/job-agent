@@ -57,6 +57,99 @@ def rewritten(doc: dict, master: str, floor: float = 0.75) -> list[tuple[str, st
     return found
 
 
+def realign(doc: dict, master: str) -> tuple[dict, list[str]]:
+    """Put a tailored resume's structure back in line with the master's, which every line comes
+    from: one model shifted each section title onto the next section's content, put the summary
+    in a title, and gave a role a place and an organization the master doesn't have.
+
+    Each section takes the name of the master section its content comes from; a summary that
+    says what the master doesn't goes back to the master's; a role's organization, dates and
+    place must be the master's. Returns the repaired resume and what was repaired."""
+    import copy
+
+    from .latex import from_markdown
+
+    ref = from_markdown(master)["sections"]
+    flat = re.sub(r"[^a-z0-9]", "", master.lower())
+    fixes: list[str] = []
+    words = lambda t: set(re.sub(r"\*\*|[^a-z0-9 ]+", " ", (t or "").lower()).split()) - STOP  # noqa: E731
+
+    def likeness(a: str, b: str) -> float:
+        wa, wb = words(a), words(b)
+        return len(wa & wb) / len(wa) if wa else 0.0
+
+    def home(texts: list[str]):
+        """The master section most of these lines come from."""
+        votes: dict[int, float] = {}
+        for text in texts:
+            scored = []
+            for i, sec in enumerate(ref):
+                pool = [sec.get("text") or ""] + sec.get("items", []) + \
+                    [f"{e['title']} {e['organization']} {' '.join(e['bullets'])}" for e in sec.get("entries", [])] + \
+                    [f"{k['label']}: {k['items']}" for k in sec.get("skills", [])]
+                scored.append((max((likeness(text, p) for p in pool if p), default=0), i))
+            share, i = max(scored, default=(0, None))
+            if i is not None and share >= 0.6:
+                votes[i] = votes.get(i, 0) + 1
+        return ref[max(votes, key=votes.get)] if votes else None
+
+    doc = copy.deepcopy(doc)
+    todo = []
+    for sec in doc.get("sections", []):
+        title = sec.get("title") or ""
+        if len(title.split()) > 8:  # A summary written into the title.
+            body = re.split(r"\s[-–—:]\s", title, maxsplit=1)[-1]
+            todo.append({**sec, "title": "", "kind": "paragraph", "text": body, "entries": [], "items": [], "skills": []})
+            fixes.append("A summary written as a section title is a summary again.")
+            sec = {**sec, "title": ""}
+        todo.append(sec)
+    sections = []
+    for sec in todo:
+        if sec.get("kind") == "paragraph" and sec.get("text"):
+            source = home([sec["text"]])
+            # Each sentence must be one of the master's, trimmed: ", focusing on … AI detection" was added.
+            sentences = lambda t: [x for x in re.split(r"(?<=[.;!?])\s+", t) if len(words(x)) >= 4]  # noqa: E731
+            theirs = [words(x) for line in master.splitlines() for x in sentences(line)]
+            added = [x for x in sentences(sec["text"])
+                     if max((len(words(x) & m) / len(words(x)) for m in theirs), default=0) < 0.8]
+            if added:  # Says what the master doesn't: the master's own summary instead.
+                mine = source or next((r for r in ref if r["kind"] == "paragraph"), None)
+                if mine:
+                    fixes.append(f"The summary said what your master doesn't (“{added[0][:80]}”); your master's is used.")
+                    sec = {**sec, "text": mine["text"]}
+        texts = ([sec.get("text") or ""] if sec.get("kind") == "paragraph" else []) + sec.get("items", []) + \
+            [f"{e['title']} {e['organization']} {' '.join(e['bullets'])}" for e in sec.get("entries", [])] + \
+            [f"{k['label']}: {k['items']}" for k in sec.get("skills", [])]
+        source = home([t for t in texts if t])
+        if source and source["title"] != sec.get("title"):
+            fixes.append(f"Section “{sec.get('title') or '(untitled)'}” holds your “{source['title']}”; named so.")
+            sec = {**sec, "title": source["title"]}
+        for entry in sec.get("entries", []):
+            match = None
+            if source:
+                match = max(source.get("entries", []), default=None,
+                            key=lambda e: likeness(f"{entry['title']} {entry['organization']}", f"{e['title']} {e['organization']}"))
+            for field in ("organization", "dates", "location"):
+                value = entry.get(field) or ""
+                if value and re.sub(r"[^a-z0-9]", "", value.lower()) not in flat:
+                    entry[field] = (match or {}).get(field, "") if match else ""
+                    fixes.append(f"{field.title()} “{value}” isn't in your master resume; "
+                                 + (f"used “{entry[field]}”." if entry[field] else "left out."))
+            if match and match.get("organization") and entry.get("organization") and \
+                    entry["organization"] != match["organization"] and \
+                    match["organization"].lower().startswith(entry["organization"].lower()):
+                entry["organization"] = match["organization"]  # Keep "with Prof. …".
+        if sec.get("title") and any(s["title"] == sec["title"] for s in sections):
+            same = next(s for s in sections if s["title"] == sec["title"])
+            for key in ("entries", "items", "skills"):
+                same[key] = (same.get(key) or []) + (sec.get(key) or [])
+            continue
+        if sec.get("title") or sec.get("entries") or sec.get("items") or sec.get("skills") or sec.get("text"):
+            sections.append(sec)
+    doc["sections"] = sections
+    return doc, fixes
+
+
 STOP = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "by", "at", "from", "as", "that",
         "it", "its", "is", "was", "were", "be", "this", "so", "into", "using", "used"}
 
