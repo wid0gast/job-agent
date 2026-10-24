@@ -183,3 +183,13 @@ def test_two_cuts_of_one_resume_merge_into_the_fuller_and_keep_every_role():
     ordered = sorted(items, key=lambda d: (d["latest_date"] or "", len(d["markdown"]), d["file_modified"]))
     md = resumes.merge_versions([(d["stem"], d["markdown"]) for d in ordered])["markdown"]
     assert "court judgments" in md and "Northwind Analytics" in md and "Shipped churn models." in md
+
+
+def test_a_name_the_conversion_left_out_is_put_back_from_the_pdf_line():
+    from job_agent.resumes import restore
+
+    text = "Research Intern, Example University with Prof. Maria Lopez Aug 2023 – Jul 2024\n• Built a parser."
+    md = "## Experience\n### Research Intern — Example University\nAug 2023 – Jul 2024\n- Built a parser."
+    out = restore(md, text, ["maria", "lopez"])
+    assert "### Research Intern — Example University, with Prof. Maria Lopez\n" in out + "\n"
+    assert out.count("Aug 2023") == 1
