@@ -96,6 +96,37 @@ The synthetic set is unchanged (124/124 Haiku and Sonnet, 120/124 code only);
 the real pair is 60/60 on Sonnet and on Haiku in 4 of 5 runs (once it kept two
 wordings of one feature).
 
+## The class platform's model, run locally
+
+The class broker's development gateway lets the class-platform build run on a
+laptop against the same model (DeepSeek V4.1 Flash), so every change is tested
+end to end before one build is uploaded. `scripts/merge_eval.py` runs on that
+build unchanged. A full run on the real pair costs about a cent.
+
+DeepSeek's conversions of the same PDF vary from run to run, so each run found
+something new; each became a repair in code, after the model, so it holds
+whatever the model writes:
+- Advisors dropped from role headings ("with Prof. …") even after two retries:
+  what's left out of a line is put back from the PDF's own line, and a whole
+  line left out (work authorization) beside its neighbour.
+- Each template in the prompt copied into the output ("contact line (…)", then
+  the example address): the contact line is described in prose.
+- Links left as labels ("marcuslee", "a mlee"): the PDF's contact links are
+  added and bare handles dropped; a "Links" section or entry joins the contact line.
+- Headings spaced out ("R E S E A R C H"), a venue read onto its own line
+  ("NLPW @ ACL 2025"), dates on or off the role line, three bullet styles: made
+  consistent in code, so a re-merge over an accepted master shows no differences.
+- Grouping: two wordings sharing a number and four content words, or a
+  six-word stretch, are compared in code; an older line that sums up others, but
+  for a verb, is dropped; degree abbreviations ("M.S.") compare as their names.
+- The same PDF uploaded twice is one version, not two.
+
+| DeepSeek V4.1 Flash, end to end (conversion and merge) | Result |
+|---|---|
+| Real pair, 8 fresh runs | **60/60** every run |
+| Synthetic cases, fresh conversions | **124/124** |
+| All 21 saved DeepSeek conversions of the real pair, merged in code only | 60/60 each |
+
 ## What changed in the app
 
 - **merge.py** (new): code does the structure; the model only groups line ids.
@@ -126,5 +157,5 @@ wordings of one feature).
 - Two wordings with no shared number or long stretch ("Built Recheck, which re-verified…" /
   "added on-demand checks of each claim…") are only caught by the model; if it
   misses them, both stay.
-- DeepSeek's grouping can only be checked live (no key locally); its
-  conversions are re-merged locally as above.
+- DeepSeek leaves some job scores out of a batch; those jobs stay unranked
+  until the next Rank.
