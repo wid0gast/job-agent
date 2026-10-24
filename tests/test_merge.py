@@ -211,7 +211,7 @@ def test_a_venue_on_its_own_line_joins_its_bullet_and_a_links_section_joins_the_
     from job_agent.resumes import rejoin
 
     assert rejoin("- Built corpora.\nWASSA @ ACL 2024\n- Built a parser.\n### Stripe 2022") == \
-        "- Built corpora. (WASSA @ ACL 2024)\n- Built a parser.\n### Stripe 2022"
+        "- Built corpora. (WASSA @ ACL 2024)\n- Built a parser.\n### Stripe\n2022"  # A role stays a role.
     md = merged("# A\na@example.com\n## Skills\nGo\n", "# A\n## Skills\nGo\n## Links\na@example.com https://github.com/a\n")["markdown"]
     assert md.splitlines()[1] == "a@example.com · https://github.com/a" and "## Links" not in md
 
@@ -223,3 +223,13 @@ def test_the_same_pdf_uploaded_twice_is_one_version(tmp_path, monkeypatch):
     first = resumes.save_upload("cv.pdf", b"%PDF-1.4 one")
     assert resumes.save_upload("cv.pdf", b"%PDF-1.4 one") == first
     assert resumes.save_upload("cv.pdf", b"%PDF-1.4 two") != first
+
+
+def test_conversion_formatting_is_made_consistent():
+    from job_agent.resumes import rejoin
+
+    assert rejoin("### Engineer — Lumen July 2024 – June 2026\n*   A paper. ACL, 2023. [Link]\n**Skills:** Go") == \
+        "### Engineer — Lumen\nJuly 2024 – June 2026\n- A paper. ACL, 2023.\n**Skills:** Go"
+    md = merged("# A\na@example.com\n## Skills\nGo\n",
+                "# A\na@example.com\n## Awards\n- Dean's list 2024\n**Links:**\n- https://github.com/a\n- https://arxiv.org/pdf/1\n")["markdown"]
+    assert "https://github.com/a" in md.splitlines()[1] and "Links" not in md and "arxiv" not in md.split("## Awards")[1]

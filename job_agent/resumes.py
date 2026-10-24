@@ -149,6 +149,10 @@ def rejoin(text: str) -> str:
     text = re.sub(r"^(\s*[-–•*] .*[^)\s])\n(?:[-–•*] +)?((?=[^\n]*(?:@|\b[A-Z]{2,}\b))(?:[A-Z][A-Za-z]*|@) "
                   r"(?:(?:[A-Z][A-Za-z]*|@) ){0,4}(?:19|20)\d\d)$", r"\1 (\2)", text, flags=re.M)
     text = re.sub(r"\bcontact line \(([^()\n]*)\)", r"\1", text, flags=re.I)  # A prompt's placeholder, copied.
+    text = re.sub(r"^\* +", "- ", text, flags=re.M)  # "*   bullet": one bullet style.
+    text = re.sub(r" *\[(?:link|pdf|paper|arxiv|doi)\](?!\()", "", text, flags=re.I)  # A link's label, without the link.
+    from .merge import DATES  # "### Role — Org July 2024 – June 2026": dates on their own line, as most write them.
+    text = re.sub(rf"^(### .*?[^\s,·|–—-])[ ,·|]+({DATES.pattern})$", r"\1\n\2", text, flags=re.M | re.I)
     text = re.sub(r"^\(([^()\n]*@[^()\n]*)\)", r"\1", text, flags=re.M)  # A contact line in brackets.
     text = re.sub(r"^(## +)([A-Z][A-Z &]+)$", lambda m: m.group(1) + section_case(m.group(2))
                   if set(m.group(2).lower().replace("&", " ").split()) <= SECTION_WORDS else m.group(0), text, flags=re.M)
@@ -313,7 +317,9 @@ def parse(llm, pdf: Path, log=print) -> dict:
     if found.get("left_out"):  # Whatever's still missing, put back from the PDF's own lines.
         result["markdown"] = restore(result["markdown"], text, found["left_out"])
         found = problems(result["markdown"], [text])
-    if not re.search(r"unreadable|illegible|could ?n[o']t|missing|left out|unclear", result.get("notes") or "", re.I):
+    notes = result.get("notes") or ""
+    if not re.search(r"unreadable|illegible|could ?n[o']t|missing|left out|unclear", notes, re.I) or \
+            re.match(r"\s*(no|none|nothing|all)\b", notes, re.I):
         result["notes"] = ""  # "Links were converted as requested": nothing for you to act on.
     parsed_folder().mkdir(parents=True, exist_ok=True)
     md_path = parsed_folder() / f"{pdf.stem}.md"
