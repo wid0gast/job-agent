@@ -107,3 +107,26 @@ def test_a_request_the_service_stopped_is_asked_once_more(monkeypatch):
             with pytest.raises(RuntimeError, match="stopped this request partway"):
                 model.post({"messages": []})
             assert len(calls) == 2, "only one more try"
+
+
+def test_a_reply_lost_in_blank_space_is_asked_afresh_in_plain_json_mode(monkeypatch):
+    # DeepSeek V4.1 Flash, strict mode, mid-resume: '"text": "…"' then blank space until the tokens ran out.
+    import json
+
+    monkeypatch.setenv("WORKSHOP_BROKER_URL", "http://broker.test")
+    monkeypatch.setenv("WORKSHOP_RUN_TOKEN", "run-token")
+    sent = []
+
+    def reply(request):
+        payload = json.loads(request.content)
+        sent.append(((payload.get("response_format") or {}).get("type"), len(payload["messages"])))
+        text = '{"title": "x"\n' + " \n" * 2000 if sent[-1][0] == "json_schema" else '{"title": "Resume"}'
+        chunk = json.dumps({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]})
+        return httpx.Response(200, content=f"data: {chunk}\n\ndata: [DONE]\n\n".encode(),
+                              headers={"content-type": "text/event-stream"})
+
+    model = llm.Broker("deepseek/deepseek-v4.1-flash")
+    model.client = httpx.Client(transport=httpx.MockTransport(reply))
+    schema = {"type": "object", "required": ["title"], "properties": {"title": {"type": "string"}}}
+    assert model.json("Tailor.", "{}", schema, "tailored_resume") == {"title": "Resume"}
+    assert sent == [("json_schema", 2), ("json_object", 2)]  # Afresh: the blank reply isn't sent back.

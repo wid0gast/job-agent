@@ -228,6 +228,11 @@ class OpenRouter:
                 error = str(problem)
                 trace.check("Reply has the expected shape", False,
                             f"{error}; " + ("asked again." if not attempt else "gave up."))
+                if re.search(r"\s{400}", text):
+                    # Strict schema mode once wrote blank space until the tokens ran out (DeepSeek V4.1
+                    # Flash, mid-resume). Ask afresh in plain JSON mode, for the rest of the run.
+                    self._json_format = max(self._json_format, 1)
+                    continue
                 messages += [{"role": "assistant", "content": text},
                              {"role": "user", "content": f"That was not valid: {error}. "
                               "Reply again with only the corrected JSON object."}]
