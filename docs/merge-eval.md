@@ -61,6 +61,33 @@ Close reading found what the key didn't, and each became a rule:
 - A 1-page bullet that condensed two 2-page bullets was kept beside them. It is
   dropped when the lines it was judged alike with say all of it, but for a verb.
 
+## Live check on the class platform's model
+
+The real pair was uploaded to the hosted app on DeepSeek V4.1 Flash. Nothing was
+lost, but its output showed what a weaker model leaves for code to do:
+- Its conversion kept the PDF's kerning splits ("T owards", "PyT orch", "Y eo"),
+  spaces before commas ("first author , and"), an email written as
+  "https://name@…", and a link label ("Scholar") beside its address. Merging
+  then kept the broken wording of a paper title as the "fuller" one.
+- It didn't group two wordings of one pipeline that share "…used by 4 analytics teams through
+  a shared API".
+
+All are now handled in code: the PDF's text is repaired before the model sees it
+and again after (`rejoin`), a labeled part of the contact line ("Work
+Authorization: …") becomes its own line, a bare link label goes, and two lines
+from different versions sharing a six-word stretch are compared as a possible
+repeat. Re-merging DeepSeek's own conversions locally:
+
+| DeepSeek's conversions, merged by | Before | After |
+|---|---|---|
+| code only | 53/60 | 59/60 |
+| Haiku | 56/60 | **60/60** |
+| Sonnet | 56/60 | **60/60** |
+
+The synthetic set is unchanged (124/124 Haiku and Sonnet, 120/124 code only);
+the real pair is 60/60 on Sonnet and on Haiku in 4 of 5 runs (once it kept two
+wordings of one feature).
+
 ## What changed in the app
 
 - **merge.py** (new): code does the structure; the model only groups line ids.
@@ -88,5 +115,8 @@ Close reading found what the key didn't, and each became a rule:
 - Sections take the newest version's names ("Work Experience" joins
   "Experience"), except summaries: a "Research Focus" and a "Professional
   Summary" are different framings, so both stay, each as written.
-- The models tested were Sonnet and Haiku locally; the class platform's models
-  are checked live after each release.
+- Two wordings with no shared number or long stretch ("Built Recheck, which re-verified…" /
+  "added on-demand checks of each claim…") are only caught by the model; if it
+  misses them, both stay.
+- DeepSeek's grouping can only be checked live (no key locally); its
+  conversions are re-merged locally as above.

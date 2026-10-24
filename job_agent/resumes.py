@@ -84,7 +84,7 @@ def extract_text(pdf: Path) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(str(pdf))
-    text = plain("\n".join(page.extract_text() or "" for page in reader.pages))
+    text = rejoin(plain("\n".join(page.extract_text() or "" for page in reader.pages)))
     # Hyperlink targets aren't in the text ("LinkedIn" is just a label), but
     # application forms need the real URLs.
     links = []
@@ -107,6 +107,23 @@ def plain(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = "".join(c for c in text if unicodedata.category(c) != "Co")  # private-use icons
     return re.sub(r"[ \t]+", " ", text).strip()
+
+
+# Letters a PDF's kerning splits from the rest of their word ("T owards", "PyT orch", "Y eo").
+KERNED = re.compile(r"(?<![A-Za-z&])((?:[A-Z][a-z]+)?[TVWYPF]) ([a-z]{2,})\b")
+LONE = {"is", "in", "on", "or", "an", "as", "at", "to", "of", "and", "the", "for", "by", "it", "be", "cells"}
+
+
+def rejoin(text: str) -> str:
+    """Undo what PDF text extraction breaks, in code (one model kept "T owards" and "PyT orch"
+    whatever the prompt said): kerned splits, "RoBERT a", "CPT -eligible", "author ,", an email
+    written as a web address."""
+    text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
+    text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b(?! [a-z])", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
+    text = re.sub(r"(?<=[A-Za-z]) -(?=[a-z])", "-", text)
+    text = re.sub(r"(?<=[\w)%+]) +(?=[,;.:)](?:\s|$))", "", text, flags=re.M)
+    text = re.sub(r"\( +", "(", text)
+    return re.sub(r"(?:https?://)?(?:mailto:)([^\s/·|]+@)|https?://(?=[^\s/·|]+@)", r"\1", text)
 
 
 def save_upload(filename: str, data: bytes) -> Path:
@@ -185,6 +202,7 @@ def parse(llm, pdf: Path, log=print) -> dict:
     text = extract_text(pdf)
     log(f"  read {pdf.name}: {len(text)} characters")
     result = llm.json(PARSE_PROMPT, text[:30000], PARSE_SCHEMA, "resume_markdown")
+    result["markdown"] = rejoin(result["markdown"])
     found = problems(result["markdown"], [text])
     if any(found.values()):
         log(f"  retrying: {found}")
@@ -192,6 +210,7 @@ def parse(llm, pdf: Path, log=print) -> dict:
                  + "; ".join(f"{k.replace('_', ' ')}: {', '.join(map(str, v))}" for k, v in found.items() if v)
                  + ". Use only the resume's own words and numbers, and leave none of them out.")
         result = llm.json(PARSE_PROMPT, retry, PARSE_SCHEMA, "resume_markdown")
+        result["markdown"] = rejoin(result["markdown"])
         found = problems(result["markdown"], [text])
     parsed_folder().mkdir(parents=True, exist_ok=True)
     md_path = parsed_folder() / f"{pdf.stem}.md"
@@ -334,7 +353,7 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
         # Your master may hold edits made by hand; it counts as the oldest version.
         sources.append(("your current master resume", master, master))
     sources += [(f"{v['source']} (content through {v['latest_date'] or 'unknown'})",
-                 v["markdown"], v["text"]) for v in versions]
+                 rejoin(v["markdown"]), rejoin(v["text"])) for v in versions]  # Also ones read before rejoin().
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)
     raw = [text for _, _, text in sources] + [md for _, md, _ in sources]
