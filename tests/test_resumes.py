@@ -242,3 +242,12 @@ def test_links_stay_in_the_contact_line_and_invented_words_in_a_heading_take_the
     assert "https://github.com/a" in out and "x.org" not in out and out.splitlines()[4] == "- B. Paper. EMNLP, 2025."
     text = "A\nEDUCATION\nNew York University, New York, USA\nMay 2028"
     assert "### New York University, New York, USA" in heading_from_pdf(out, text, ["nyu"])
+
+
+def test_a_venue_after_a_wrapped_bullet_or_written_as_a_heading_joins_its_bullet():
+    from job_agent.resumes import rejoin
+
+    assert rejoin("– Built corpora and studied\ndecoding.\nNLPW @ ACL 2025\n– Designed X.") == \
+        "– Built corpora and studied decoding. (NLPW @ ACL 2025)\n– Designed X."
+    assert rejoin("- Built corpora.\n\n### NLPW @ ACL 2025\n- Designed X.") == "- Built corpora. (NLPW @ ACL 2025)\n- Designed X."
+    assert rejoin("- Built corpora.\n\n### NLPW @ ACL\n2025\n\n- Designed X.") == "- Built corpora. (NLPW @ ACL 2025)\n\n- Designed X."

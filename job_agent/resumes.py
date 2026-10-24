@@ -163,7 +163,9 @@ def rejoin(text: str) -> str:
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
     text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
     # A venue set to the right of its bullet, read onto a line of its own: "NLPW @ ACL 2025".
-    text = re.sub(r"^(\s*[-–•*] .*[^)\s])\n(?:[-–•*] +)?((?=[^\n]*(?:@|\b[A-Z]{2,}\b))(?:[A-Z][A-Za-z]*|@) "
+    text = re.sub(r"^(#{2,4} +[A-Z][\w ]*@[\w ]+?)\n\n?((?:19|20)\d\d)$", r"\1 \2", text, flags=re.M)  # "### NLPW @ ACL" / "2025"
+    # After a bullet, or the wrapped end of one ("…human-likeness."); as a line, a bullet or a heading.
+    text = re.sub(r"^((?:\s*[-–•*] .*|[^#\n].*[.;])[^)\s]?)\n\n?(?:[-–•*] +|#{2,4} +)?((?=[^\n]*(?:@|\b[A-Z]{2,}\b))(?:[A-Z][A-Za-z]*|@) "
                   r"(?:(?:[A-Z][A-Za-z]*|@) ){0,4}(?:19|20)\d\d)$", r"\1 (\2)", text, flags=re.M)
     text = re.sub(r"\bcontact line \(([^()\n]*)\)", r"\1", text, flags=re.I)  # A prompt's placeholder, copied.
     text = re.sub(r"^\* +", "- ", text, flags=re.M)  # "*   bullet": one bullet style.
