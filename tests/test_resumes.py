@@ -268,3 +268,27 @@ def test_a_rereading_that_only_restyles_the_master_changes_nothing():
     restyled = "# A\na@example.com · https://shxz.in\n## Skills\n- **Research:** interpretability\n### TA — Graph Mining | BITS\n- Built X. NLPW @ ACL 2025"
     assert same_content(master, restyled)
     assert not same_content(master, restyled.replace("Built X", "Built Y"))
+
+
+def test_a_name_and_contact_details_on_one_line_are_two_lines():
+    from job_agent.resumes import rejoin
+
+    assert rejoin("# Jane Doe jane@example.com · https://jane.dev\n## Skills\nGo").splitlines()[:2] == \
+        ["# Jane Doe", "jane@example.com · https://jane.dev"]
+    assert rejoin("# JANE DOE\njane@example.com").splitlines() == ["# JANE DOE", "jane@example.com"]
+
+
+def test_skill_labels_written_as_headings_are_skill_lines():
+    from job_agent.resumes import rejoin
+
+    md = "# A\n## Skills\n\n### Research\nInterpretability, robustness\n\n### Modeling\nTransformers, GNNs\n\n## Awards\n- X"
+    assert [l for l in rejoin(md).splitlines() if l.strip()] == \
+        ["# A", "## Skills", "- **Research:** Interpretability, robustness", "- **Modeling:** Transformers, GNNs", "## Awards", "- X"]
+
+
+def test_a_contact_item_the_pdf_lacks_is_dropped():
+    from job_agent.resumes import contact_from_pdf
+
+    md = "# A\na@example.com · Springfield, USA · https://github.com/a · F-1 student\n## Skills"
+    assert contact_from_pdf(md, "A a@example.com github F-1 student").splitlines()[1] == \
+        "a@example.com · https://github.com/a · F-1 student"

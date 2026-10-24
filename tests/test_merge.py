@@ -352,3 +352,23 @@ def test_contact_details_come_in_one_order():
     old = "# A\nsite.dev · https://github.com/a · a@example.com\n## Skills\nGo\n"
     new = "# A\nhttps://github.com/a · a@example.com · site.dev\n## Skills\nGo\n"
     assert merged(old, new)["markdown"].splitlines()[1] == "a@example.com · https://github.com/a · site.dev"
+
+
+def test_one_line_saying_what_a_role_lists_as_bullets_is_not_added_again():
+    old = "# A\n## Activities\nClub: Secretary, Chess Club (2022); Editor, Student Paper (2023).\n"
+    new = "# A\n## Activities\n### Club\n- Secretary, Chess Club (2022).\n- Editor, Student Paper (2023).\n"
+    md = merged(old, new)["markdown"]
+    assert md.count("Chess Club") == 1 and md.count("Student Paper") == 1
+
+
+def test_an_activities_heading_is_not_taken_for_a_role_that_mentions_the_same_place():
+    old = "# A\n## Activities\n### BITS Pilani\n- Secretary, Chess Club (2022).\n"
+    new = "# A\n## Teaching Experience\n### Teaching Assistant — Graph Mining | BITS Pilani\nAug 2023 – Dec 2023\n- Ran labs.\n## Activities\n- BITS Pilani: Secretary, Chess Club (2022).\n"
+    md = merged(old, new)["markdown"]
+    assert md.count("Chess Club") == 1 and "Ran labs" in md.split("## Activities")[0]
+
+
+def test_an_older_contact_item_the_resume_already_says_is_not_added():
+    old = "# A\na@example.com · New York, USA\n## Skills\nGo\n"
+    new = "# A\na@example.com\n## Education\n### MS — NYU\nNew York, USA\n## Skills\nGo\n"
+    assert merged(old, new)["markdown"].splitlines()[1] == "a@example.com"
