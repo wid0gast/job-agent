@@ -166,7 +166,7 @@ def _prepare(task, ctx, log) -> str:
     reason = (ctx.tracker.get(task["job_id"]) or {}).get("reason")
     said = PREPARE_OUTCOMES.get(status, status) + (f": {reason}" if reason else
                                                    ": ready for your review." if status == "prepared" else "")
-    if left and status == "filtered_out":
+    if left and status in ("filtered_out", "failed"):
         from . import actions
 
         picks, _ = actions.top_picks(ctx.tracker, ctx.settings, 1)

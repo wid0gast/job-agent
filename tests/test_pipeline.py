@@ -407,3 +407,21 @@ def test_the_fit_check_knows_todays_date(ctx):
     prepare.prepare(add_job(ctx, "4001"), ctx, log=lambda *_: None)
     sent = next(json.loads(user) for name, user in ctx.llm.seen if name == "fit")
     assert sent["today"] == date.today().isoformat()
+
+
+def test_a_form_page_that_wont_load_is_tried_longer_then_prepared_without_it(ctx, monkeypatch):
+    from playwright.sync_api import TimeoutError as PageTimeout
+
+    from job_agent import systems
+
+    tries = []
+
+    def slow(page, board, key, data):
+        tries.append(1)
+        raise PageTimeout("Page.goto: Timeout 15000ms exceeded.")
+
+    monkeypatch.setattr(systems.ADAPTERS["greenhouse"], "read_form", slow)
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert len(tries) == 2 and any("didn't load" in n for n in packet["form_notes"])
