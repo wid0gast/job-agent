@@ -251,3 +251,20 @@ def test_a_venue_after_a_wrapped_bullet_or_written_as_a_heading_joins_its_bullet
         "– Built corpora and studied decoding. (NLPW @ ACL 2025)\n– Designed X."
     assert rejoin("- Built corpora.\n\n### NLPW @ ACL 2025\n- Designed X.") == "- Built corpora. (NLPW @ ACL 2025)\n- Designed X."
     assert rejoin("- Built corpora.\n\n### NLPW @ ACL\n2025\n\n- Designed X.") == "- Built corpora. (NLPW @ ACL 2025)\n\n- Designed X."
+
+
+def test_sections_written_a_level_too_low_are_sections():
+    from job_agent.resumes import rejoin
+
+    md = "# A\na@example.com\n### Professional Summary\nEngineer.\n### Experience\n### Engineer — Lumen\n2024\n- Built X.\n### Skills\nGo"
+    assert [l for l in rejoin(md).splitlines() if l.startswith("#")] == \
+        ["# A", "## Professional Summary", "## Experience", "### Engineer — Lumen", "## Skills"]
+
+
+def test_a_rereading_that_only_restyles_the_master_changes_nothing():
+    from job_agent.resumes import same_content
+
+    master = "# A\nshxz.in · a@example.com\n## Skills\nResearch: interpretability\n### TA, Graph Mining — BITS\n- Built X. (NLPW @ ACL 2025)"
+    restyled = "# A\na@example.com · https://shxz.in\n## Skills\n- **Research:** interpretability\n### TA — Graph Mining | BITS\n- Built X. NLPW @ ACL 2025"
+    assert same_content(master, restyled)
+    assert not same_content(master, restyled.replace("Built X", "Built Y"))

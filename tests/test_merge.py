@@ -346,3 +346,9 @@ def test_tailored_sections_put_the_summary_first_and_minor_sections_last():
                            sec("Education", dates="May 2099"), sec("Research Focus", "paragraph"), sec("Research Experience")])
     assert [s["title"] for s in got] == ["Research Focus", "Education", "Industry Experience", "Research Experience",
                                          "Teaching Experience", "Skills"]
+
+
+def test_contact_details_come_in_one_order():
+    old = "# A\nsite.dev · https://github.com/a · a@example.com\n## Skills\nGo\n"
+    new = "# A\nhttps://github.com/a · a@example.com · site.dev\n## Skills\nGo\n"
+    assert merged(old, new)["markdown"].splitlines()[1] == "a@example.com · https://github.com/a · site.dev"

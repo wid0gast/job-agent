@@ -143,6 +143,10 @@ def levels(markdown: str) -> str:
     first = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
     if first is not None and sum(l.startswith("# ") for l in lines[first + 1:]) >= 2:
         lines = lines[:first + 1] + [("#" + l if re.match(r"#{1,2} ", l) else l) for l in lines[first + 1:]]
+    for i, line in enumerate(lines):  # "### Education": a section written a level too low.
+        name = line[4:].strip() if line.startswith("### ") else ""
+        if name and len(name.split()) <= 4 and set(name.lower().replace("&", " ").split()) <= SECTION_WORDS:
+            lines[i] = "## " + name
     from .merge import DATES
 
     for i, line in enumerate(lines[:-1]):
@@ -543,6 +547,10 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
         sources.append((f"{v['source']} (content through {v['latest_date'] or 'unknown'})", markdown, text))
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)
+    if master and same_content(master, result["markdown"]):
+        # The same PDFs read again only restyle it (a comma, bold labels, "|" for "—"): your master stays as it is.
+        result = {**result, "markdown": master, "changes": result["changes"] + [
+            "Your master resume already says all of this; only formatting differed, so it's kept as it is."]}
     raw = [text for _, _, text in sources] + [md for _, md, _ in sources]
     write_proposal(result["markdown"], {
         "created": datetime.now().isoformat(timespec="seconds"),
@@ -551,6 +559,21 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
         "possible": result.get("possible", []),
         "checks": problems(result["markdown"], raw), "raw_sources": raw})
     return proposal()
+
+
+def same_content(a: str, b: str) -> bool:
+    """The same words line by line, whatever the punctuation, markdown and order of contact details."""
+    def lines(text: str) -> list[str]:
+        out = []
+        for line in text.splitlines():
+            if "@" in line and "·" in line:  # The contact line: its details in any order.
+                out.append(" ".join(sorted(re.sub(r"https?://(www\.)?|/$", "", p.strip().lower()) for p in line.split("·"))))
+            elif re.sub(r"\W", "", line):
+                out.append(" ".join(re.findall(r"[a-z0-9]+", line.lower())))
+        return sorted(out)
+
+    flat = lambda t: sorted(" ".join(lines(t)).split())  # noqa: E731 - "Role — Org" then dates, or all on one line.
+    return lines(a) == lines(b) or flat(a) == flat(b)
 
 
 def write_proposal(markdown: str, details: dict) -> None:
