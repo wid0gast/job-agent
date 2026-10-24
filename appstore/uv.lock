@@ -163,7 +163,7 @@ wheels = [
 
 [[package]]
 name = "job-agent"
-version = "0.15.2"
+version = "0.16.0"
 source = { virtual = "." }
 dependencies = [
     { name = "cryptography" },
