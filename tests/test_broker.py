@@ -130,3 +130,13 @@ def test_a_reply_lost_in_blank_space_is_asked_afresh_in_plain_json_mode(monkeypa
     schema = {"type": "object", "required": ["title"], "properties": {"title": {"type": "string"}}}
     assert model.json("Tailor.", "{}", schema, "tailored_resume") == {"title": "Resume"}
     assert sent == [("json_schema", 2), ("json_object", 2)]  # Afresh: the blank reply isn't sent back.
+
+
+def test_required_empty_fields_a_reply_left_out_are_filled_in():
+    schema = {"type": "object", "required": ["sections"], "properties": {"sections": {"type": "array", "items": {
+        "type": "object", "required": ["title", "items", "score"],
+        "properties": {"title": {"type": "string"}, "items": {"type": "array"}, "score": {"type": "integer"}}}}}}
+    value = llm.defaults({"sections": [{"title": "Skills", "score": 1}, {"items": ["a"], "score": 2}]}, schema)
+    assert value == {"sections": [{"title": "Skills", "score": 1, "items": []}, {"items": ["a"], "score": 2, "title": ""}]}
+    with pytest.raises(ValueError):  # A missing number is still missing.
+        llm.check(llm.defaults({"sections": [{"title": "x", "items": []}]}, schema), schema)

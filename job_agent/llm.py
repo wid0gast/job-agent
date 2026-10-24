@@ -216,7 +216,7 @@ class OpenRouter:
                 raise RuntimeError("The model ran out of output tokens before answering "
                                    f"({body.get('model')}). Try another model.")
             try:
-                value = parse_json(text)
+                value = defaults(parse_json(text), schema)
                 check(value, schema)
                 if says_something(schema) and hollow(value):
                     # Strict schema mode let one model (DeepSeek V4.1 Flash) answer every fit check
@@ -400,6 +400,22 @@ def client(settings):
     if settings.api_key and settings.model:
         return OpenRouter(settings.api_key, settings.model, settings.spend_cap_usd, settings.data_collection)
     return None
+
+
+def defaults(value, schema: dict):
+    """Required lists and strings a reply left out, as empty: one model omitted the empty "items"
+    of a resume section the prompt said to leave empty, and the whole resume was refused."""
+    if isinstance(value, dict) and schema.get("type") == "object":
+        props = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value and props.get(key, {}).get("type") in ("array", "string"):
+                value[key] = [] if props[key]["type"] == "array" else ""
+        for key, sub in props.items():
+            if key in value:
+                value[key] = defaults(value[key], sub)
+    elif isinstance(value, list) and isinstance(schema.get("items"), dict):
+        value = [defaults(v, schema["items"]) for v in value]
+    return value
 
 
 def parse_json(text: str):
