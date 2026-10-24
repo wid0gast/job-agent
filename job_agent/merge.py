@@ -101,12 +101,17 @@ def merge(versions: list[tuple[str, str]], llm=None, log=print) -> dict:
     from .resumes import render, structure
 
     docs = [structure(md) for _, md in versions]
-    for doc in docs:  # A "Links" or "Contact" section is the contact line, written lower down.
-        for section in [s for s in doc["sections"] if re.fullmatch(r"(?i)\s*(links?|contact( info(rmation)?| details)?|profiles?)\s*", s["name"])]:
-            parts = [p for e in section["entries"] for l in [e["heading"] or "", *e["meta"], *e["items"]]
-                     for p in re.split(r"\s+[·|•]\s+|\s+", strip_bullet(l)) if p]
-            doc["header"].append(" · ".join(parts))
-            doc["sections"].remove(section)
+    linky = re.compile(r"(?i)\W*(links?|contact( info(rmation)?| details)?|profiles?)\W*")
+    for doc in docs:  # A "Links" or "Contact" section or entry is the contact line, written lower down.
+        for section in list(doc["sections"]):
+            whole = bool(linky.fullmatch(section["name"]))
+            for entry in [e for e in section["entries"] if whole or (e["heading"] and linky.fullmatch(e["heading"]))]:
+                parts = [p for l in [entry["heading"] or "", *entry["meta"], *entry["items"]]
+                         for p in re.split(r"\s+[·|•]\s+|\s+", strip_bullet(l)) if p and not linky.fullmatch(p)]
+                doc["header"].append(" · ".join(parts))
+                section["entries"].remove(entry)
+            if not section["entries"]:
+                doc["sections"].remove(section)
     labels = [label for label, _ in versions]
     base = copy.deepcopy(docs[-1])
     rank = len(versions) - 1  # Newest = highest.
