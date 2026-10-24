@@ -46,8 +46,8 @@ dates · location
 
 Put the resume's contact details on one line under the name, separated by
 " · ". If "Links in the PDF" are listed at the end, write that line with
-full URLs (e.g. https://www.linkedin.com/in/...) in place of their labels,
-and keep paper links next to their publications.
+full URLs (e.g. https://www.linkedin.com/in/...) in place of their labels.
+Leave other links out.
 
 Keep every fact and keep the wording exactly as written: fix only spacing,
 broken line breaks and hyphenation, including words the extraction split
@@ -305,6 +305,38 @@ def unpresent(markdown: str, source: str) -> str:
     return re.sub(r"\s*[–—-]+\s*(?:Present|Current|Now|Ongoing)\b", "", markdown)
 
 
+def unlinked(markdown: str) -> str:
+    """Links only in the contact line: one model attached paper links to the wrong papers, and
+    invented one."""
+    lines = markdown.splitlines()
+    first = next((i for i, l in enumerate(lines) if l.startswith("## ")), len(lines))
+    url = r"https?://\S+|www\.\S+"
+    for i in range(first, len(lines)):
+        lines[i] = re.sub(rf"\s*(?:\[({url})\]|\(({url})\)|\[([^\]]+)\]\(({url})\)|({url}))", lambda m: f" {m.group(3)}" if m.group(3) and not re.fullmatch(
+                              r"(?i)link|pdf|paper|arxiv|doi|code|slides|here", m.group(3).strip()) else "",
+                          lines[i]).rstrip()
+    return "\n".join(lines)
+
+
+def heading_from_pdf(markdown: str, source: str, unknown: list[str]) -> str:
+    """A short line with words the PDF doesn't have ("### NYU, New York, USA" where the PDF says
+    "New York University, New York, USA") takes the PDF's own line."""
+    if not unknown:
+        return markdown
+    raws = [r.strip() for r in source.split("\n\nLinks in the PDF:")[0].splitlines() if r.strip()]
+    lines = markdown.splitlines()
+    for i, line in enumerate(lines):
+        prefix = re.match(r"(#+ |[-*•] )?", line).group(0)
+        body = line[len(prefix):]
+        mine = words(body)
+        if not mine or len(body.split()) > 12 or not any(re.sub(r"[^a-z0-9]", "", w.lower()) in unknown for w in body.split()):
+            continue
+        best = max(raws, key=lambda r: len(mine & words(r)) / max(len(mine | words(r)), 1), default="")
+        if best and len(mine & words(best)) / len(mine) >= 0.6 and len(best.split()) <= 14:
+            lines[i] = prefix + re.sub(r"^[-–•*]\s*", "", best)
+    return "\n".join(lines)
+
+
 def add_links(markdown: str, source: str) -> str:
     """The PDF's contact links the conversion didn't write (one model kept the labels "marcuslee"
     and "a mlee" for linkedin.com/in/marcuslee and github.com/mlee): added to the contact line."""
@@ -351,7 +383,9 @@ def parse(llm, pdf: Path, log=print) -> dict:
         checked = problems(again["markdown"], [text])
         if sum(map(len, checked.values())) <= sum(map(len, found.values())):
             result, found = again, checked
-    result["markdown"] = unpresent(add_links(result["markdown"], text), text)
+    result["markdown"] = unpresent(add_links(unlinked(result["markdown"]), text), text)
+    unknown = problems(result["markdown"], [text])["unknown_words"]
+    result["markdown"] = heading_from_pdf(result["markdown"], text, unknown)
     if found.get("left_out"):  # Whatever's still missing, put back from the PDF's own lines.
         result["markdown"] = restore(result["markdown"], text, found["left_out"])
         found = problems(result["markdown"], [text])
@@ -502,7 +536,8 @@ def propose(include_master: bool = True, log=print, llm=None) -> dict:
     for v in versions:  # Repairs again here, for resumes read before them.
         text, markdown = rejoin(v["text"]), rejoin(v["markdown"])
         if v.get("text") != v.get("markdown"):
-            markdown = unpresent(add_links(restore(markdown, text, dropped_words(markdown, text)), text), text)
+            markdown = unpresent(add_links(restore(unlinked(markdown), text, dropped_words(markdown, text)), text), text)
+            markdown = heading_from_pdf(markdown, text, unsupported_words(markdown, [text]))
         sources.append((f"{v['source']} (content through {v['latest_date'] or 'unknown'})", markdown, text))
     log(f"  merging {len(sources)} version(s)")
     result = merge_versions([(label, md) for label, md, _ in sources], llm, log)

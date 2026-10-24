@@ -231,3 +231,14 @@ def test_headings_a_level_too_high_are_moved_down():
     md = "# JANE DOE\na@example.com\n# Experience\n## Engineer — Lumen\nJan 2024 – May 2025\n- Built X.\n# Skills\nGo"
     assert [l for l in rejoin(md).splitlines() if l.startswith("#")] == \
         ["# JANE DOE", "## Experience", "### Engineer — Lumen", "## Skills"]
+
+
+def test_links_stay_in_the_contact_line_and_invented_words_in_a_heading_take_the_pdfs_line():
+    from job_agent.resumes import heading_from_pdf, unlinked
+
+    md = ("# A\na@example.com · https://github.com/a\n## Publications\n- A. Paper. ACL, 2024. [https://x.org/1.pdf]\n"
+          "- B. Paper. EMNLP, 2025. [PDF](https://x.org/2.pdf)\n## Education\n### NYU, New York, USA\nMay 2028")
+    out = unlinked(md)
+    assert "https://github.com/a" in out and "x.org" not in out and out.splitlines()[4] == "- B. Paper. EMNLP, 2025."
+    text = "A\nEDUCATION\nNew York University, New York, USA\nMay 2028"
+    assert "### New York University, New York, USA" in heading_from_pdf(out, text, ["nyu"])
