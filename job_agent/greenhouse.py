@@ -168,7 +168,10 @@ def education_rows(page) -> None:
         if not rows or rows >= wanted or not button.count():
             return
         button.click()
-        page.locator(f'[id="school--{rows}"]').wait_for(timeout=5000)
+        try:
+            page.locator(f'[id="school--{rows}"]').wait_for(timeout=15000)
+        except Exception:  # noqa: BLE001 - a slow page (the class platform) once failed a whole prepare here.
+            return  # Rows it shows are still filled; a degree without one is yours to add before approving.
 
 
 def page_fields(page) -> list[dict]:
