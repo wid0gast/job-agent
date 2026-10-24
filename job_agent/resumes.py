@@ -136,12 +136,29 @@ def unspaced(letters: str) -> str:
     return " ".join(best[len(lower)]) if len(lower) in best else letters
 
 
+def levels(markdown: str) -> str:
+    """Headings one level too high ("# Experience", "## Role — Org") down a level, after the name;
+    a "## Role — Org" heading followed by its dates is a role. One model wrote them so."""
+    lines = markdown.splitlines()
+    first = next((i for i, l in enumerate(lines) if l.startswith("# ")), None)
+    if first is not None and sum(l.startswith("# ") for l in lines[first + 1:]) >= 2:
+        lines = lines[:first + 1] + [("#" + l if re.match(r"#{1,2} ", l) else l) for l in lines[first + 1:]]
+    from .merge import DATES
+
+    for i, line in enumerate(lines[:-1]):
+        if re.match(r"## .+ [—–|] .+", line) and DATES.search(lines[i + 1]) and \
+                len(DATES.sub("", lines[i + 1]).strip(" ·|,–—-")) < 30:
+            lines[i] = "#" + line
+    return "\n".join(lines)
+
+
 def rejoin(text: str) -> str:
     """Undo what PDF text extraction breaks, in code (one model kept "T owards" and "PyT orch"
     whatever the prompt said): kerned splits, "RoBERT a", "CPT -eligible", "author ,", an email
     written as a web address."""
     text = re.sub(r"^(#+ +)?((?:[A-Z&] ){3,}[A-Z&])$", lambda m: (m.group(1) or "") + unspaced(m.group(2).replace(" ", "")),
                   text, flags=re.M)  # "R E S E A R C H F O C U S", a heading spaced out for looks.
+    text = levels(text)
     text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
     text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.

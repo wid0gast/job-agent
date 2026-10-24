@@ -223,3 +223,11 @@ def test_schools_written_one_fact_per_line_are_read_as_schools():
         ("Example University", "Master of Science, Data Science", "May 2028", "Springfield, USA"),
         ("Other Institute of Technology", "Bachelor of Engineering. GPA: 3.7/4.0", "July 2024", "Shelbyville, USA")]
     assert sections[1]["kind"] == "skills" and sections[1]["skills"][0]["label"] == "Research"
+
+
+def test_headings_a_level_too_high_are_moved_down():
+    from job_agent.resumes import rejoin
+
+    md = "# JANE DOE\na@example.com\n# Experience\n## Engineer — Lumen\nJan 2024 – May 2025\n- Built X.\n# Skills\nGo"
+    assert [l for l in rejoin(md).splitlines() if l.startswith("#")] == \
+        ["# JANE DOE", "## Experience", "### Engineer — Lumen", "## Skills"]
