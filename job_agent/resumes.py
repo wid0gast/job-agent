@@ -39,13 +39,13 @@ You convert the text of one resume (extracted from a PDF, so spacing and line
 breaks may be broken) into clean Markdown with this structure:
 
 # Full Name
-(one line: the resume's own contact details, separated by " · ")
 ## Section (Education, Experience, Projects, Skills, ...)
 ### Title — Organization
 dates · location
 - bullet
 
-If "Links in the PDF" are listed at the end, write the contact line with
+Put the resume's contact details on one line under the name, separated by
+" · ". If "Links in the PDF" are listed at the end, write that line with
 full URLs (e.g. https://www.linkedin.com/in/...) in place of their labels,
 and keep paper links next to their publications.
 
@@ -146,6 +146,7 @@ def rejoin(text: str) -> str:
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
     text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
     text = re.sub(r"\bcontact line \(([^()\n]*)\)", r"\1", text, flags=re.I)  # A prompt's placeholder, copied.
+    text = re.sub(r"^\(([^()\n]*@[^()\n]*)\)", r"\1", text, flags=re.M)  # A contact line in brackets.
     text = re.sub(r"^(## +)([A-Z][A-Z &]+)$", lambda m: m.group(1) + section_case(m.group(2))
                   if set(m.group(2).lower().replace("&", " ").split()) <= SECTION_WORDS else m.group(0), text, flags=re.M)
     text = re.sub(r"(?<=[A-Za-z]) -(?=[a-z])", "-", text)
