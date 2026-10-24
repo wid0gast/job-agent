@@ -35,9 +35,10 @@ SCHEMA = {
     "type": "object",
     "properties": {"scores": {"type": "array", "items": {
         "type": "object",
-        "properties": {"id": {"type": "integer"}, "score": {"type": "integer"},
+        "properties": {"id": {"type": "integer"}, "kind_fits": {"type": "boolean"},
+                       "level_fits": {"type": "boolean"}, "score": {"type": "integer"},
                        "why": {"type": "string"}},
-        "required": ["id", "score", "why"], "additionalProperties": False}}},
+        "required": ["id", "kind_fits", "level_fits", "score", "why"], "additionalProperties": False}}},
     "required": ["scores"],
     "additionalProperties": False,
 }
@@ -164,7 +165,13 @@ def score(llm, tracker, limit: int | None = None, log=print) -> dict:
             if item is None:
                 continue
             details = json.loads(tracker.get(job["id"])["details"] or "{}")
-            details["match"] = {"score": max(0, min(100, int(item["score"]))),
+            value = max(0, min(100, int(item["score"])))
+            # Caps in code: one model said "but it's full-time" and still scored it 90.
+            if item.get("kind_fits") is False:
+                value = min(value, 35)
+            if item.get("level_fits") is False:
+                value = min(value, 45)
+            details["match"] = {"score": value,
                                 "why": item["why"][:120], "basis": current}
             tracker.update(job["id"], details=details)
             done += 1

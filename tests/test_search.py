@@ -243,3 +243,15 @@ def test_refresh_keeps_only_jobs_that_fit_and_ranks_them_batch_by_batch(tmp_path
                                                   "2 of 3 company boards read", "3 of 3 company boards read"]
     found = tracker.with_status("found")
     assert all("keyword" in json.loads(j["details"]) for j in found)  # Ranked as they landed.
+
+
+def test_the_wrong_kind_or_level_caps_a_match_score_in_code(tracker):
+    class Glowing(Ranker):  # Says what's wrong, scores it 90 anyway.
+        def json(self, system, user, schema, name):
+            return {"scores": [{"id": j["id"], "score": 90, "why": "x", "kind_fits": "Analyst" not in j["title"],
+                                "level_fits": "Engineer" not in j["title"]} for j in json.loads(user)["jobs"]]}
+
+    config.save_search({"description": "ML research internships"})
+    matching.score(Glowing(), tracker, log=lambda *_: None)
+    scores = {j["title"]: json.loads(j["details"])["match"]["score"] for j in tracker.all()}
+    assert scores == {"Research Intern": 90, "Marketing Analyst": 35, "AI Research Engineer": 45}
