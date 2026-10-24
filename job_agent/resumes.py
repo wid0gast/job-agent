@@ -236,16 +236,30 @@ def restore(markdown: str, source: str, missing: list[str]) -> str:
         r"(?i)(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t|tember)?|oct(ober)?|nov(ember)?"
         r"|dec(ember)?)\.?|[–—-]|present|current", t))
     lines = markdown.splitlines()
-    for raw in source.split("\n\nLinks in the PDF:")[0].splitlines():
-        tokens = raw.split()
-        if not any(key(t) in missing for t in tokens):
-            continue
+
+    def match(raw: str):
         best, share = None, 0.0
         for i, line in enumerate(lines):
             mine = words(line)
             if len(mine) >= 2 and len(mine & words(raw)) / len(mine) > share:
                 best, share = i, len(mine & words(raw)) / len(mine)
-        if best is None or share < 0.6:
+        return best if share >= 0.6 else None
+
+    raws = [r for r in source.split("\n\nLinks in the PDF:")[0].splitlines() if r.strip()]
+    for n, raw in enumerate(raws):
+        tokens = raw.split()
+        if not any(key(t) in missing for t in tokens):
+            continue
+        best = match(raw)
+        if best is None and sum(key(t) in missing for t in tokens) >= 2:
+            # The whole line is missing: put it back beside its neighbour ("Work Authorization: …").
+            after = match(raws[n - 1]) if n else None
+            before = match(raws[n + 1]) if n + 1 < len(raws) else None
+            at = after + 1 if after is not None else before
+            if at is not None:
+                lines.insert(at, raw.strip())
+            continue
+        if best is None:
             continue
         have = re.sub(r"[^a-z0-9]", "", lines[best].lower())
         absent = [bool(key(t)) and key(t) not in have and not dated(t) for t in tokens]
