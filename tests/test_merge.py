@@ -210,8 +210,8 @@ def test_contact_links_the_conversion_skipped_are_added_and_bare_handles_go():
 def test_a_venue_on_its_own_line_joins_its_bullet_and_a_links_section_joins_the_contact_line():
     from job_agent.resumes import rejoin
 
-    assert rejoin("- Built corpora.\nNLP4X @ ACL 2025\n- Built a parser.\n### Stripe 2022") == \
-        "- Built corpora. (NLP4X @ ACL 2025)\n- Built a parser.\n### Stripe\n2022"  # A role stays a role.
+    assert rejoin("- Built corpora.\nNLPW @ ACL 2025\n- Built a parser.\n### Stripe 2022") == \
+        "- Built corpora. (NLPW @ ACL 2025)\n- Built a parser.\n### Stripe\n2022"  # A role stays a role.
     md = merged("# A\na@example.com\n## Skills\nGo\n", "# A\n## Skills\nGo\n## Links\na@example.com https://github.com/a\n")["markdown"]
     assert md.splitlines()[1] == "a@example.com · https://github.com/a" and "## Links" not in md
 

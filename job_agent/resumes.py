@@ -145,7 +145,7 @@ def rejoin(text: str) -> str:
     text = KERNED.sub(lambda m: m.group(0) if m.group(2) in LONE else m.group(1) + m.group(2), text)
     text = re.sub(r"([a-z][A-Z]{2,}) ([a-z])\b", r"\1\2", text)  # "RoBERT a" (not "BERT a model")
     text = re.sub(r"(?<=[a-z,])\n(?=[a-z])", " ", text)  # A sentence wrapped onto the next line.
-    # A venue set to the right of its bullet, read onto a line of its own: "NLP4X @ ACL 2025".
+    # A venue set to the right of its bullet, read onto a line of its own: "NLPW @ ACL 2025".
     text = re.sub(r"^(\s*[-–•*] .*[^)\s])\n(?:[-–•*] +)?((?=[^\n]*(?:@|\b[A-Z]{2,}\b))(?:[A-Z][A-Za-z]*|@) "
                   r"(?:(?:[A-Z][A-Za-z]*|@) ){0,4}(?:19|20)\d\d)$", r"\1 (\2)", text, flags=re.M)
     text = re.sub(r"\bcontact line \(([^()\n]*)\)", r"\1", text, flags=re.I)  # A prompt's placeholder, copied.
