@@ -149,10 +149,10 @@ def test_merging_keeps_a_summary_and_never_doubles_a_line():
 
     older = ("# A B\n## Professional Summary\nAI Engineer with 2+ years developing production LLM systems "
              "spanning agentic RAG and retrieval pipelines.\n## Education\nMaster of Science, Data Science. May 2028\n"
-             "## Awards & Leadership\n- Secretary (Debating Society), Chief Editor (Cactus Flower Magazine).\n")
-    newer = ("# A B\n## Experience\n### AI Research Engineer — AlphaSense\nJuly 2024 – June 2026\n- Built search.\n"
+             "## Awards & Leadership\n- Secretary (Debating Society), Chief Editor (Campus Review Magazine).\n")
+    newer = ("# A B\n## Experience\n### AI Research Engineer — Example Corp\nJuly 2024 – June 2026\n- Built search.\n"
              "## Education\n### New York University — New York, USA\nMaster of Science, Data Science. May 2028\n"
-             "## Activities & Leadership\n- Secretary, The Debating Society\n- Chief Editor, Cactus Flower Magazine\n")
+             "## Activities & Leadership\n- Secretary, The Debating Society\n- Chief Editor, Campus Review Magazine\n")
     md = resumes.merge_versions([("old", older), ("new", newer)])["markdown"]
     assert "AI Engineer with 2+ years" in md
     assert md.count("Master of Science, Data Science") == 1 and "Awards & Leadership" not in md
@@ -161,25 +161,25 @@ def test_merging_keeps_a_summary_and_never_doubles_a_line():
 def test_a_conversion_that_leaves_out_a_name_is_caught():
     from job_agent import resumes
 
-    text = "Research Intern, National University of Singapore with Prof. Kokil Jaidka Aug 2023 – Jul 2024"
-    md = "### Research Intern — National University of Singapore\nAug 2023 – Jul 2024"
-    assert resumes.problems(md, [text])["left_out"] == ["prof", "kokil", "jaidka"]
-    assert not resumes.problems(md + ", with Prof. Kokil Jaidka", [text])["left_out"]
+    text = "Research Intern, Example University with Prof. Maria Lopez Aug 2023 – Jul 2024"
+    md = "### Research Intern — Example University\nAug 2023 – Jul 2024"
+    assert resumes.problems(md, [text])["left_out"] == ["prof", "maria", "lopez"]
+    assert not resumes.problems(md + ", with Prof. Maria Lopez", [text])["left_out"]
 
 
 def test_two_cuts_of_one_resume_merge_into_the_fuller_and_keep_every_role():
     # A 1-page and a 2-page cut with the same dates: the condensed one became the base and its
-    # short lines "covered" the fuller ones; and "Machine Learning Intern — Clientell" matched
+    # short lines "covered" the fuller ones; and "Machine Learning Intern — Northwind" matched
     # "Machine Learning Research Intern — Adobe MDSR Lab" and vanished into it.
     from job_agent import resumes
 
     short = ("# A B\n## Experience\n### Machine Learning Research Intern — Adobe MDSR Lab\nMay 2023 – Aug 2023\n"
              "- Built a legal NLP pipeline.\n")
     full = ("# A B\n## Experience\n### Machine Learning Research Intern — Adobe MDSR Lab\nMay 2023 – Aug 2023\n"
-            "- Built a legal NLP pipeline for Indian court judgments with graph neural networks.\n"
-            "### Machine Learning Intern — Clientell Technologies\nMay 2022 – Aug 2022\n- Shipped churn models.\n")
+            "- Built a legal NLP pipeline for court judgments with graph neural networks.\n"
+            "### Machine Learning Intern — Northwind Analytics\nMay 2022 – Aug 2022\n- Shipped churn models.\n")
     items = [{"latest_date": "2026-06", "markdown": md, "file_modified": "2026-10-01", "stem": stem}
              for stem, md in (("full", full), ("short", short))]  # Listed in the wrong order on purpose.
     ordered = sorted(items, key=lambda d: (d["latest_date"] or "", len(d["markdown"]), d["file_modified"]))
     md = resumes.merge_versions([(d["stem"], d["markdown"]) for d in ordered])["markdown"]
-    assert "Indian court judgments" in md and "Clientell Technologies" in md and "Shipped churn models." in md
+    assert "court judgments" in md and "Northwind Analytics" in md and "Shipped churn models." in md
