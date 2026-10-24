@@ -300,8 +300,8 @@ candidate says they want, checking in this order:
    manager, years they lack) is below 50; one far below their level too.
 3. Field and role: how close the work is to the roles and field they describe.
 4. Place: in or near their locations, or remote if they'd take remote.
-80+ is clearly what they asked for on all four, 50-79 plausible, below 50 off
-target. Be consistent across the list. why: at most 12 words to the candidate
+kind_fits and level_fits answer 1 and 2 for each job. 80+ is clearly what they
+asked for on all four, 50-79 plausible, below 50 off target. Be consistent across the list. why: at most 12 words to the candidate
 ("you", never he or she), naming what decided the score (e.g. "Full-time, but
 you want a Summer 2027 internship"), never just the title again.
 """.strip()
