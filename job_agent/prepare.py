@@ -641,8 +641,10 @@ def select(ctx, job: dict, description: str, profile: dict, master: str, pages: 
             else [skills[k] for k in choice["skills"]]
         if out["text"] or out["entries"] or out["items"] or out["skills"]:
             sections.append(out)
-    for sec in doc["sections"]:  # Education always, every degree, before Skills if it was left out.
-        if re.search(r"education", sec["title"], re.I) and sec["id"] not in used:
+    research = bool(re.search(r"research|scientist|phd", job.get("title", ""), re.I))
+    for sec in doc["sections"]:  # Education always, every degree; publications for research roles.
+        if (re.search(r"education", sec["title"], re.I) or (research and re.search(r"publication", sec["title"], re.I))) \
+                and sec["id"] not in used:
             at = next((i for i, s_ in enumerate(sections) if s_["kind"] == "skills"), len(sections))
             sections.insert(at, {**{k: sec[k] for k in ("title", "kind", "text", "items", "skills")}, "entries": [
                 {k: e[k] for k in ("title", "organization", "dates", "location", "bullets")} for e in sec["entries"]]})
