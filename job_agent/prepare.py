@@ -547,45 +547,100 @@ def select(ctx, job: dict, description: str, profile: dict, master: str, pages: 
     if problem:
         request["fix_this"] = problem
     reply = ctx.llm.json(SELECT_PROMPT, json.dumps(request, ensure_ascii=False), SELECT_SCHEMA, "tailored_resume")
-    by_id = {sec["id"]: sec for sec in doc["sections"]}
-    sections, used, paragraphs = [], set(), 0
+    # Every chosen line goes back under its own section and role, by id or by its text (one model
+    # answered with the bullets' text, and put roles from several sections under one).
+    words = lambda t: set(re.findall(r"[a-z0-9]+", (t or "").lower()))  # noqa: E731
+    home, lines = {}, []  # id -> (section, entry or None); (kind, id, text) for matching by text
+    for sec in doc["sections"]:
+        home[sec["id"]] = (sec, None)
+        for entry in sec.get("entries", []):
+            home[entry["id"]] = (sec, entry)
+            lines += [("B", b, t) for b, t in zip(entry["bullet_ids"], entry["bullets"])]
+            for b in entry["bullet_ids"]:
+                home[b] = (sec, entry)
+        lines += [("I", i, t) for i, t in zip(sec["item_ids"], sec.get("items", []))]
+        lines += [("K", k, f"{x['label']}: {x['items']}") for k, x in zip(sec["skill_ids"], sec.get("skills", []))]
+        for i in sec["item_ids"] + sec["skill_ids"]:
+            home[i] = (sec, None)
+
+    def resolve(ref: str, kinds: str) -> str | None:
+        ref = (ref or "").strip()
+        if ref in home and ref[0] in kinds:
+            return ref
+        mine = words(ref)
+        if len(mine) < 2:  # A single skill ("PyTorch"): the skill line that lists it.
+            hit = next((i for k, i, t in lines if k == "K" and k in kinds and ref.lower() in t.lower()), None)
+            return hit
+        scored = [(len(mine & words(t)) / len(mine), i) for k, i, t in lines if k in kinds]
+        share, best = max(scored, default=(0, None))
+        return best if share >= 0.8 or (share >= 0.5 and "K" in kinds) else None
+
+    order: list[str] = []  # section ids, in the order first chosen
+    picked: dict[str, dict] = {}  # section id -> {"entries": {entry id: [bullet ids]}, "items": [], "skills": [], "whole": bool}
+
+    def pick(sec_id: str) -> dict:
+        if sec_id not in picked:
+            order.append(sec_id)
+            picked[sec_id] = {"entries": {}, "items": [], "skills": [], "whole": False}
+        return picked[sec_id]
+
     for chosen in reply.get("sections", []):
-        sec = by_id.get(chosen.get("id"))
-        if sec is None or sec["id"] in used:
-            continue  # Unknown or repeated: ignored.
+        sec_id = chosen.get("id") if chosen.get("id", "").startswith("S") and chosen.get("id") in home else None
+        found = 0
+        for e in chosen.get("entries", []):
+            eid = e.get("id") if e.get("id") in home and e.get("id", "").startswith("E") else None
+            for ref in e.get("bullets", []):
+                b = resolve(ref, "B")
+                if b:
+                    sec, entry = home[b]
+                    pick(sec["id"])["entries"].setdefault(entry["id"], [])
+                    if b not in picked[sec["id"]]["entries"][entry["id"]]:
+                        picked[sec["id"]]["entries"][entry["id"]].append(b)
+                    found += 1
+            if eid:
+                pick(home[eid][0]["id"])["entries"].setdefault(eid, [])
+                found += 1
+        for ref in chosen.get("items", []):
+            i = resolve(ref, "I")
+            if i and i not in pick(home[i][0]["id"])["items"]:
+                picked[home[i][0]["id"]]["items"].append(i)
+                found += 1
+        for ref in chosen.get("skills", []):
+            k = resolve(ref, "K")
+            if k and k not in pick(home[k][0]["id"])["skills"]:
+                picked[home[k][0]["id"]]["skills"].append(k)
+                found += 1
+        if sec_id and not found:
+            pick(sec_id)["whole"] = True  # The section itself, with nothing inside chosen: all of it.
+        elif sec_id:
+            pick(sec_id)
+    sections, used, paragraphs = [], set(), 0
+    for sec_id in order:
+        sec, _ = home[sec_id]
+        choice = picked[sec_id]
         if sec["kind"] == "paragraph":
             paragraphs += 1
             if paragraphs > 1:
                 continue
-        used.add(sec["id"])
+        used.add(sec_id)
+        out = {"title": sec["title"], "kind": sec["kind"], "text": sec.get("text", ""), "entries": [], "items": [], "skills": []}
         entries = {e["id"]: e for e in sec.get("entries", [])}
+        chosen_entries = list(entries) if choice["whole"] else list(choice["entries"])
+        if sec["kind"] == "education" or re.search(r"education", sec["title"], re.I):
+            chosen_entries += [e for e in entries if e not in chosen_entries]  # Every degree.
+        for eid in chosen_entries:
+            entry = entries[eid]
+            bullets = dict(zip(entry["bullet_ids"], entry["bullets"]))
+            ids = choice["entries"].get(eid) or ([] if not choice["whole"] else entry["bullet_ids"])
+            kept = [bullets[b] for b in ids if b in bullets] or entry["bullets"][:1]
+            out["entries"].append({k: entry[k] for k in ("title", "organization", "dates", "location")} | {"bullets": kept})
         items = dict(zip(sec["item_ids"], sec.get("items", [])))
         skills = dict(zip(sec["skill_ids"], sec.get("skills", [])))
-        out = {"title": sec["title"], "kind": sec["kind"], "text": sec.get("text", ""), "entries": [], "items": [], "skills": []}
-        for pick in chosen.get("entries", []):
-            entry = entries.pop(pick.get("id"), None)
-            if entry is None:
-                continue
-            bullets = dict(zip(entry["bullet_ids"], entry["bullets"]))
-            kept = [bullets.pop(b) for b in dict.fromkeys(pick.get("bullets", [])) if b in bullets]
-            if entry["bullets"] and not kept:
-                kept = entry["bullets"][:1]  # A role you keep shows at least one line.
-            out["entries"].append({k: entry[k] for k in ("title", "organization", "dates", "location")} | {"bullets": kept})
-        if sec["kind"] == "education":  # Every degree.
-            out["entries"] += [{k: e[k] for k in ("title", "organization", "dates", "location", "bullets")} for e in entries.values()]
-        out["items"] = [items.pop(i) for i in dict.fromkeys(chosen.get("items", [])) if i in items]
-        out["skills"] = [skills.pop(k) for k in dict.fromkeys(chosen.get("skills", [])) if k in skills]
-        if sec["kind"] == "skills" and not out["skills"]:
-            out["skills"] = list(skills.values())
+        out["items"] = list(items.values()) if choice["whole"] else [items[i] for i in choice["items"]]
+        out["skills"] = list(skills.values()) if choice["whole"] or (sec["kind"] == "skills" and not choice["skills"]) \
+            else [skills[k] for k in choice["skills"]]
         if out["text"] or out["entries"] or out["items"] or out["skills"]:
             sections.append(out)
-    trace.check("The resume is chosen from your master's own lines", bool(sections),
-                f"{sum(len(e['bullets']) for s in sections for e in s['entries'])} bullets and "
-                f"{sum(len(s['items']) for s in sections)} lines chosen, in order; none written." if sections else
-                "Nothing usable was chosen; your master resume is used as is.")
-    if not sections:
-        return {**latex.from_markdown(master), "untailored": True, "invented": [], "matched": [], "emphasized": [],
-                "gaps": ["Nothing usable was chosen; this is your master resume as is."]}
     for sec in doc["sections"]:  # Education always, every degree, before Skills if it was left out.
         if re.search(r"education", sec["title"], re.I) and sec["id"] not in used:
             at = next((i for i, s_ in enumerate(sections) if s_["kind"] == "skills"), len(sections))

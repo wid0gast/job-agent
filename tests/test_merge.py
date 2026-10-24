@@ -314,3 +314,24 @@ def test_a_resume_chosen_by_id_is_built_from_the_masters_own_lines():
     assert out["sections"][1]["items"] == ["A. Paper two. EMNLP, 2025."]
     assert out["sections"][2]["entries"][0]["bullets"] == ["Built the ranking service for 2M users."]
     assert out["sections"][2]["entries"][0]["organization"] == "Lumen, with Prof. Lee"
+
+
+def test_lines_chosen_by_their_text_and_under_the_wrong_section_go_home():
+    from types import SimpleNamespace
+
+    from job_agent import prepare
+
+    master = MASTER + "## Publications\n- A. Paper one. ACL, 2024.\n- A. Paper two. EMNLP, 2025.\n"
+
+    class Texty:  # As DeepSeek answered: the lines' text, and everything under the summary's id.
+        def json(self, system, user, schema, name):
+            return {"sections": [{"id": "S1", "entries": [{"id": "E1", "bullets": ["Built the ranking service for 2M users."]}],
+                                  "items": ["A. Paper two. EMNLP, 2025."], "skills": ["Python"]}],
+                    "matched": [], "emphasized": [], "gaps": []}
+
+    out = prepare.select(SimpleNamespace(llm=Texty()), {"company": "Acme", "title": "Engineer"}, "", {}, master, 1)
+    by_title = {s["title"]: s for s in out["sections"]}
+    assert by_title["Experience"]["entries"][0]["bullets"] == ["Built the ranking service for 2M users."]
+    assert by_title["Publications"]["items"] == ["A. Paper two. EMNLP, 2025."]
+    assert by_title["Skills"]["skills"] == [{"label": "Languages", "items": "Python, Go"}]
+    assert "Education" in by_title and "Professional Summary" in by_title
