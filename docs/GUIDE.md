@@ -44,8 +44,12 @@ Then:
 2. Build your **master resume** (everything true you might ever include) in
    one of two ways. Either upload your resume PDFs on the dashboard's
    Resumes page (or `uv run job-agent resumes import a.pdf b.pdf`): each is
-   read, then all are merged, newest winning where they disagree, and you
-   review the result before it replaces `profile/resume.md`. Or write it
+   read, then all are merged into one: nothing lost, each accomplishment once
+   (the fullest wording kept), newest winning where they disagree, and you
+   review the result (with what was combined, and any possible repeats)
+   before it replaces `profile/resume.md`. Re-uploading later merges with your
+   current master, so edits you made by hand stay. How it's held to that:
+   [merge-guide.md](merge-guide.md) and [merge-eval.md](merge-eval.md). Or write it
    yourself in the editor on the Resumes page, which also lets you change it
    any time (the previous version goes to `profile/resume-history/`, and your
    profile facts are re-read from it). The agent cuts and reorders it per job
@@ -390,7 +394,8 @@ emailed code).
 | `job_agent/dashboard.py` | The local dashboard, including the Assistant tab |
 | `job_agent/profile_sync.py` | Profile facts from the master resume, work authorization rules |
 | `job_agent/history.py` | Application record: import a job sheet, export, outcome stats |
-| `job_agent/resumes.py` | Resume PDFs → Markdown → merged master, with truth checks |
+| `job_agent/resumes.py` | Resume PDFs → Markdown, with truth checks |
+| `job_agent/merge.py` | Several resume versions → one master (code for structure, the model only groups repeats) |
 | `job_agent/llm.py` | Claude clients (Claude Code headless, Anthropic API): JSON replies, agent turns, spending cap |
 | `job_agent/matching.py` | Ranks jobs against the description on the Search page |
 | `job_agent/latex.py` | Resumes in your LaTeX template, fitted to one or two pages |

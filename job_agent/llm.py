@@ -35,6 +35,7 @@ TIERS = {"light": "claude-haiku-5-5", "standard": "claude-sonnet-5-5", "best": "
 TASKS = {
     "match_scores": ("light", "low"),          # ~60 job titles per call; the fit check reads postings later
     "resume_markdown": ("standard", "low"),    # a PDF's text to Markdown, wording kept
+    "resume_merge": ("standard", "medium"),    # which lines of several resume versions say the same thing
     "resume_facts": ("standard", "low"),       # contact, education, work authorization: used in every form
     "research": ("standard", "medium"),        # agent: reads company pages, keeps quoted facts
     "assistant": ("standard", "medium"),       # the chat (pick per chat); the writing is done by Opus steps

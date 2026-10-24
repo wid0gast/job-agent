@@ -1377,13 +1377,25 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
             warn.append(f"Words that are in none of your resumes: {', '.join(checks['unknown_words'][:20])}")
         if checks.get("left_out"):
             warn.append(f"Words from your resume that the proposal left out: {', '.join(checks['left_out'][:20])}")
+        possible = proposal.get("possible") or []
+        possible_card = (
+            '<div class="flash warn"><b>Possible repeats, both kept.</b> Each pair may be one accomplishment, '
+            "but each wording says something the other doesn't (a number, a name). Keep one, or both, by "
+            "editing below:<ul>" + "".join("<li>" + " <b>/</b> ".join(esc(t) for t in g["lines"]) + "</li>"
+                                           for g in possible) + "</ul></div>") if possible else ""
+        combined = proposal.get("combined") or []
+        combined_card = (
+            f"<details><summary>Repeats combined ({len(combined)}): the fuller wording kept</summary><ul>"
+            + "".join(f"<li>{esc(' / '.join(c['kept']))}<div class=muted>left out: "
+                      f"{esc(' / '.join(c['left_out']))}</div></li>" for c in combined) + "</ul></details>") if combined else ""
         review = f"""<div class=card><h2>Proposed master resume</h2>
         <p class=muted>Merged from, oldest first: {esc("; ".join(proposal["sources"]))}</p>
         {"".join(f'<div class="flash bad">{esc(w)}</div>' for w in warn)}
         <p><b>How it was merged:</b></p><ul>{"".join(f"<li>{esc(c)}</li>" for c in proposal["changes"])}</ul>
-        <p><b>Kept from older versions</b> <span class=muted>(nothing in the newest version
-        covers these; if one says the same thing as a newer line, delete it below)</span>:</p>
+        {possible_card}
+        <p><b>Kept from older versions</b> <span class=muted>(only an older version has these)</span>:</p>
         <ul>{"".join(f"<li>{esc(k['line'])} <span class=muted>({esc(k['from'])})</span></li>" for k in proposal.get("kept", [])) or "<li>None</li>"}</ul>
+        {combined_card}
         <div class=row style="margin:12px 0">{form(app, "/resumes/accept", "Accept as master resume", primary=True)}
         {form(app, "/resumes/discard", "Discard")}</div>
         <details open><summary>Changes against your current master</summary>

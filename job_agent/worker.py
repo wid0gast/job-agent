@@ -151,7 +151,7 @@ def _sync_profile(task, ctx, log) -> str:
 def _merge_resumes(task, ctx, log) -> str:
     from . import resumes
 
-    proposal = resumes.propose(log=log)
+    proposal = resumes.propose(log=log, llm=ctx.llm)
     return f"Proposed master resume ready for review ({len(proposal['kept'])} line(s) kept from older versions)."
 
 

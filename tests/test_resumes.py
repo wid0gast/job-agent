@@ -149,10 +149,10 @@ def test_merging_keeps_a_summary_and_never_doubles_a_line():
 
     older = ("# A B\n## Professional Summary\nAI Engineer with 2+ years developing production LLM systems "
              "spanning agentic RAG and retrieval pipelines.\n## Education\nMaster of Science, Data Science. May 2028\n"
-             "## Awards & Leadership\n- Secretary (Debating Society), Chief Editor (Campus Review Magazine).\n")
+             "## Awards & Leadership\n- Captain (Chess Club), Editor (Student Newspaper).\n")
     newer = ("# A B\n## Experience\n### AI Research Engineer — Example Corp\nJuly 2024 – June 2026\n- Built search.\n"
              "## Education\n### New York University — New York, USA\nMaster of Science, Data Science. May 2028\n"
-             "## Activities & Leadership\n- Secretary, The Debating Society\n- Chief Editor, Campus Review Magazine\n")
+             "## Activities & Leadership\n- Captain, The Chess Club\n- Editor, Student Newspaper\n")
     md = resumes.merge_versions([("old", older), ("new", newer)])["markdown"]
     assert "AI Engineer with 2+ years" in md
     assert md.count("Master of Science, Data Science") == 1 and "Awards & Leadership" not in md
@@ -170,12 +170,12 @@ def test_a_conversion_that_leaves_out_a_name_is_caught():
 def test_two_cuts_of_one_resume_merge_into_the_fuller_and_keep_every_role():
     # A 1-page and a 2-page cut with the same dates: the condensed one became the base and its
     # short lines "covered" the fuller ones; and "Machine Learning Intern — Northwind" matched
-    # "Machine Learning Research Intern — Adobe MDSR Lab" and vanished into it.
+    # "Machine Learning Research Intern — Contoso Research Lab" and vanished into it.
     from job_agent import resumes
 
-    short = ("# A B\n## Experience\n### Machine Learning Research Intern — Adobe MDSR Lab\nMay 2023 – Aug 2023\n"
+    short = ("# A B\n## Experience\n### Machine Learning Research Intern — Contoso Research Lab\nMay 2023 – Aug 2023\n"
              "- Built a legal NLP pipeline.\n")
-    full = ("# A B\n## Experience\n### Machine Learning Research Intern — Adobe MDSR Lab\nMay 2023 – Aug 2023\n"
+    full = ("# A B\n## Experience\n### Machine Learning Research Intern — Contoso Research Lab\nMay 2023 – Aug 2023\n"
             "- Built a legal NLP pipeline for court judgments with graph neural networks.\n"
             "### Machine Learning Intern — Northwind Analytics\nMay 2022 – Aug 2022\n- Shipped churn models.\n")
     items = [{"latest_date": "2026-06", "markdown": md, "file_modified": "2026-10-01", "stem": stem}
