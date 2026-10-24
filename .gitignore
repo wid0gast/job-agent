@@ -18,3 +18,5 @@ appstore/bin/
 .DS_Store
 # The clean demo copy used for README screenshots.
 /.demo*/
+evals/merge/.cache/
+evals/merge/results/

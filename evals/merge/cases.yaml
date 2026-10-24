@@ -1,0 +1,367 @@
+# Merge eval: made-up candidates, each with several resume versions (rendered to PDFs by
+# scripts/merge_eval.py) and an answer key. See docs/merge-guide.md for the rules graded.
+#
+# Key fields:
+#   once:     each entry is one fact; any of its phrases may word it; it must appear on exactly one line.
+#   keep:     phrases that must be present (the fuller wording, details only one version has).
+#   absent:   phrases that must not be present (the older side of a conflict).
+#   skills:   each must appear exactly once in the skills section.
+#   first_section_is_summary: the merged resume opens with a summary-type section.
+
+priya:
+  about: Two cuts (1-page and 2-page) of one resume with the same dates.
+  versions:
+    - style: latex
+      date: 2026-06
+      markdown: |
+        # PRIYA RAMAN
+        priya.raman@example.com · linkedin.com/in/priyaraman · github.com/praman
+
+        ## PROFESSIONAL SUMMARY
+        Machine learning engineer with 3 years building search and ranking systems, focused on retrieval quality and evaluation.
+
+        ## EXPERIENCE
+        ### Machine Learning Engineer — Lumen Health
+        Jan 2024 – Present · Boston, MA
+        - Owned the clinical search reranker end to end, lifting top-3 accuracy from 71% to 84% across 1.2M monthly queries.
+        - Built the evaluation harness the team used to grade every ranking change before release.
+        ### Data Scientist — Orbit Retail
+        Jun 2022 – Dec 2023 · New York, NY
+        - Forecasted weekly demand for 4,000 stores, cutting stockouts by 18%.
+
+        ## EDUCATION
+        ### Carnegie Mellon University — Pittsburgh, PA
+        M.S. Machine Learning, May 2022
+
+        ## SKILLS
+        - **Machine Learning:** PyTorch, ranking, evaluation design, LoRA fine-tuning
+        - **Engineering:** Python, SQL, Docker, Git
+    - style: html
+      date: 2026-06
+      markdown: |
+        # PRIYA RAMAN
+        priya.raman@example.com · +1 617 555 0142 · linkedin.com/in/priyaraman · github.com/praman · praman.dev
+
+        ## RESEARCH FOCUS
+        Retrieval and ranking for high-stakes domains, with a focus on evaluation that predicts real user outcomes.
+
+        ## EXPERIENCE
+        ### Machine Learning Engineer — Lumen Health
+        Jan 2024 – Present · Boston, MA
+        - Redesigned the clinical search reranker as a two-stage cross-encoder pipeline; raised top-3 accuracy from 71% to 84% on 1.2M monthly queries and cut p95 latency by 40 ms.
+        - Created an offline evaluation harness with 6,000 clinician-labeled queries that gates every ranking release.
+        - Mentored two interns on retrieval experiments.
+        ### Data Scientist — Orbit Retail
+        Jun 2022 – Dec 2023 · New York, NY
+        - Built a hierarchical demand forecasting model for 4,000 stores that reduced stockouts by 18% and overstock by 9%.
+        - Ran 14 pricing A/B tests with the merchandising team.
+        ### Research Assistant — CMU Language Technologies Institute, with Prof. Daniel Ortiz
+        Sep 2021 – May 2022
+        - Studied annotation noise in medical QA datasets and co-authored a workshop paper.
+
+        ## PUBLICATIONS
+        - P. Raman, D. Ortiz. Label Noise in Medical QA Benchmarks. Clinical NLP Workshop, 2022.
+
+        ## EDUCATION
+        ### Carnegie Mellon University — Pittsburgh, PA
+        Master of Science in Machine Learning, May 2022 · GPA 3.8/4.0
+        ### University of Michigan — Ann Arbor, MI
+        B.S. Computer Science, May 2020
+
+        ## SKILLS
+        - **Modeling:** PyTorch, Hugging Face Transformers, cross-encoders, LoRA fine-tuning
+        - **Systems:** Python, SQL, Docker, Kubernetes, Airflow
+        - **Evaluation:** offline metrics, A/B testing, annotation design
+  key:
+    once:
+      - [Owned the clinical search reranker, two-stage cross-encoder pipeline]
+      - [evaluation harness the team used, "offline evaluation harness with 6,000"]
+      - [Mentored two interns]
+      - [Forecasted weekly demand, hierarchical demand forecasting]
+      - [14 pricing A/B tests]
+      - [annotation noise in medical QA]
+      - [Label Noise in Medical QA Benchmarks]
+      - [Machine learning engineer with 3 years]
+      - [Retrieval and ranking for high-stakes]
+      - ["M.S. Machine Learning, May 2022", Master of Science in Machine Learning]
+      - [University of Michigan]
+      - [Daniel Ortiz]
+    keep: [p95 latency, "6,000 clinician-labeled", overstock by 9%, GPA 3.8, "+1 617 555 0142", praman.dev, Daniel Ortiz]
+    skills: [PyTorch, Python, SQL, Docker, Git, Kubernetes, Airflow, LoRA, Hugging Face]
+    first_section_is_summary: true
+
+marcus:
+  about: An old (2024) and a new (2026) resume of a software engineer.
+  versions:
+    - style: html
+      date: 2024-03
+      markdown: |
+        # MARCUS LEE
+        marcus.lee@example.com · (415) 555-0100 · github.com/mlee
+
+        ## EXPERIENCE
+        ### Software Engineer — Brightwave
+        Jul 2022 – Present · San Francisco, CA
+        - Built the billing service in Go, handling $3M in monthly payments.
+        - Reduced deploy time from 40 to 12 minutes by parallelizing CI.
+        ### Software Engineering Intern — Tidal Labs
+        May 2021 – Aug 2021 · Oakland, CA
+        - Wrote a Slack bot for on-call handoffs used by 60 engineers.
+
+        ## PROJECTS
+        ### Trailmap
+        - Open-source hiking route planner with 1,200 GitHub stars.
+
+        ## EDUCATION
+        ### UC Davis — Davis, CA
+        B.S. Computer Science, Jun 2022 · GPA 3.6
+
+        ## SKILLS
+        Go, Python, PostgreSQL, Kubernetes
+    - style: latex
+      date: 2026-02
+      markdown: |
+        # MARCUS LEE
+        marcus.lee@example.com · (415) 555-0199 · github.com/mlee · linkedin.com/in/marcuslee
+
+        ## EXPERIENCE
+        ### Senior Software Engineer — Northpeak
+        Apr 2025 – Present · Remote
+        - Lead the payments platform team of 5 engineers.
+        - Migrated 30 services to an event-driven architecture on Kafka.
+        ### Software Engineer II — Brightwave
+        Jan 2024 – Mar 2025 · San Francisco, CA
+        - Designed the invoicing API used by 900 business customers.
+        ### Software Engineer — Brightwave
+        Jul 2022 – Dec 2023 · San Francisco, CA
+        - Built the Go billing service that processes $3M in payments every month.
+        - Parallelized CI to cut deploys from 40 minutes to 12.
+
+        ## EDUCATION
+        ### UC Davis — Davis, CA
+        B.S. Computer Science, Jun 2022
+
+        ## SKILLS
+        Go, Python, Kafka, PostgreSQL, Kubernetes, Terraform
+  key:
+    once:
+      - [billing service in Go, Go billing service]
+      - [Reduced deploy time, Parallelized CI]
+      - [payments platform team of 5]
+      - [Migrated 30 services]
+      - [invoicing API]
+      - [Slack bot]
+      - ["1,200 GitHub stars"]
+      - [Tidal Labs]
+      - [Senior Software Engineer]
+      - [Software Engineer II]
+    keep: ["(415) 555-0199", linkedin.com/in/marcuslee, GPA 3.6, Trailmap, "Jul 2022 – Dec 2023"]
+    absent: ["(415) 555-0100", "Jul 2022 – Present"]
+    skills: [Go, Python, PostgreSQL, Kubernetes, Kafka, Terraform]
+
+sofia:
+  about: Three versions tailored for different jobs at the same time.
+  versions:
+    - style: html
+      date: 2026-01
+      markdown: |
+        # SOFIA ALVAREZ
+        sofia.alvarez@example.com · Riverside, CA
+
+        ## WORK EXPERIENCE
+        ### Analytics Intern — Kestrel Bank
+        Jun 2025 – Aug 2025 · Los Angeles, CA
+        - Built Tableau dashboards tracking loan delinquency for 12 branch managers.
+        - Automated a weekly SQL report, saving the risk team 6 hours a week.
+        ### Research Assistant — Riverside University Economics Lab
+        Sep 2024 – May 2025
+        - Cleaned and merged 15 years of county wage data for a minimum-wage study.
+
+        ## EDUCATION
+        ### Riverside University — Riverside, CA
+        B.S. Economics and Data Science, May 2026 · GPA 3.7
+
+        ## SKILLS
+        SQL, Tableau, Excel, Python
+    - style: latex
+      date: 2026-01
+      markdown: |
+        # SOFIA ALVAREZ
+        sofia.alvarez@example.com · github.com/salvarez · Riverside, CA
+
+        ## PROFESSIONAL EXPERIENCE
+        ### Analytics Intern — Kestrel Bank
+        Jun 2025 – Aug 2025 · Los Angeles, CA
+        - Trained a gradient-boosted model to flag early delinquency, reaching 0.81 AUC on 2 years of loan data.
+        - Automated the weekly risk report in SQL and Python, saving 6 hours each week.
+        ### Research Assistant — Riverside University Economics Lab
+        Sep 2024 – May 2025
+        - Cleaned and merged 15 years of county-level wage data (2.3M rows) for a minimum-wage study.
+
+        ## PROJECTS
+        ### Fraud Graph
+        - Built a graph neural network to detect fraud rings in a public transactions dataset.
+
+        ## EDUCATION
+        ### Riverside University — Riverside, CA
+        B.S. Economics & Data Science, May 2026
+
+        ## SKILLS
+        - **Languages:** Python, SQL
+        - **ML:** scikit-learn, XGBoost, PyTorch
+    - style: html
+      date: 2026-01
+      markdown: |
+        # SOFIA ALVAREZ
+        sofia.alvarez@example.com · linkedin.com/in/sofiaalvarez · Riverside, CA
+
+        ## EXPERIENCE
+        ### Analytics Intern — Kestrel Bank
+        Jun 2025 – Aug 2025 · Los Angeles, CA
+        - Interviewed 9 branch managers to define requirements for a delinquency dashboard.
+        - Built delinquency dashboards in Tableau used by 12 branch managers.
+        ### Research Assistant — Riverside University Economics Lab
+        Sep 2024 – May 2025
+        - Coordinated survey fieldwork with 3 graduate students.
+
+        ## LEADERSHIP
+        ### Treasurer — Women in Data
+        Sep 2023 – May 2025
+        - Managed an $8,000 annual budget for 14 events.
+
+        ## EDUCATION
+        ### Riverside University — Riverside, CA
+        B.S. Economics & Data Science, May 2026
+
+        ## SKILLS
+        Tableau, SQL, Figma, user interviews
+  key:
+    once:
+      - [Built Tableau dashboards tracking, delinquency dashboards in Tableau]
+      - [Automated a weekly SQL report, Automated the weekly risk report]
+      - [gradient-boosted model]
+      - [Interviewed 9 branch managers]
+      - [county wage data, county-level wage data]
+      - [Coordinated survey fieldwork]
+      - [Fraud Graph]
+      - ["$8,000"]
+      - [Analytics Intern]
+    keep: [2.3M rows, SQL and Python, GPA 3.7, github.com/salvarez, linkedin.com/in/sofiaalvarez, Women in Data]
+    skills: [SQL, Tableau, Excel, Python, scikit-learn, XGBoost, PyTorch, Figma]
+
+tom:
+  about: A career changer's two resumes in different templates, with look-alike bullets.
+  versions:
+    - style: html
+      date: 2025-06
+      markdown: |
+        # TOM BRENNAN
+        tom.brennan@example.com · Chicago, IL
+
+        ## EXPERIENCE
+        Math Teacher, Lincoln Park High School Aug 2019 – Jun 2025
+        - Taught algebra to 30 students per class across 5 sections.
+        - Taught geometry to 30 students per class across 2 sections.
+        - Raised the share of students passing the state exam from 62% to 78%.
+
+        ## VOLUNTEER
+        Tutor, Chicago Reads 2018 – 2020
+        - Tutored adult learners preparing for the GED.
+
+        ## EDUCATION
+        Northwestern University, M.A. Education 2019
+
+        ## SKILLS
+        Curriculum design, Excel, public speaking
+    - style: latex
+      date: 2026-01
+      markdown: |
+        # TOM BRENNAN
+        tom.brennan@example.com · linkedin.com/in/tombrennan · Chicago, IL
+
+        ## PROJECTS
+        ### School Attendance Dashboard
+        - Built a Python and SQL pipeline that flags chronically absent students across 1,400 students.
+
+        ## EXPERIENCE
+        ### Data Analyst (Contract) — Chicago Public Schools
+        Aug 2025 – Present
+        - Cleaned enrollment data for 600 schools in SQL.
+        ### Math Teacher — Lincoln Park High School
+        Aug 2019 – Jun 2025
+        - Used assessment data to regroup students weekly, raising state exam pass rates from 62% to 78%.
+        - Taught algebra to 30 students per class across 5 sections.
+
+        ## EDUCATION
+        ### Northwestern University
+        M.A. Education, 2019
+        ### Google Data Analytics Certificate
+        2025
+
+        ## SKILLS
+        SQL, Python, Tableau, Excel
+  key:
+    once:
+      - [Taught algebra]
+      - [Taught geometry]
+      - [Raised the share of students passing, regroup students weekly]
+      - [Chicago Reads]
+      - [Cleaned enrollment data]
+      - [School Attendance Dashboard]
+      - [Google Data Analytics Certificate]
+      - [Lincoln Park High School]
+    keep: [Used assessment data, GED, linkedin.com/in/tombrennan]
+    skills: [SQL, Python, Tableau, Excel, Curriculum design, public speaking]
+
+aiko:
+  about: Re-uploading over a master that has a bullet added by hand.
+  master: |
+    # AIKO TANAKA
+    aiko.tanaka@example.com · Seattle, WA
+
+    ## EXPERIENCE
+    ### Product Designer — Fernway
+    Mar 2023 – Present
+    - Redesigned onboarding, raising week-1 retention from 41% to 52%.
+    - Ran 25 usability sessions per quarter.
+    - Led the design system migration to Figma variables across 3 product teams.
+
+    ## EDUCATION
+    ### University of Washington — Seattle, WA
+    B.Des. Interaction Design, 2022
+
+    ## SKILLS
+    Figma, user research, prototyping
+  versions:
+    - style: latex
+      date: 2026-09
+      markdown: |
+        # AIKO TANAKA
+        aiko.tanaka@example.com · Seattle, WA · aikotanaka.design
+
+        ## EXPERIENCE
+        ### Senior Product Designer — Fernway
+        Jan 2026 – Present
+        - Lead design for the payments squad of 7.
+        ### Product Designer — Fernway
+        Mar 2023 – Dec 2025
+        - Redesigned the onboarding flow; week-1 retention rose from 41% to 52%.
+        - Ran 25 usability sessions every quarter.
+
+        ## EDUCATION
+        ### University of Washington — Seattle, WA
+        B.Des. Interaction Design, 2022
+
+        ## SKILLS
+        Figma, prototyping, user research, design systems
+  key:
+    once:
+      - [Redesigned onboarding, Redesigned the onboarding flow]
+      - [25 usability sessions]
+      - [design system migration]
+      - [payments squad of 7]
+      - [Senior Product Designer]
+      - [University of Washington]
+    keep: [aikotanaka.design, "Mar 2023 – Dec 2025"]
+    absent: ["Mar 2023 – Present"]
+    skills: [Figma, user research, prototyping, design systems]

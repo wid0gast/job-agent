@@ -248,40 +248,20 @@ def current_master() -> str | None:
     return text
 
 
-# The merge is code, not a model: it only copies your own lines, so it can't
-# invent anything, and it costs no model calls. The newest version is the base;
-# an older line is added only when nothing in the base already covers it.
+# Structure for the merge (merge.py) and typesetting (latex.py): sections, roles, lines.
 
 BULLET = re.compile(r"^\s*(?:[-*•▪◦]|\d+\.)\s+")
-COVERED = 0.5  # Share of the shorter line's words found in another line.
-SAME_ROLE = 0.8  # The same for two role headings to be one role.
 
 
 def words(line: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", plain(line).lower())) - {"and", "the", "of", "a", "in", "to", "for", "with", "on", "at"}
 
 
-def overlap(a: str, b: str) -> float:
-    wa, wb = words(a), words(b)
-    if not wa or not wb:
-        return 0.0
-    if min(len(wa), len(wb)) < 3:  # Short lines: covered only if every word is there.
-        small, large = sorted((wa, wb), key=len)
-        return 1.0 if small <= large else 0.0
-    return len(wa & wb) / min(len(wa), len(wb))
+def dates_only(line: str) -> bool:
+    """A line that's dates, maybe with a place ("January 2025 – May 2025 · New York")."""
+    from .merge import DATES
 
-
-def covers(other: str, line: str) -> bool:
-    """Whether `other` already says `line`: most of the line's own words are in it, or it's a
-    trimmed version of the line. (Measured against the shorter of the two, a four-word role
-    heading once "covered" a whole professional summary, which the merge then dropped.)"""
-    mine, theirs = words(line), words(other)
-    if not mine or not theirs:
-        return False
-    if len(mine) < 3:
-        return mine <= theirs
-    shared = len(mine & theirs)
-    return shared / len(mine) >= COVERED or (shared / len(theirs) >= 0.8 and len(theirs) >= len(mine) / 2)
+    return bool(DATES.search(line)) and len(DATES.sub("", line).strip(" ·|,–—-")) < 30 and not BULLET.match(line)
 
 
 def structure(markdown: str) -> dict:
@@ -295,6 +275,9 @@ def structure(markdown: str) -> dict:
     lines = [l.rstrip() for l in markdown.splitlines() if l.strip()]
     for index, line in enumerate(lines):
         following = lines[index + 1] if index + 1 < len(lines) else ""
+        after = lines[index + 2] if index + 2 < len(lines) else ""
+        if dates_only(following) and BULLET.match(after) and not dates_only(line):
+            following = after  # "Role, Org" then "Jan 2025 – May 2025" then bullets: still a role.
         if line.startswith("# ") and not doc["title"]:
             doc["title"] = line
         elif line.startswith("## "):
@@ -331,81 +314,14 @@ def render(doc: dict) -> str:
     return "\n".join(out).strip() + "\n"
 
 
-def merge_versions(versions: list[tuple[str, str]]) -> dict:
-    """Merge (label, markdown) versions, oldest first. Newest wins; older lines fill gaps."""
-    newest_label, newest = versions[-1]
-    base = structure(newest)
-    changes, kept = [f"Base: {newest_label} (newest)."], []
+def merge_versions(versions: list[tuple[str, str]], llm=None, log=print) -> dict:
+    """Merge (label, markdown) versions, oldest first (merge.py; rules in docs/merge-guide.md)."""
+    from .merge import merge
 
-    def base_lines():
-        for section in base["sections"]:
-            for entry in section["entries"]:
-                yield from entry["items"]
-                yield from entry["meta"]  # A degree under its school heading is a meta line.
-                if entry["heading"]:
-                    yield entry["heading"]
-
-    def covered(line: str, section_name: str = "") -> bool:
-        if any(covers(other, line) for other in base_lines()):
-            return True
-        # One line in an older version can be several in the newest ("Secretary (Debating
-        # Society), Chief Editor (...)" → three bullets): covered by a like-named section whole.
-        mine, name = words(line), words(section_name)
-        for section in base["sections"]:
-            if name and name & words(section["name"]) and len(mine) >= 3:
-                text = " ".join(l for e in section["entries"] for l in [e["heading"] or "", *e["meta"], *e["items"]])
-                if len(mine & words(text)) / len(mine) >= 0.9:
-                    return True
-        return False
-
-    def find_section(name: str):
-        return next((s for s in base["sections"] if words(s["name"]) == words(name)), None)
-
-    def find_entry(heading: str):
-        # Strict: "Machine Learning Intern — Northwind" isn't "Machine Learning Research Intern —
-        # Adobe" (at half the words they matched, and one role vanished into the other).
-        return next((e for s in base["sections"] for e in s["entries"]
-                     if e["heading"] and overlap(heading, e["heading"]) >= SAME_ROLE), None)
-
-    for label, markdown in reversed(versions[:-1]):  # next-newest first
-        for section in structure(markdown)["sections"]:
-            for entry in section["entries"]:
-                missing = [item for item in entry["items"] if not covered(item, section["name"])]
-                match = find_entry(entry["heading"]) if entry["heading"] else None
-                if entry["heading"] and match is None and (missing or not entry["items"]) \
-                        and not covered(entry["heading"]):
-                    target = find_section(section["name"])
-                    if target is None:
-                        target = {"name": section["name"], "entries": []}
-                        base["sections"].append(target)
-                        changes.append(f"Added section “{section['name']}” from {label}.")
-                    target["entries"].append({**entry, "items": missing or entry["items"]})
-                    changes.append(f"Added “{entry['heading']}” from {label}.")
-                    kept += [(label, entry["heading"])]
-                    continue
-                if not missing:
-                    continue
-                if match is not None:
-                    match["items"] += missing
-                else:
-                    target = find_section(section["name"])
-                    if target is None:
-                        target = {"name": section["name"], "entries": []}
-                        base["sections"].append(target)
-                        changes.append(f"Added section “{section['name']}” from {label}.")
-                    loose = next((e for e in target["entries"] if not e["heading"]), None)
-                    if loose is None:
-                        loose = {"heading": None, "meta": [], "items": []}
-                        target["entries"].append(loose)
-                    loose["items"] += missing
-                kept += [(label, item) for item in missing]
-    if len(changes) == 1 and len(versions) > 1:
-        changes.append("Everything in the older versions is already in the newest one.")
-    return {"markdown": render(base), "changes": changes,
-            "kept": [{"from": label, "line": line} for label, line in kept]}
+    return merge(versions, llm, log)
 
 
-def propose(include_master: bool = True, log=print) -> dict:
+def propose(include_master: bool = True, log=print, llm=None) -> dict:
     """Merge every parsed resume (and the current master) into a proposal for you."""
     versions = parsed()
     if not versions:
@@ -420,12 +336,13 @@ def propose(include_master: bool = True, log=print) -> dict:
     sources += [(f"{v['source']} (content through {v['latest_date'] or 'unknown'})",
                  v["markdown"], v["text"]) for v in versions]
     log(f"  merging {len(sources)} version(s)")
-    result = merge_versions([(label, md) for label, md, _ in sources])
+    result = merge_versions([(label, md) for label, md, _ in sources], llm, log)
     raw = [text for _, _, text in sources] + [md for _, md, _ in sources]
     write_proposal(result["markdown"], {
         "created": datetime.now().isoformat(timespec="seconds"),
         "sources": [label for label, _, _ in sources],
-        "changes": result["changes"], "kept": result["kept"],
+        "changes": result["changes"], "kept": result["kept"], "combined": result.get("combined", []),
+        "possible": result.get("possible", []),
         "checks": problems(result["markdown"], raw), "raw_sources": raw})
     return proposal()
 

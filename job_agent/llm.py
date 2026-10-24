@@ -18,7 +18,8 @@ from . import trace
 REQUEST_LIMIT_SECONDS = 90  # The class proxy's deadline for one broker request (LIMITS.requestMs).
 # Each step and how hard it should think (passed on where a model supports it).
 TASKS = {
-    "match_scores": "low", "resume_markdown": "low", "resume_facts": "low", "research": "medium",
+    "match_scores": "low", "resume_markdown": "low", "resume_merge": "medium", "resume_facts": "low",
+    "research": "medium",
     "assistant": "medium", "fit": "medium", "tailored_resume": "high", "cover_letter": "high",
     "form_answers": "medium", "explore": "medium", "discover": "low",
     "people": "medium", "web_search": "low", "outreach": "medium", "first_read": "medium",
