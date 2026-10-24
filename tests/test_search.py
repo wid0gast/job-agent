@@ -255,3 +255,40 @@ def test_the_wrong_kind_or_level_caps_a_match_score_in_code(tracker):
     matching.score(Glowing(), tracker, log=lambda *_: None)
     scores = {j["title"]: json.loads(j["details"])["match"]["score"] for j in tracker.all()}
     assert scores == {"Research Intern": 90, "Marketing Analyst": 35, "AI Research Engineer": 45}
+
+
+def test_a_full_time_job_is_capped_when_you_ask_only_for_internships():
+    full = {"job_type": "full_time"}
+    assert matching.wrong_kind("ML research internships for Summer 2027", full)
+    assert not matching.wrong_kind("Internships or full-time new grad roles in ML", full)
+    assert not matching.wrong_kind("ML research internships", {"job_type": "internship"})
+    assert matching.wrong_kind("Full-time ML engineer roles", {"job_type": "internship"})
+
+
+def test_fit_text_about_you_is_said_to_you():
+    from job_agent.documents import to_you
+
+    assert to_you({"summary": "He has an MS. The candidate lacks a 2025 degree. Prof. Lee and her lab."}) == \
+        {"summary": "You have an MS. You lack a 2025 degree. Prof. Lee and her lab."}
+
+
+def test_a_top_pick_that_falls_short_is_replaced_by_the_next(tracker, monkeypatch):
+    from types import SimpleNamespace
+
+    from job_agent import actions, worker
+
+    ran = []
+
+    def prepare(job_id, ctx, log, note=""):
+        ran.append((job_id, note))
+        ctx.tracker.move(job_id, "found", "filtered_out", reason="Fit 45 is below your threshold of 60.")
+        return "filtered_out"
+
+    monkeypatch.setattr(worker, "step", lambda module, name: prepare)
+    monkeypatch.setattr(actions, "top_picks", lambda tracker, settings, count: ([{"id": 2, "title": "Analyst", "company": "Acme"}], []))
+    ctx = SimpleNamespace(tracker=tracker, settings=None)
+    said = worker._prepare({"job_id": 1, "arg": f"{worker.TOP_PICK}1"}, ctx, print)
+    assert ran == [(1, "")] and "Trying the next match instead: Analyst at Acme" in said
+    queued = tracker.db.execute("SELECT job_id, arg FROM tasks WHERE kind = 'prepare'").fetchall()
+    assert [tuple(r) for r in queued] == [(2, f"{worker.TOP_PICK}0")]
+    assert "next match" not in worker._prepare({"job_id": 2, "arg": f"{worker.TOP_PICK}0"}, ctx, print)

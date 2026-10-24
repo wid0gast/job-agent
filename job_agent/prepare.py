@@ -237,6 +237,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                 "what_the_candidate_is_looking_for": profile.get("preferences", {}).get("description", ""),
                 "profile": profile, "resume": master}, ensure_ascii=False), FIT_SCHEMA, "fit")
             fit["score"] = max(0, min(100, int(fit["score"])))
+            fit = documents.to_you(fit)  # One model wrote "He has an MS…" despite being asked for "you".
         # A reply that fits the schema but says nothing (no requirements, no summary, score 0)
         # is a model failure, not a verdict: one model on the class platform returned exactly
         # that for every posting, setting good jobs aside.

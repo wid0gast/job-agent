@@ -124,12 +124,27 @@ PREPARE_OUTCOMES = {"prepared": "Prepared", "filtered_out": "Not prepared", "clo
                     "failed": "Failed", "found": "Not prepared", "needs_you": "Needs you"}
 
 
+TOP_PICK = "top pick, replacements left: "  # The arg of a job "Prepare top matches" queued.
+
+
 def _prepare(task, ctx, log) -> str:
-    """Prepare one job; the result says what happened and why (the job's reason)."""
-    status = step("prepare", "prepare")(task["job_id"], ctx, log, note=task["arg"] or "")
+    """Prepare one job; the result says what happened and why (the job's reason). A top pick
+    whose fit falls short is replaced by the next best match (twice at most), so "Prepare top 1"
+    ends with one job ready rather than none."""
+    arg = task["arg"] or ""
+    left = int(arg[len(TOP_PICK):] or 0) if arg.startswith(TOP_PICK) else None
+    status = step("prepare", "prepare")(task["job_id"], ctx, log, note="" if left is not None else arg)
     reason = (ctx.tracker.get(task["job_id"]) or {}).get("reason")
-    return PREPARE_OUTCOMES.get(status, status) + (f": {reason}" if reason else
+    said = PREPARE_OUTCOMES.get(status, status) + (f": {reason}" if reason else
                                                    ": ready for your review." if status == "prepared" else "")
+    if left and status == "filtered_out":
+        from . import actions
+
+        picks, _ = actions.top_picks(ctx.tracker, ctx.settings, 1)
+        if picks:
+            ctx.tracker.add_task("prepare", picks[0]["id"], f"{TOP_PICK}{left - 1}")
+            said += f" Trying the next match instead: {picks[0]['title']} at {picks[0]['company']}."
+    return said
 
 
 def _refresh(task, ctx, log) -> str:

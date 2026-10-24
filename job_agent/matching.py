@@ -132,6 +132,16 @@ def keyword_score(job: dict) -> int:
     return json.loads(job["details"] or "{}").get("keyword", {}).get("score", 0)
 
 
+def wrong_kind(description: str, job: dict) -> bool:
+    """Your description asks only for internships and the posting is full-time, or the reverse.
+    One model called a full-time fellowship a fit for "internships" and scored it 95."""
+    text = (description or "").lower()
+    interns = bool(re.search(r"\bintern(ship)?s?\b|\bco-?op\b", text))
+    full = bool(re.search(r"full[- ]time|new[- ]grad|entry[- ]level|permanent", text))
+    kind = (job.get("job_type") or "").lower()
+    return (interns and not full and kind == "full_time") or (full and not interns and kind == "internship")
+
+
 def score(llm, tracker, limit: int | None = None, log=print) -> dict:
     """Model match scores for the best `limit` (default SHORTLIST) keyword matches not yet scored,
     PARALLEL calls at a time."""
@@ -166,6 +176,8 @@ def score(llm, tracker, limit: int | None = None, log=print) -> dict:
                 continue
             details = json.loads(tracker.get(job["id"])["details"] or "{}")
             value = max(0, min(100, int(item["score"])))
+            if wrong_kind(prefs.get("description", ""), job):  # Said plainly by both: no model needed.
+                value = min(value, 35)
             # Caps in code: one model said "but it's full-time" and still scored it 90.
             if item.get("kind_fits") is False:
                 value = min(value, 35)

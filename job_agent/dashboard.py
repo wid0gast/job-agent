@@ -2171,8 +2171,10 @@ def handler_for(app: Dashboard):
                 count = max(1, min(20, int(one.get("count") or 3)))
                 picks, passed = actions.top_picks(tracker, app.settings, count)
                 app.ensure_worker()
+                from .worker import TOP_PICK
+
                 for job in picks:
-                    tracker.add_task("prepare", job["id"])
+                    tracker.add_task("prepare", job["id"], f"{TOP_PICK}2")
                 skipped = (f" Passed over {len(passed)} ranked higher that may not be worth it "
                            f"(e.g. {passed[0]['title']} at {passed[0]['company']}: open a job to see why)."
                            if passed else "")
