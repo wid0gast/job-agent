@@ -215,6 +215,47 @@ def dropped_words(markdown: str, source: str) -> list[str]:
     return missing
 
 
+def restore(markdown: str, source: str, missing: list[str]) -> str:
+    """Put back what a conversion left out of a line, from the PDF's own line: one model dropped
+    "with Prof. Maria Lopez" from role headings however often it was asked to keep it."""
+    from .merge import DATES
+
+    key = lambda w: re.sub(r"[^a-z0-9]", "", w.lower())  # noqa: E731
+    dated = lambda t: bool(DATES.fullmatch(t) or re.fullmatch(  # noqa: E731 - "Aug", "–", "Present" end a span.
+        r"(?i)(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t|tember)?|oct(ober)?|nov(ember)?"
+        r"|dec(ember)?)\.?|[–—-]|present|current", t))
+    lines = markdown.splitlines()
+    for raw in source.split("\n\nLinks in the PDF:")[0].splitlines():
+        tokens = raw.split()
+        if not any(key(t) in missing for t in tokens):
+            continue
+        best, share = None, 0.0
+        for i, line in enumerate(lines):
+            mine = words(line)
+            if len(mine) >= 2 and len(mine & words(raw)) / len(mine) > share:
+                best, share = i, len(mine & words(raw)) / len(mine)
+        if best is None or share < 0.6:
+            continue
+        have = re.sub(r"[^a-z0-9]", "", lines[best].lower())
+        absent = [bool(key(t)) and key(t) not in have and not dated(t) for t in tokens]
+        for start, token in enumerate(tokens):
+            if key(token) not in missing or not absent[start]:
+                continue
+            end = start
+            while start > 0 and absent[start - 1]:
+                start -= 1
+            while end + 1 < len(tokens) and absent[end + 1]:
+                end += 1
+            span = " ".join(tokens[start:end + 1]).strip(" ,;")
+            before = tokens[start - 1].strip(" ,;") if start else ""
+            at = lines[best].find(before) + len(before) if before and before in lines[best] else len(lines[best])
+            lines[best] = lines[best][:at].rstrip(" ,;") + (", " if lines[best][:at].strip() else "") + span + \
+                (" " + lines[best][at:].lstrip(" ,;") if lines[best][at:].strip(" ,;") else "")
+            have = re.sub(r"[^a-z0-9]", "", lines[best].lower())
+            absent = [bool(key(t)) and key(t) not in have and not dated(t) for t in tokens]
+    return "\n".join(lines)
+
+
 def problems(markdown: str, sources: list[str]) -> dict:
     found = {"invented_numbers": documents.unsupported_numbers(markdown, "\n".join(sources)),
              "unknown_words": unsupported_words(markdown, sources)}
@@ -244,6 +285,9 @@ def parse(llm, pdf: Path, log=print) -> dict:
         checked = problems(again["markdown"], [text])
         if sum(map(len, checked.values())) <= sum(map(len, found.values())):
             result, found = again, checked
+    if found.get("left_out"):  # Whatever's still missing, put back from the PDF's own lines.
+        result["markdown"] = restore(result["markdown"], text, found["left_out"])
+        found = problems(result["markdown"], [text])
     if not re.search(r"unreadable|illegible|could ?n[o']t|missing|left out|unclear", result.get("notes") or "", re.I):
         result["notes"] = ""  # "Links were converted as requested": nothing for you to act on.
     parsed_folder().mkdir(parents=True, exist_ok=True)
