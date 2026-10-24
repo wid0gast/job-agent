@@ -142,3 +142,12 @@ def test_a_graduation_month_answers_a_list_of_terms():
              "section": "", "required": True}
     profile = {"education": [{"graduation": "May 2027"}], "contact": {}, "work_authorization": {}}
     assert answers.from_profile(field, profile, {}) == ("Spring 2027", "profile")
+
+
+def test_itar_is_a_word_not_part_of_military():
+    # Amazon's "Military careers" link set an Applied Science internship aside as "itar".
+    profile = {"work_authorization": {"requires_sponsorship_future": True}}
+    assert filters.sponsorship_problem("Find Careers Teams Military careers Benefits. Veterans and military "
+                                       "spouses are encouraged to apply.", profile) is None
+    said = filters.sponsorship_problem("This role is subject to ITAR, so applicants must be U.S. persons.", profile)
+    assert "subject to ITAR" in said and not said.endswith(".”.")
