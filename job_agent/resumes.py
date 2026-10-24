@@ -50,9 +50,12 @@ full URLs (e.g. https://www.linkedin.com/in/...) in place of their labels,
 and keep paper links next to their publications.
 
 Keep every fact and keep the wording exactly as written: fix only spacing,
-broken line breaks and hyphenation. Do not summarize, rephrase, reorder
-within a section, or add anything. If a part is unreadable, leave it out and
-say so in notes.
+broken line breaks and hyphenation, including words the extraction split
+("RoBERT a" is "RoBERTa", "CPT -eligible" is "CPT-eligible"). Anything else on
+a role's line stays in its heading, e.g. an advisor: "### Research Intern —
+National University of Singapore, with Prof. Kokil Jaidka". Do not summarize,
+rephrase, reorder within a section, or add anything. If a part is unreadable,
+leave it out and say so in notes.
 """.strip()
 
 PARSE_SCHEMA = {
@@ -153,9 +156,26 @@ def unsupported_words(markdown: str, sources: list[str]) -> list[str]:
     return flagged
 
 
+def dropped_words(markdown: str, source: str) -> list[str]:
+    """Names, numbers and capitalized words in the PDF's text that the Markdown left out. One
+    model dropped every advisor ("with Prof. Kokil Jaidka") from role headings."""
+    body = source.split("\n\nLinks in the PDF:")[0]
+    haystack = re.sub(r"[^a-z0-9]", "", plain(markdown).lower())
+    missing = []
+    for word in re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]*[A-Za-z0-9+#]|\d[\d.,%+]*", body):
+        key = re.sub(r"[^a-z0-9]", "", word.lower())
+        if len(key) >= 3 and (word[0].isupper() or word[0].isdigit()) and key not in haystack \
+                and key not in missing:
+            missing.append(key)
+    return missing
+
+
 def problems(markdown: str, sources: list[str]) -> dict:
-    return {"invented_numbers": documents.unsupported_numbers(markdown, "\n".join(sources)),
-            "unknown_words": unsupported_words(markdown, sources)}
+    found = {"invented_numbers": documents.unsupported_numbers(markdown, "\n".join(sources)),
+             "unknown_words": unsupported_words(markdown, sources)}
+    if len(sources) == 1:  # One PDF's conversion: nothing of it may go missing either.
+        found["left_out"] = dropped_words(markdown, sources[0])
+    return found
 
 
 # ----- PDF → Markdown -------------------------------------------------------
@@ -166,10 +186,11 @@ def parse(llm, pdf: Path, log=print) -> dict:
     log(f"  read {pdf.name}: {len(text)} characters")
     result = llm.json(PARSE_PROMPT, text[:30000], PARSE_SCHEMA, "resume_markdown")
     found = problems(result["markdown"], [text])
-    if found["invented_numbers"] or found["unknown_words"]:
+    if any(found.values()):
         log(f"  retrying: {found}")
-        retry = (f"{text[:30000]}\n\n---\nYour previous Markdown contained text that isn't in "
-                 f"the resume: {found}. Use only the resume's own words and numbers.")
+        retry = (f"{text[:30000]}\n\n---\nYour previous Markdown didn't match the resume: "
+                 + "; ".join(f"{k.replace('_', ' ')}: {', '.join(map(str, v))}" for k, v in found.items() if v)
+                 + ". Use only the resume's own words and numbers, and leave none of them out.")
         result = llm.json(PARSE_PROMPT, retry, PARSE_SCHEMA, "resume_markdown")
         found = problems(result["markdown"], [text])
     parsed_folder().mkdir(parents=True, exist_ok=True)
@@ -186,7 +207,7 @@ def parse(llm, pdf: Path, log=print) -> dict:
 
 
 def parsed() -> list[dict]:
-    """Parsed resumes, oldest content first (ties: older file first)."""
+    """Parsed resumes, oldest content first (ties: the shorter cut first, so the fuller is the base)."""
     items = []
     for meta in parsed_folder().glob("*.json"):
         details = json.loads(meta.read_text(encoding="utf-8"))
@@ -195,7 +216,9 @@ def parsed() -> list[dict]:
         details["text"] = text.read_text(encoding="utf-8") if text.exists() else details["markdown"]
         details["stem"] = meta.stem
         items.append(details)
-    return sorted(items, key=lambda d: (d["latest_date"] or "", d["file_modified"]))
+    # Same content date (a 1-page and a 2-page cut of one resume): the fuller one is the base,
+    # or the shorter cut's condensed lines "cover" the fuller ones and the details are lost.
+    return sorted(items, key=lambda d: (d["latest_date"] or "", len(d["markdown"]), d["file_modified"]))
 
 
 def remove(stem: str) -> None:
@@ -231,6 +254,7 @@ def current_master() -> str | None:
 
 BULLET = re.compile(r"^\s*(?:[-*•▪◦]|\d+\.)\s+")
 COVERED = 0.5  # Share of the shorter line's words found in another line.
+SAME_ROLE = 0.8  # The same for two role headings to be one role.
 
 
 def words(line: str) -> set[str]:
@@ -245,6 +269,19 @@ def overlap(a: str, b: str) -> float:
         small, large = sorted((wa, wb), key=len)
         return 1.0 if small <= large else 0.0
     return len(wa & wb) / min(len(wa), len(wb))
+
+
+def covers(other: str, line: str) -> bool:
+    """Whether `other` already says `line`: most of the line's own words are in it, or it's a
+    trimmed version of the line. (Measured against the shorter of the two, a four-word role
+    heading once "covered" a whole professional summary, which the merge then dropped.)"""
+    mine, theirs = words(line), words(other)
+    if not mine or not theirs:
+        return False
+    if len(mine) < 3:
+        return mine <= theirs
+    shared = len(mine & theirs)
+    return shared / len(mine) >= COVERED or (shared / len(theirs) >= 0.8 and len(theirs) >= len(mine) / 2)
 
 
 def structure(markdown: str) -> dict:
@@ -304,23 +341,36 @@ def merge_versions(versions: list[tuple[str, str]]) -> dict:
         for section in base["sections"]:
             for entry in section["entries"]:
                 yield from entry["items"]
+                yield from entry["meta"]  # A degree under its school heading is a meta line.
                 if entry["heading"]:
                     yield entry["heading"]
 
-    def covered(line: str) -> bool:
-        return any(overlap(line, other) >= COVERED for other in base_lines())
+    def covered(line: str, section_name: str = "") -> bool:
+        if any(covers(other, line) for other in base_lines()):
+            return True
+        # One line in an older version can be several in the newest ("Secretary (Debating
+        # Society), Chief Editor (...)" → three bullets): covered by a like-named section whole.
+        mine, name = words(line), words(section_name)
+        for section in base["sections"]:
+            if name and name & words(section["name"]) and len(mine) >= 3:
+                text = " ".join(l for e in section["entries"] for l in [e["heading"] or "", *e["meta"], *e["items"]])
+                if len(mine & words(text)) / len(mine) >= 0.9:
+                    return True
+        return False
 
     def find_section(name: str):
         return next((s for s in base["sections"] if words(s["name"]) == words(name)), None)
 
     def find_entry(heading: str):
+        # Strict: "Machine Learning Intern — Clientell" isn't "Machine Learning Research Intern —
+        # Adobe" (at half the words they matched, and one role vanished into the other).
         return next((e for s in base["sections"] for e in s["entries"]
-                     if e["heading"] and overlap(heading, e["heading"]) >= COVERED), None)
+                     if e["heading"] and overlap(heading, e["heading"]) >= SAME_ROLE), None)
 
     for label, markdown in reversed(versions[:-1]):  # next-newest first
         for section in structure(markdown)["sections"]:
             for entry in section["entries"]:
-                missing = [item for item in entry["items"] if not covered(item)]
+                missing = [item for item in entry["items"] if not covered(item, section["name"])]
                 match = find_entry(entry["heading"]) if entry["heading"] else None
                 if entry["heading"] and match is None and (missing or not entry["items"]) \
                         and not covered(entry["heading"]):

@@ -83,3 +83,18 @@ def test_empty_education_is_replaced_and_middle_dot_prints():
     fixed = latex.ensure_education(empty, MASTER)
     assert next(s for s in fixed["sections"] if s["kind"] == "education")["entries"]
     assert latex.escape("2025 · London") == r"2025 \textperiodcentered{} London"
+
+
+@pytest.mark.skipif(not latex.available(), reason="no LaTeX engine")
+def test_a_section_filled_in_the_wrong_field_still_typesets(tmp_path):
+    # A model filled the wrong field for a section's kind: an empty list failed the whole resume
+    # ("perhaps a missing \item").
+    doc = latex.from_markdown(MASTER)
+    doc["sections"] += [
+        {"title": "Publications", "kind": "list", "items": [], "entries": [], "skills": [], "text": "",
+         "extra": None},
+        {"title": "Awards", "kind": "entries", "entries": [], "items": ["Best Paper, 2025"], "skills": []},
+        {"title": "Empty", "kind": "list", "items": [], "entries": [], "skills": []}]
+    tex = latex.resume_tex(doc, {"name": "Jane Doe", "email": "j@x.org"}, 1)
+    assert "Best Paper, 2025" in tex and r"\section{Empty}" not in tex
+    assert latex.compile_pdf(tex, tmp_path / "r.pdf") >= 1

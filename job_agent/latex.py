@@ -183,8 +183,25 @@ CLEAN_TEXT = r"""
 """
 
 
+# The field each kind of section prints from.
+PRINTS = {"paragraph": "text", "entries": "entries", "education": "entries", "list": "items", "skills": "skills"}
+
+
+def printable(sec: dict) -> dict | None:
+    """The section with a kind that prints what it holds, or None if it holds nothing. A model
+    once filled the wrong field for a section's kind: it printed an empty list, which LaTeX
+    rejects ("perhaps a missing \\item"), and the whole resume failed."""
+    if sec.get(PRINTS.get(sec.get("kind"), "")):
+        return sec
+    for field, kind in (("entries", "entries"), ("items", "list"), ("skills", "skills"), ("text", "paragraph")):
+        if sec.get(field):
+            return {**sec, "kind": kind}
+    return None
+
+
 def resume_tex(doc: dict, contact: dict, pages: int = 1) -> str:
-    body = "\n\n".join(section(s, contact.get("name", "")) for s in doc["sections"] if s_has_content(s))
+    sections = [p for p in (printable(s) for s in doc["sections"]) if p]
+    body = "\n\n".join(section(s, contact.get("name", "")) for s in sections)
     return (preamble(pages) + CLEAN_TEXT + "\n\\begin{document}\n\n" + header(contact, doc.get("header_note", ""))
             + "\n\n" + body + "\n\n\\end{document}\n")
 

@@ -25,7 +25,7 @@ NO_SPONSORSHIP = re.compile(
     r"(not|unable to|cannot|can't|won't|will not|does not|do not)\s+(provide\s+|offer\s+|support\s+)?"
     r"(visa\s+)?sponsor|without\s+(the\s+need\s+for\s+)?(visa\s+)?sponsorship|"
     r"u\.?s\.?\s+citizen(ship)?\s+(is\s+)?required|must\s+be\s+a\s+u\.?s\.?\s+citizen|"
-    r"security\s+clearance|ITAR", re.I)
+    r"security\s+clearance|\bITAR\b", re.I)  # Whole word: "military" once matched "itar".
 
 
 def place_tokens(place: str) -> set[str]:
@@ -145,5 +145,12 @@ def sponsorship_problem(description: str, profile: dict) -> str | None:
     needs = auth.get("requires_sponsorship_now") or auth.get("requires_sponsorship_future")
     if not needs:
         return None
-    match = NO_SPONSORSHIP.search(description or "")
-    return f"Posting says: “{match.group(0)}”." if match else None
+    text = description or ""
+    match = NO_SPONSORSHIP.search(text)
+    if not match:
+        return None
+    # The words around it, so you can judge the catch yourself (a bare "ITAR" says little).
+    start, end = max(0, match.start() - 80), min(len(text), match.end() + 80)
+    quote = re.sub(r"\s+", " ", text[start:end]).strip()
+    quote = f"{'…' if start else ''}{quote}{'…' if end < len(text) else ''}"
+    return f"Posting says: “{quote}”" + ("" if quote[-1] in ".…!?" else ".")
