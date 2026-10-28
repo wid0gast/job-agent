@@ -184,6 +184,8 @@ def _refresh(task, ctx, log) -> str:
     counts = sources.refresh(ctx.tracker, config.load_profile(), boards=True, log=log,
                              progress=lambda text: ctx.tracker.set_task(task["id"], result=text))
     matching.keyword_rank(ctx.tracker, config.load_profile())  # Free; the model ranks only the best of these.
+    if task["arg"] == "rank":  # From Get started: rank what was found, for you to pick a first job.
+        ctx.tracker.add_task("score_matches")
     return (f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known; "
             f"{counts['skipped']} outside your search not kept")
 

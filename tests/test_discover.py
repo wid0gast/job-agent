@@ -209,3 +209,19 @@ def test_remote_abroad_and_past_seasons():
         == "Summer 2025 has passed."
     picky = {"preferences": {"locations": ["any"], "terms": ["Summer 2099"]}}
     assert filters.check({"title": "ML Intern - Fall 2098", "job_type": "internship"}, {}, picky).startswith("Term")
+
+
+def test_a_refresh_from_get_started_ranks_what_it_found(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from job_agent import matching, worker
+    from job_agent.tracker import Tracker
+
+    monkeypatch.setattr(sources, "refresh", lambda *a, **k: {"new": 3, "closed": 0, "seen": 0, "skipped": 0})
+    monkeypatch.setattr(matching, "keyword_rank", lambda *a: 0)
+    tracker = Tracker(tmp_path / "t.db")
+    for arg, ranked in ((None, False), ("rank", True)):
+        task = tracker.task(tracker.add_task("refresh", arg=arg))
+        worker._refresh(task, SimpleNamespace(tracker=tracker), print)
+        tracker.set_task(task["id"], status="done")
+        assert any(t["kind"] == "score_matches" for t in tracker.tasks(10)) is ranked

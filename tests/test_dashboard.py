@@ -19,6 +19,12 @@ def request(port, method, path, body="", headers=None):
     return response.status, response.read().decode(), dict(response.getheaders())
 
 
+def past_setup():
+    """Today, not Get started, at / (Get started shows there until a first application)."""
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (config.DATA_DIR / dashboard.SETUP_SKIPPED).touch()
+
+
 def test_pages_and_request_checks(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
     Tracker(tmp_path / "t.db").add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s",
@@ -64,6 +70,7 @@ def test_today_points_to_the_assistant_and_agent_traces_render(tmp_path, monkeyp
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     tracker = Tracker(tmp_path / "t.db")
     tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "NYC")
+    past_setup()
     settings = config.Settings.from_env(require_model=False)
     app = dashboard.Dashboard(settings, 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
@@ -159,6 +166,7 @@ def test_pages_with_work_running_update_in_place_without_reloading(tmp_path, mon
     tracker = Tracker(tmp_path / "t.db")
     task = tracker.add_task("refresh")
     tracker.set_task(task, status="running", result="Job lists read: 10 new jobs kept so far")
+    past_setup()
     app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
     app.ensure_worker = lambda: None
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
@@ -214,3 +222,88 @@ def test_top_matches_that_all_fall_short_are_offered_and_failures_show_in_the_tr
     assert "Refresh job lists failed:" in today and "A network problem" in today  # The tray, in words.
     app.tray_seen = failed
     assert "failed:" not in dashboard.tray(app)
+
+
+def test_get_started_walks_a_new_user_to_a_first_application(monkeypatch):
+    """Today is Get started until a first application: each step opens the next, a resume being
+    read doesn't hold up saying what you want, and Search settings it doesn't show are kept."""
+    import yaml
+
+    (config.PROFILE_DIR / "resume.md").unlink()
+    (config.PROFILE_DIR / "search.yaml").write_text("fit_threshold: 70\n")
+    tracker = Tracker(dashboard.DB_PATH)
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
+    app.ensure_worker = lambda: None
+    app.llm_missing = True
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    post = {"Origin": f"http://127.0.0.1:{app.port}", "Referer": f"http://127.0.0.1:{app.port}/"}
+    try:
+        page = request(app.port, "GET", "/")[1]
+        assert "<h1>Get started</h1>" in page and "Getting started 0/4" in page
+        assert 'class="card step open" id=step-connect' in page and "step-resume" not in page  # One at a time.
+        assert "Claude isn't connected yet" not in page  # Said once, by its step.
+        token = re.search(r'name=token value="([^"]+)"', page).group(1)
+
+        app.llm_missing = False
+        page = request(app.port, "GET", "/")[1]
+        assert 'id=step-resume' in page and 'action="/resumes/upload"' in page and 'value="/setup"' in page
+        assert "step-wants" not in page
+
+        reading = tracker.add_task("import_resume", arg="resume.pdf")
+        tracker.set_task(reading, status="running")
+        page = request(app.port, "GET", "/")[1]
+        assert "Reading your resume" in page and 'action="/setup/wants"' in page  # Meanwhile, the next step.
+        assert "data-live" in page  # It updates itself; the form is kept as you left it (data-keep).
+
+        status, _, headers = request(app.port, "POST", "/setup/wants", "&".join([
+            f"token={token}", "description=ML+internships", "job_types=internship",
+            "locations=New+York%2C+NY%0ARemote", "terms=Summer+2027", "authorization=f1"]), post)
+        assert status == 303 and headers["Location"].startswith("/setup")
+        search = yaml.safe_load((config.PROFILE_DIR / "search.yaml").read_text())
+        assert search["description"] == "ML internships" and search["locations"] == ["New York, NY", "Remote"]
+        assert search["terms"] == ["Summer 2027"] and search["fit_threshold"] == 70  # Kept.
+        assert config.load_profile()["work_authorization"]["authorized_in_us"] is True
+        refresh = next(t for t in tracker.tasks(10) if t["kind"] == "refresh")
+        assert refresh["arg"] == "rank"  # Ranked when found, for you to pick a first job.
+
+        # Resume accepted, jobs found and ranked: pick one, or paste a link.
+        tracker.set_task(reading, status="done")
+        tracker.set_task(refresh["id"], status="done")
+        (config.PROFILE_DIR / "resume.md").write_text("# Jane Doe\n")
+        tracker.add_lead("https://job-boards.greenhouse.io/acme/jobs/1", "s", "Acme", "ML Intern", "New York, NY")
+        page = request(app.port, "GET", "/")[1]
+        assert "Getting started 3/4" in page and "Prepare this one" in page and 'action="/link"' in page
+
+        job = tracker.all()[0]
+        tracker.update(job["id"], status="preparing")
+        tracker.update(job["id"], status="prepared")
+        page = request(app.port, "GET", "/")[1]
+        assert "Ask the assistant" in page and "Getting started" not in page  # Done: Today, for good.
+        job = tracker.get(job["id"])
+        assert "Your first application is ready" in dashboard.first_review_note(app, job)
+        (config.DATA_DIR / dashboard.REVIEW_SEEN).touch()
+        assert dashboard.first_review_note(app, job) == ""
+    finally:
+        server.shutdown()
+
+
+def test_get_started_can_be_skipped_and_found_again(monkeypatch):
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        page = request(app.port, "GET", "/")[1]
+        token = re.search(r'name=token value="([^"]+)"', page).group(1)
+        status, _, headers = request(app.port, "POST", "/setup/skip", f"token={token}",
+                                     {"Origin": f"http://127.0.0.1:{app.port}"})
+        assert status == 303
+        page = request(app.port, "GET", "/")[1]
+        assert "Ask the assistant" in page and 'href="/setup">Getting started' in page
+        assert "<h1>Get started</h1>" in request(app.port, "GET", "/setup")[1]
+    finally:
+        server.shutdown()

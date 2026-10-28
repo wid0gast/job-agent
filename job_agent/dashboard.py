@@ -223,7 +223,13 @@ border:1px solid var(--line);border-radius:12px;background:var(--card);font-size
 .prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
 .prompts button{text-align:left;font-weight:500;padding:12px 14px}
 @media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
-.start{padding:12px 16px;border-radius:12px;margin-bottom:16px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}.start ol{margin:6px 0 6px;padding-left:22px}.start li{margin:2px 0;color:var(--muted)}.start li.next{color:var(--text);font-weight:600}
+.start-chip{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft);font-weight:600}.start-chip+.chip{margin-left:8px}
+.progress{height:6px;border-radius:99px;background:var(--line);margin:4px 0 18px;overflow:hidden}.progress span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.step h2{display:flex;align-items:center;gap:10px;margin:0}.step.open h2{margin-bottom:12px}.step h3{font-size:14px;margin:0 0 8px}
+.step .num{flex:none;display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;font-size:13px;background:var(--accent);color:#fff}.step.done .num{background:var(--good)}.step.locked{opacity:.55}.step.locked .num{background:var(--muted)}.step.done h2 .muted{font-weight:400;font-size:14px}
+.dropzone{position:relative;display:block;padding:22px;border:2px dashed var(--line);border-radius:12px;text-align:center;cursor:pointer;background:var(--soft)}.dropzone:hover,.dropzone.over{border-color:var(--accent);background:var(--accent-soft)}.dropzone input{position:absolute;inset:0;opacity:0;cursor:pointer}.dropzone .picked{display:block;margin-top:6px;font-weight:600;color:var(--accent)}.dropzone .picked.bad{color:var(--bad)}
+.whoami{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft)}.whoami div{margin-top:2px}
+.first-review{border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft)}.first-review ol{margin:6px 0 10px;padding-left:22px}.first-review li{margin:4px 0}
 @media (max-width:1200px){header nav a{padding:6px 7px}.brand{margin-right:6px}}
 @media (max-width:640px){.card table{display:block;overflow-x:auto}select{max-width:100%}
 header{position:static;flex-wrap:wrap;padding:8px 12px}header nav{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
@@ -361,6 +367,12 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     title = title or dict(NAV).get(active, "")
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
+    steps = setup_steps(app)
+    if not steps[-1]["done"]:  # Until your first application, the way back to Get started,
+        # beside the connection as a dot only (it's a step there), so the header stays one line.
+        chip = (f'<a class="chip start-chip" href="/setup">Getting started {sum(s["done"] for s in steps)}/'
+                f'{len(steps)}</a><a class="chip" href="/connect" title="{esc(app.connection)}"><span class="dot '
+                f'{"off" if app.llm_missing else "on"}"></span></a>')
     # A page with work running updates itself in place (live.js), never by reloading.
     live = ' data-live' if refresh else ""
     banner = start_here(app, active)
@@ -391,7 +403,10 @@ LIVE_JS = r"""// Pages with work running update in place: no reload, no flash, s
         const fresh = doc.querySelector("main"), now = document.querySelector("main");
         if (fresh && now && fresh.innerHTML !== now.innerHTML) {
           const open = [...now.querySelectorAll("details")].map((d) => d.open);
+          // Forms marked data-keep stay as you left them: what you typed, the file you chose.
+          const kept = [...now.querySelectorAll("[data-keep][id]")];
           now.innerHTML = fresh.innerHTML;
+          kept.forEach((old) => now.querySelector("#" + old.id)?.replaceWith(old));
           now.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true; });
           // Scripts in the page (toggles, copy buttons) bind to the new content again.
           now.querySelectorAll("script[src]").forEach((old) => {
@@ -422,35 +437,57 @@ LIVE_JS = r"""// Pages with work running update in place: no reload, no flash, s
     setTimeout(poll, document.getElementById("tray")?.hasAttribute("data-active") ? 3000 : 15000);
   };
   setTimeout(poll, 3000);
+})();
+// Resume PDFs dropped on an upload box. A file dropped anywhere else is ignored, rather than
+// the browser opening it in place of the page.
+(() => {
+  const isPdf = (f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+  const files = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  const show = (zone, chosen, problem) => {
+    const out = zone.querySelector(".picked");
+    out.classList.toggle("bad", !!problem);
+    out.textContent = problem || [...chosen].map((f) => f.name).join(", ");
+  };
+  for (const type of ["dragenter", "dragover"]) {
+    document.addEventListener(type, (e) => {
+      if (!files(e)) return;
+      e.preventDefault();
+      const zone = e.target.closest?.(".dropzone");
+      document.querySelectorAll(".dropzone.over").forEach((z) => z !== zone && z.classList.remove("over"));
+      zone?.classList.add("over");
+      e.dataTransfer.dropEffect = zone ? "copy" : "none";
+    });
+  }
+  document.addEventListener("dragleave", (e) => {
+    const zone = e.target.closest?.(".dropzone");
+    if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove("over");
+  });
+  document.addEventListener("drop", (e) => {
+    if (!files(e)) return;
+    e.preventDefault();
+    document.querySelectorAll(".dropzone.over").forEach((z) => z.classList.remove("over"));
+    const zone = e.target.closest?.(".dropzone");
+    if (!zone) return;
+    const pdfs = [...e.dataTransfer.files].filter(isPdf);
+    if (!pdfs.length) return show(zone, [], "That isn't a PDF. Save your resume as a PDF and drop that.");
+    const box = new DataTransfer();
+    pdfs.forEach((f) => box.items.add(f));
+    zone.querySelector("input[type=file]").files = box.files;
+    show(zone, pdfs);
+  });
+  document.addEventListener("change", (e) => {
+    const zone = e.target.closest?.(".dropzone");
+    if (zone && e.target.type === "file") show(zone, e.target.files);
+  });
 })();"""
 
 
 def start_here(app: Dashboard, active: str) -> str:
-    """First-run guidance: connect Claude, then upload a resume and describe the jobs you want."""
-    parts = []
-    if app.llm_missing and active != "/connect":
-        parts.append('<div class="flash bad"><b>Claude isn\'t connected yet.</b> '
-                     '<a href="/connect">Connect Claude</a> to rank jobs and prepare applications.</div>')
-    try:
-        prefs = config.load_profile().get("preferences") or {}
-    except SystemExit:  # No profile yet.
-        prefs = {}
-    steps = [
-        (not app.llm_missing, '<a href="/connect">Connect Claude</a>'),
-        ((config.PROFILE_DIR / "resume.md").exists(),
-         '<a href="/resumes">Add your resume</a> (PDFs are merged into one master resume you review)'),
-        (bool(prefs.get("description") or prefs.get("roles")),
-         'Say what you want on <a href="/search">Search</a>: roles, places, season'),
-        (bool(app.tracker.status_counts()), 'Find jobs: <b>Refresh job lists</b> on <a href="/">Today</a>'),
-    ]
-    if not all(done for done, _ in steps) and active not in ("/resumes", "/connect"):
-        nxt = next(i for i, (done, _) in enumerate(steps) if not done)
-        items = "".join(f'<li{" class=next" if i == nxt else ""}>{"✓ " if done else ""}{text}</li>'
-                        for i, (done, text) in enumerate(steps))
-        parts.append('<div class=start><b>Start here</b><ol>' + items + '</ol>'
-                     '<span class=muted>Optional: import the applications you already sent on '
-                     '<a href="/applications">Applications</a>, so they\'re never prepared again.</span></div>')
-    return "".join(parts)
+    """A warning on every page when the model isn't connected (Get started has its own step for it)."""
+    if app.llm_missing and active not in ("/connect", "/setup"):
+        return ('<div class="flash bad"><b>Claude isn\'t connected yet.</b> '
+                '<a href="/connect">Connect Claude</a> to rank jobs and prepare applications.</div>')
+    return ""
 
 
 def quiet(html_form: str) -> str:
@@ -507,6 +544,20 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
     instead, set <code>MODEL_BACKEND=claude-code</code> in <code>.env</code> and restart.</p></div>
     {models_card(app)}"""
         return layout(app, "/connect", body, flash)
+    body = f"""<h1>Connect Claude</h1>
+    <div class=card>{connect_state(app)}</div>
+    {models_card(app)}
+    <div class=card><h2>Prefer an API key?</h2><p class=muted style="margin:0">Put
+    <code>MODEL_BACKEND=anthropic</code> and <code>ANTHROPIC_API_KEY=…</code> in <code>.env</code> (or sign in with
+    Anthropic's <code>ant auth login</code>) and restart. Billed per token, with <code>SPEND_CAP_USD</code> per run.
+    Job Agent is a personal tool: use your own account or key on your own computer.</p></div>"""
+    return layout(app, "/connect", body, flash)
+
+
+def connect_state(app: Dashboard, back: str = "") -> str:
+    """Your Claude Code sign-in and the steps to sign in; `back` is the page the forms return to."""
+    fields = {"next": back} if back else {}
+    hidden = f'<input type=hidden name=next value="{esc(back)}">' if back else ""
     info = claude_login.status(fresh=True)
     login = claude_login.current()
     if not info["installed"]:
@@ -519,13 +570,14 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
                  f'{esc(claude_login.describe(info))}</h2><p class=muted>Each model request runs Claude Code headless '
                  f'with your sign-in: a fresh, unsaved session with its own tools off. Usage counts against your '
                  f'Claude plan; nothing is billed per token.</p>'
-                 + form(app, "/connect/logout", "Sign out of Claude Code"))
+                 + form(app, "/connect/logout", "Sign out of Claude Code", fields))
     else:
         waiting = login is not None and login.running and login.url
         step2 = (f'<li>Approve on the Claude page (<a href="{esc(login.url)}" target=_blank>open it again</a>) '
                  f'and copy the code it shows.</li><li>Paste the code here:'
                  f'<form method=post action="/connect/code" class="row code">'
                  f'<input type=hidden name=token value="{app.token}">'
+                 f'{hidden}'
                  f'<input type=text name=code required autofocus placeholder="Code from the Claude page" '
                  f'style="max-width:420px"><button class=primary>Connect</button></form></li>'
                  if waiting else
@@ -533,17 +585,10 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
         state = (f'<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>Not signed in'
                  f'</h2><p class=muted>Sign in with your Claude account (Pro or Max) to use your plan. No API key.'
                  f'</p><ol class=steps><li class="{"done" if waiting else ""}">'
-                 + (form(app, "/connect/start", "Sign in with Claude", primary=True) if not waiting else
+                 + (form(app, "/connect/start", "Sign in with Claude", fields, primary=True) if not waiting else
                     "A Claude sign-in page opened in your browser.")
                  + f'</li>{step2}</ol>')
-    body = f"""<h1>Connect Claude</h1>
-    <div class=card>{state}</div>
-    {models_card(app)}
-    <div class=card><h2>Prefer an API key?</h2><p class=muted style="margin:0">Put
-    <code>MODEL_BACKEND=anthropic</code> and <code>ANTHROPIC_API_KEY=…</code> in <code>.env</code> (or sign in with
-    Anthropic's <code>ant auth login</code>) and restart. Billed per token, with <code>SPEND_CAP_USD</code> per run.
-    Job Agent is a personal tool: use your own account or key on your own computer.</p></div>"""
-    return layout(app, "/connect", body, flash)
+    return state
 
 # What each background task is, in words (tasks are stored by kind).
 TASK_NAMES = {
@@ -636,6 +681,209 @@ def waiting_on_you(app: Dashboard) -> list[dict]:
         if job["status"] == "needs_you" or (packet and packets.missing(packet)):
             out.append(job)
     return out
+
+
+# ----- getting started --------------------------------------------------------
+
+# How long the waits take, from real runs: reading a resume PDF, reading every company's job
+# list, and preparing one application.
+TAKES = {"resume": "under 2 minutes", "refresh": "2 to 6 minutes", "prepare": "2 to 8 minutes"}
+STARTED = ("prepared", "needs_you", "approved", "submitting", "submitted")  # An application exists.
+SETUP_SKIPPED = "setup-skipped"  # Files in data/: you chose to skip Get started,
+REVIEW_SEEN = "first-review-seen"  # and you've read the note on your first application.
+
+
+def setup_steps(app: Dashboard) -> list[dict]:
+    """The steps to your first application, each done or not, worked out from what you've done."""
+    try:
+        prefs = config.load_profile().get("preferences") or {}
+    except SystemExit:  # No profile yet.
+        prefs = {}
+    return [
+        {"key": "connect", "title": "Connect Claude", "done": not app.llm_missing},
+        {"key": "resume", "title": "Add your resume", "done": (config.PROFILE_DIR / "resume.md").exists()},
+        {"key": "wants", "title": "Say what you want", "done": bool(prefs.get("description") or prefs.get("roles"))},
+        {"key": "first", "title": "Get your first application", "done": bool(app.tracker.with_status(*STARTED))},
+    ]
+
+
+def setup_open(app: Dashboard) -> bool:
+    """Today shows Get started instead until your first application, unless you skipped it."""
+    return not setup_steps(app)[-1]["done"] and not (config.DATA_DIR / SETUP_SKIPPED).exists()
+
+
+def upload_form(app: Dashboard, back: str = "") -> str:
+    """Resume PDFs, dropped anywhere on the box or chosen. Kept as you left it while the page updates."""
+    fields = f'<input type=hidden name=next value="{esc(back)}">' if back else ""
+    return (f'<form method=post action="/resumes/upload" enctype="multipart/form-data" id=upload data-keep>'
+            f'<input type=hidden name=token value="{app.token}">{fields}'
+            f'<label class=dropzone><input type=file name=pdf accept="application/pdf,.pdf" multiple>'
+            f'<b>Drop your resume PDF here</b> <span class=muted>or click to choose. Several versions are fine: '
+            f'they\'re merged into one.</span><span class=picked></span></label>'
+            f'<div class=row style="margin-top:10px"><button class=primary>Upload and read</button></div></form>')
+
+
+def resume_step(app: Dashboard, busy: set) -> str:
+    if busy & {"import_resume", "merge_resumes"}:
+        return (f'<p><span class=spin></span> Reading your resume. Usually {TAKES["resume"]}. '
+                f'<b>Meanwhile, tell us what you want below.</b></p>')
+    proposal = resumes.proposal()
+    if not proposal:
+        return (upload_form(app, "/setup") + '<p class=muted style="margin:10px 0 0">It\'s read with its wording '
+                'kept and becomes your master resume: each application gets a tailored cut of it, never invented '
+                'lines. No PDF? <a href="/resumes">Write it on Resumes</a> instead.</p>')
+    lines = [line.strip() for line in proposal["markdown"].splitlines() if line.strip()]
+    name = next((line[2:] for line in lines if line.startswith("# ")), "")
+    contact = lines[lines.index("# " + name) + 1] if name and lines.index("# " + name) + 1 < len(lines) else ""
+    contact = "" if contact.startswith("#") else contact
+    sections = [line[3:] for line in lines if line.startswith("## ")]
+    roles = sum(line.startswith("### ") for line in lines)
+    checks = proposal["checks"]
+    flagged = any(checks.get(k) for k in ("invented_numbers", "unknown_words", "left_out")) or proposal.get("possible")
+    look = ('<div class="flash warn" style="margin:10px 0 0">A few lines need a look before you accept: '
+            '<a href="/resumes">see them on Resumes</a>.</div>' if flagged else "")
+    return (f'<p>Here\'s what was read. <b>Is this you?</b></p><div class=whoami><b>{esc(name or "No name found")}</b>'
+            f'<div>{esc(contact)}</div><div class=muted>{len(sections)} sections ({esc(", ".join(sections[:6]))}), '
+            f'{roles} roles or projects</div></div>{look}'
+            f'<div class=row style="margin-top:12px">{form(app, "/resumes/accept", "Yes, use this", {"next": "/setup"}, True)}'
+            f'<a class=button href="/resumes">Read all of it first</a></div>'
+            f'<p class=muted style="margin:8px 0 0">Your name, contact details and school are read from it for the '
+            f'forms; you can edit anything later on Resumes and Profile.</p>')
+
+
+def wants_step(app: Dashboard) -> str:
+    prefs = config.load_profile().get("preferences") or {}
+    types = prefs.get("job_types") or ["internship", "full_time"]
+    boxes = "".join(f'<label class=row style="gap:6px"><input type=checkbox name=job_types value="{t}"'
+                    f'{" checked" if t in types else ""}> {label}</label>'
+                    for t, label in (("internship", "Internships"), ("full_time", "Full-time")))
+    places = [p for p in prefs.get("locations") or [] if p.lower() != "any"]
+    auth = config.load_profile().get("work_authorization") or {}
+    if "authorized_in_us" in auth:
+        status = f'<p class=muted style="margin:12px 0 0">Work authorization: {esc(auth.get("rule") or "set")}.</p>'
+    else:
+        options = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in actions.AUTHORIZATION.items())
+        status = (f'<p style="margin:12px 0 4px"><b>Your work authorization</b> <span class=muted>(nearly every form '
+                  f'asks; answered from this by fixed rules, never guessed)</span></p><select name=authorization '
+                  f'style="width:auto"><option value="">Not listed: I\'ll set it on Profile</option>{options}</select>')
+    return (f'<form method=post action="/setup/wants" id=wants data-keep><input type=hidden name=token value="{app.token}">'
+            f'<p style="margin:0 0 4px"><b>What are you looking for?</b> <span class=muted>(in your own words: roles, '
+            f'fields, kinds of teams; anything that makes a job right or wrong for you)</span></p>'
+            f'<textarea name=description required style="min-height:100px" placeholder="e.g. Software or ML '
+            f'engineering internships for summer 2027, ideally at product companies. Not interested in sales.">'
+            f'{esc(prefs.get("description", ""))}</textarea>'
+            f'<div class=row style="gap:18px;margin-top:10px">{boxes}</div>'
+            f'<p style="margin:12px 0 4px"><b>Where?</b> <span class=muted>(one per line; "Remote" for remote in the '
+            f'US; empty for anywhere)</span></p><textarea name=locations style="min-height:60px" placeholder="New York, '
+            f'NY&#10;Remote">{esc(chr(10).join(places))}</textarea>'
+            f'<p style="margin:12px 0 4px"><b>Internship season</b> <span class=muted>(e.g. Summer 2027; empty for '
+            f'any)</span></p><input type=text name=terms value="{esc(", ".join(prefs.get("terms") or []))}">'
+            f'{status}<div class=row style="margin-top:14px"><button class=primary>Save and find jobs</button>'
+            f'<span class=muted>Everything else has sensible defaults; fine-tune it later on '
+            f'<a href="/search">Search</a>.</span></div></form>')
+
+
+def first_step(app: Dashboard, busy: set, tasks: list[dict]) -> str:
+    paste = (f'<h3>Have a job in mind?</h3><form method=post action="/link" class=row>'
+             f'<input type=hidden name=token value="{app.token}"><input type=url name=url required '
+             f'placeholder="Paste its link, e.g. https://jobs.lever.co/…" style="flex:1;min-width:240px">'
+             f'<button class=primary>Prepare this job</button></form>')
+    preparing = next((t for t in tasks if t["kind"] in PREPARES and t["status"] in ("queued", "running", "stopping")),
+                     None)
+    if preparing:
+        job = app.tracker.get(preparing["job_id"]) or {}
+        named = f'{esc(job.get("title", "the job"))} at {esc(job.get("company", ""))}'
+        return (f'<p><span class=spin></span> Preparing <a href="/job/{preparing["job_id"]}">{named}</a>. Usually '
+                f'{TAKES["prepare"]}: it reads the posting, checks your fit, tailors your resume, writes the cover '
+                f'letter and answers, and fills in the form, stopping before submit. '
+                f'<a href="/job/{preparing["job_id"]}">Watch each step on its page.</a></p>')
+    # A pick that couldn't go ahead (set aside once its posting was read): say why, and offer the next.
+    since = utc_days_ago(2 / 24)
+    tried = [app.tracker.get(t["job_id"]) for t in tasks
+             if t["kind"] in PREPARES and t["status"] == "done" and t["updated_at"] >= since]
+    stopped = next((j for j in tried if j and j["status"] in NOT_PREPARED), None)
+    note = (f'<div class="flash warn">Your pick, <a href="/job/{stopped["id"]}">{esc(stopped["title"])} at '
+            f'{esc(stopped["company"])}</a>, was {say(stopped["status"]).lower()}: {esc(stopped["reason"] or "")} '
+            f'That\'s found only once the whole posting is read. Pick another below.</div>' if stopped else "")
+    if "refresh" in busy:
+        find = (f'<p><span class=spin></span> Reading the job lists of thousands of companies for your search. '
+                f'Usually {TAKES["refresh"]}. You can paste a link above meanwhile.</p>')
+    elif "score_matches" in busy:
+        find = '<p><span class=spin></span> Ranking the jobs found against what you want. Usually under a minute.</p>'
+    elif app.tracker.with_status("found"):
+        picks, _ = actions.top_picks(app.tracker, app.settings, 5)
+        rows = []
+        for job in picks:
+            score, kind = matching.ranking_score(job)
+            badge = (f'<span class="score {"b-high" if score >= 80 else "b-mid" if score >= 60 else "b-low"}">{score}'
+                     f'</span>' if score is not None and kind != "keyword" else '<span class=muted>—</span>')
+            rows.append(f'<tr><td>{badge}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a><div class=muted>'
+                        f'{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
+                        f'<td>{form(app, "/prepare", "Prepare this one", {"job_id": job["id"]})}</td></tr>')
+        find = (f'<p class=muted>Your best matches, one per company. Pick one to start: it takes {TAKES["prepare"]}, '
+                f'and you can prepare more later from <a href="/jobs">Ranked jobs</a>.</p>'
+                f'<table><tr><th>Match</th><th>Job</th><th></th></tr>{"".join(rows)}</table>')
+    elif app.tracker.all():
+        find = ('<p>None of the jobs read passed your search. Widen the places or season above (or on '
+                '<a href="/search">Search</a>), then look again.</p>'
+                + form(app, "/setup/find", "Look again"))
+    else:
+        find = (f'<p class=muted>Reads the job lists of thousands of companies ({TAKES["refresh"]}), then ranks them '
+                f'against what you want.</p>' + form(app, "/setup/find", "Find my matches", primary=True))
+    return f'{paste}<h3 style="margin-top:18px">Or let Job Agent find matches</h3>{note}{find}'
+
+
+def page_setup(app: Dashboard, flash: str) -> bytes:
+    """Get started: the steps to a first application, each done right here, one opening the next."""
+    steps = setup_steps(app)
+    tasks = app.tracker.tasks(30)
+    busy = {t["kind"] for t in tasks if t["status"] in ("queued", "running", "stopping")}
+    cards, blocked = [], False
+    for n, step in enumerate(steps, 1):
+        key = step["key"]
+        if key == "first" and not all(s["done"] for s in steps[:-1]):
+            blocked = True  # Preparing needs your resume and what you want.
+        if step["done"]:
+            summary = {"connect": esc(app.connection), "resume": 'Saved. <a href="/resumes">Edit it</a>',
+                       "wants": 'Saved. <a href="/search">Fine-tune your search</a>',
+                       "first": "Done."}[key]
+            cards.append(f'<div class="card step done"><h2><span class=num>✓</span>{step["title"]} '
+                         f'<span class=muted>· {summary}</span></h2></div>')
+            continue
+        if blocked:
+            cards.append(f'<div class="card step locked"><h2><span class=num>{n}</span>{step["title"]}</h2></div>')
+            continue
+        body = {"connect": lambda: connect_state(app, "/setup"), "resume": lambda: resume_step(app, busy),
+                "wants": lambda: wants_step(app), "first": lambda: first_step(app, busy, tasks)}[key]()
+        cards.append(f'<div class="card step open" id=step-{key}><h2><span class=num>{n}</span>{step["title"]}</h2>'
+                     f'{body}</div>')
+        # A resume being read, or waiting for your yes, needn't hold up the next step.
+        blocked = not (key == "resume" and (busy & {"import_resume", "merge_resumes"} or resumes.proposal()))
+    done = sum(s["done"] for s in steps)
+    skip = ("" if (config.DATA_DIR / SETUP_SKIPPED).exists() else
+            form(app, "/setup/skip", "Skip, show me everything"))
+    body = (f'<div class=row style="justify-content:space-between"><h1>Get started</h1>{quiet(skip)}</div>'
+            f'<p class=muted style="margin-top:-6px">{done} of {len(steps)} done. Four steps to your first '
+            f'application, about 15 minutes, most of it waiting. Nothing is ever sent without you.</p>'
+            f'<div class=progress><span style="width:{done * 100 // len(steps)}%"></span></div>{"".join(cards)}')
+    return layout(app, "/setup", body, flash, refresh=bool(busy), title="Get started")
+
+
+def first_review_note(app: Dashboard, job: dict) -> str:
+    """On your first application, once: what to check before approving, and what approving does."""
+    if (job["status"] not in ("prepared", "needs_you") or (config.DATA_DIR / REVIEW_SEEN).exists()
+            or app.tracker.with_status("approved", "submitting", "submitted")):
+        return ""
+    return (f'<div class="card first-review"><h2>Your first application is ready. Here\'s what to check</h2><ol>'
+            f'<li><b>Anything that needs you</b> (the Application tab): questions only you can answer. Job Agent '
+            f'never guesses a fact about you.</li>'
+            f'<li><b>The tailored resume</b>, and the cover letter when the form has a place for one (the PDF '
+            f'buttons): every line comes from your master resume, but read them as the hiring manager would.</li>'
+            f'<li><b>The Review tab</b>: how to apply, and a hiring manager\'s quick first read.</li></ol>'
+            f'<p style="margin:0">Happy with it? <b>Approve</b> it. Approving doesn\'t send anything: you submit '
+            f'approved applications from the <a href="/queue">Approval queue</a>, and you can watch the form being '
+            f'filled in Chrome.</p><div class=row style="margin-top:10px">'
+            f'{form(app, "/setup/review-seen", "Got it", {"job_id": job["id"]})}</div></div>')
 
 
 def page_today(app: Dashboard, flash: str) -> bytes:
@@ -788,7 +1036,9 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
     body = f"""<h1>Approval queue</h1>
     <form method=post action="/approve"><input type=hidden name=token value="{app.token}">
     <div class="card"><table><tr><th></th><th>Job</th><th>Fit</th><th>How to apply</th><th>Status</th></tr>
-    {"".join(rows) or '<tr><td colspan=5 class=muted>Nothing waiting. Prepare some jobs from Today or Jobs.</td></tr>'}
+    {"".join(rows) or '<tr><td colspan=5 class=muted>Nothing waiting for you. Prepared applications land here for '
+     'you to check and approve; nothing is sent until you do. Paste a job link on <a href="/">Today</a>, or press '
+     '<b>Prepare</b> on a job in <a href="/jobs">Ranked jobs</a>.</td></tr>'}
     </table><div class="row" style="margin-top:12px">{'<button class=primary>Approve selected</button>' if selectable else
     '<span class=muted>Nothing here can be approved yet: open a job and answer its open questions first.</span>' if rows
     else ""}</div></div></form>
@@ -890,7 +1140,11 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
     <input type=text name=q value="{esc(query)}" placeholder="Search title, company or location" style="max-width:420px">
     <button>Search</button>{'<a href="/jobs?status=' + esc(status) + '">Clear</a>' if query else ''}</form>
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>Status</th><th></th></tr>
-    {"".join(rows) or '<tr><td colspan=5 class=muted>' + ('No jobs match “' + esc(query) + '”.' if query else 'None.') + '</td></tr>'}</table>
+    {"".join(rows) or '<tr><td colspan=5 class=muted>' + ('No jobs match “' + esc(query) + '”.' if query else
+     'None with this status.' if counts else
+     f'No jobs yet. Job Agent reads the job lists of thousands of companies ({TAKES["refresh"]}), keeps the ones '
+     f'that fit your <a href="/search">search</a>, and ranks them here, best first. '
+     + form(app, "/refresh", "Refresh job lists", primary=True)) + '</td></tr>'}</table>
     {pager}</div>"""
     return layout(app, "/jobs", body, flash, refresh=bool(refreshing) or preparing)
 
@@ -1103,6 +1357,8 @@ def not_prepared_card(app: Dashboard, job: dict) -> str:
         buttons.append(f'<a class="button primary" target=_blank rel=noopener href="{esc(job["url"])}">'
                        'Open the posting</a>')
     buttons.append(form(app, "/requeue", "Move back to New", {"job_id": job["id"]}))
+    if not setup_steps(app)[-1]["done"]:  # Getting a first application: the next match is a click away.
+        buttons.insert(0, '<a class=button href="/setup#step-first">Pick another match</a>')
     hint = ("The fit check below is why: read it before deciding. Prepare anyway reuses it (no second fit "
             "check) and makes the rest of the packet." if actions.below_threshold(job) else
             "Your filters are on the Search page; after changing one, Move back to New puts the job up "
@@ -1401,7 +1657,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         ("fit", "Fit and research", fit_card(fit, flags=True) + researched + description_card(job, packet)),
         ("people", "People" + (f" · {len(listed)}" if listed else ""), people_card(app, job, packet)),
     ]
-    body = f"""{head}
+    body = f"""{head}{first_review_note(app, job)}
     {"".join(f'<div class="flash bad">{w}</div>' for w in warn)}{needs}
     {decision_bar(job, packet, advice, len(warn), len(problems))}
     <div class="row" style="margin-bottom:16px">{" ".join(buttons)} {docs}</div>
@@ -1594,10 +1850,7 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
     wording kept, then all are merged into one master resume: everything from every version, with
     the newest version winning where they disagree. You review the result before it replaces
     your master resume, and the old one is kept in profile/resume-history/.</p>
-    <form method=post action="/resumes/upload" enctype="multipart/form-data">
-    <input type=hidden name=token value="{app.token}">
-    <div class=row><input type=file name=pdf accept="application/pdf" multiple required>
-    <button class=primary>Upload and merge</button></div></form></div>
+    {upload_form(app)}</div>
     <div class=card><h2>Your resumes <span class=muted>(oldest content first)</span></h2>
     <table><tr><th>File</th><th>Content through</th><th></th></tr>
     {"".join(rows) or '<tr><td colspan=3 class=muted>None yet.</td></tr>'}</table>
@@ -1735,7 +1988,9 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
     {'<a href="/applications">Show all</a>' if show else ''}</p>
     {rates}
     <div class=card><table><tr><th>Applied</th><th>Job</th><th>How</th><th>Outcome</th></tr>
-    {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Import your job sheet below.</td></tr>'}
+    {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Each one you submit shows here, and '
+     'you record what came of it (assessment, interview, offer) to see what works. Already applied to some jobs? '
+     'Import your job sheet below, so they are never prepared again.</td></tr>'}
     </table>{legend}</div>
     <div class=card><h2>Import or export</h2>
     <p class=muted>Import a CSV job sheet with a link, company, role and a status column
@@ -2074,7 +2329,9 @@ def chat_card(app: Dashboard, item_id: int, choice: str) -> None:
 
 def page_activity(app: Dashboard) -> bytes:
     """Recent runs on jobs (each opens its timeline), then the worker's raw log."""
-    text = LOG_PATH.read_text(encoding="utf-8")[-20000:] if LOG_PATH.exists() else "No activity yet."
+    text = LOG_PATH.read_text(encoding="utf-8")[-20000:] if LOG_PATH.exists() else (
+        "No activity yet. Everything Job Agent does in the background is written here as it happens: useful "
+        "when something fails and you want to see why.")
     running = app.worker is not None and app.worker.poll() is None
     rows = []
     for path in trace.recent(40):
@@ -2159,7 +2416,9 @@ def handler_for(app: Dashboard):
             flash = query.get("msg", "")
             parts = url.path.strip("/").split("/")
             if url.path == "/":
-                return self.send(page_today(app, flash))
+                return self.send(page_setup(app, flash) if setup_open(app) else page_today(app, flash))
+            if url.path == "/setup":
+                return self.send(page_setup(app, flash))
             if url.path == "/assistant":
                 chat = query.get("chat", "")
                 latest = app.chats.chats()
@@ -2324,18 +2583,22 @@ def handler_for(app: Dashboard):
 
         def act(self, path: str, one: dict, fields: dict, back: str) -> tuple[str, str]:
             tracker = app.tracker
+
+            def to(page: str) -> str:  # Where a form goes after: Get started, when it was sent from there.
+                return "/setup" if one.get("next") == "/setup" else page
+
             ids = [int(i) for raw in fields.get("ids", []) for i in raw.split(",") if i.strip().isdigit()]
             if path == "/connect/start":
                 login = claude_login.start()
                 if not login.url:
                     raise ValueError("Claude Code didn't start its sign-in: " + " ".join(login.output)[-200:])
-                return "A Claude sign-in page opened in your browser. Approve it, then paste the code here.", "/connect"
+                return "A Claude sign-in page opened in your browser. Approve it, then paste the code here.", to("/connect")
             if path == "/connect/code":
                 info = claude_login.finish(one.get("code", ""))
-                return f"Connected: {claude_login.describe(info)}.", "/connect"
+                return f"Connected: {claude_login.describe(info)}.", to("/connect")
             if path == "/connect/logout":
                 claude_login.logout()
-                return "Signed out of Claude Code on this computer.", "/connect"
+                return "Signed out of Claude Code on this computer.", to("/connect")
             if path == "/discover":
                 app.ensure_worker()
                 tracker.add_task("discover")
@@ -2398,6 +2661,37 @@ def handler_for(app: Dashboard):
                     tracker.add_task("refresh")
                     return message + " Follow it on Today.", "/"
                 return message + " Rank them on the Ranked jobs page.", "/search"
+            if path == "/setup/wants":
+                if not one.get("description", "").strip():
+                    raise ValueError("Say in a sentence or two what you're looking for: it's what jobs are ranked by.")
+                if one.get("authorization") and "authorized_in_us" not in (
+                        config.load_profile().get("work_authorization") or {}):
+                    actions.set_work_authorization(tracker, one["authorization"])
+                types = [t for t in fields.get("job_types", []) if t in ("internship", "full_time")]
+                message, refresh = actions.save_search(tracker, app.settings, {
+                    **config.load_search(),  # Only these change; the rest of Search stays as it was.
+                    "description": one.get("description", "").strip(),
+                    "job_types": types or ["internship", "full_time"],
+                    "locations": [l.strip() for l in one.get("locations", "").splitlines() if l.strip()] or ["any"],
+                    "terms": [w.strip() for w in one.get("terms", "").split(",") if w.strip()],
+                })
+                if refresh:
+                    app.ensure_worker()
+                    tracker.add_task("refresh", arg=None if app.llm_missing else "rank")
+                    return "Saved. Finding jobs for it now.", "/setup"
+                return message, "/setup"
+            if path == "/setup/find":
+                app.ensure_worker()
+                tracker.add_task("refresh", arg=None if app.llm_missing else "rank")
+                return "Finding jobs for your search.", "/setup"
+            if path == "/setup/skip":
+                config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                (config.DATA_DIR / SETUP_SKIPPED).touch()
+                return "Get started is out of your way. The “Getting started” link at the top brings it back.", "/"
+            if path == "/setup/review-seen":
+                config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                (config.DATA_DIR / REVIEW_SEEN).touch()
+                return "", back
             if path == "/stop-task":
                 return tracker.stop_task(int(one["task_id"])), back
             if path == "/link":
@@ -2530,7 +2824,7 @@ def handler_for(app: Dashboard):
                 for pdf in saved:
                     tracker.add_task("import_resume", arg=str(pdf))
                 tracker.add_task("merge_resumes")
-                return f"Reading {len(saved)} resume(s), then merging. This page updates itself.", "/resumes"
+                return f"Reading {len(saved)} resume(s), then merging. This page updates itself.", to("/resumes")
             if path == "/resumes/merge":
                 app.ensure_worker()
                 tracker.add_task("merge_resumes")
@@ -2543,7 +2837,7 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 tracker.add_task("sync_profile")
                 return ("Saved as your master resume; updating your profile from it."
-                        + (f" The previous one is in {shown(backup)}." if backup else "")), "/resumes"
+                        + (f" The previous one is in {shown(backup)}." if backup else "")), to("/resumes")
             if path == "/resumes/edit":
                 resumes.edit_proposal(one.get("markdown", ""))
                 return "Saved your edits to the proposal.", "/resumes"
