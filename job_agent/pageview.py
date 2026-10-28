@@ -111,6 +111,29 @@ FINAL_SUBMIT = re.compile(
     r"complete application|apply now and submit)\s*$", re.I)
 
 
+# Connection failures that pass: a dropped socket, a VPN or Wi-Fi change, a DNS hiccup.
+TRANSIENT_NET = re.compile(
+    r"net::ERR_(SOCKET_NOT_CONNECTED|CONNECTION_(RESET|CLOSED|ABORTED|REFUSED|TIMED_OUT)|NETWORK_CHANGED|"
+    r"TIMED_OUT|EMPTY_RESPONSE|NAME_RESOLUTION_FAILED|INTERNET_DISCONNECTED|HTTP2_PROTOCOL_ERROR)")
+
+
+def goto(page, url: str, tries: int = 3, **options):
+    """page.goto with wait_until=domcontentloaded, tried again after a passing network error."""
+    options.setdefault("wait_until", "domcontentloaded")
+    for attempt in range(tries):
+        try:
+            return page.goto(url, **options)
+        except PlaywrightError as error:
+            found = TRANSIENT_NET.search(str(error))
+            if not found:
+                raise
+            if attempt == tries - 1:
+                raise PlaywrightError(f"The page didn't load after {tries} tries ({found.group(0)} at {url}). "
+                                      "This is a network problem on the way to the site, not the job; "
+                                      "trying again later is safe.") from error
+            page.wait_for_timeout(1000 * 2 ** attempt)
+
+
 def follow_new_tab(context, page, before: int, wait: float = 1.5):
     """After a click: the tab it opened (loaded), else the same page after a short pause."""
     deadline = time.time() + wait
@@ -191,7 +214,7 @@ class PageView:
     def goto(self, url: str) -> None:
         if not re.match(r"^https?://", url):
             raise ValueError("Use an absolute http(s) URL.")
-        self.page.goto(url, wait_until="domcontentloaded")
+        goto(self.page, url)
 
     def click(self, ref: str) -> None:
         locator = self.locate(ref)

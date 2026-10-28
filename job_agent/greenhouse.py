@@ -14,6 +14,7 @@ import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from .pageview import goto
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, clean, norm, pick_option,  # noqa: F401
                     unexpected, visible_text, wait_for_result)
 
@@ -226,7 +227,7 @@ def merge(api: list[dict], page: list[dict]) -> tuple[list[dict], list[str]]:
 
 
 def read_form(page, board: str, job_id: str, data: dict) -> tuple[list[dict], list[str]]:
-    page.goto(apply_url(board, job_id), wait_until="domcontentloaded")
+    goto(page, apply_url(board, job_id))
     page.locator("#application-form, form").first.wait_for(timeout=20000)
     page.wait_for_timeout(800)
     fields, notes = merge(api_fields(data), page_fields(page))

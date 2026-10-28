@@ -10,6 +10,7 @@ invisible hCaptcha; a visible challenge is handed to you.
 
 from urllib.parse import quote
 
+from .pageview import goto
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
                     pick_option, select_native, type_into, visible_text, wait_for_result)
 
@@ -91,7 +92,7 @@ def page_fields(page) -> list[dict]:
 
 
 def read_form(page, board: str, job_id: str, data: dict) -> tuple[list[dict], list[str]]:
-    page.goto(apply_url(board, job_id), wait_until="domcontentloaded")
+    goto(page, apply_url(board, job_id))
     try:
         page.locator("#application-form, form[action*='/apply']").first.wait_for(timeout=20000)
     except Exception:  # noqa: BLE001 - no form: closed or applications paused.

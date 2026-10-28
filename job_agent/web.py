@@ -23,7 +23,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from . import answers, config, forms
 from .harness import AgentRun, StopRun, Tool, schema
-from .pageview import FINAL_SUBMIT, PageView, follow_new_tab
+from .pageview import FINAL_SUBMIT, PageView, follow_new_tab, goto
 from .tracker import NOISE, normalize
 
 MAX_QUESTIONS = 3
@@ -40,7 +40,7 @@ def fetch(ctx, job: dict) -> dict:
     """The posting page, rendered (custom career sites are often built in JavaScript)."""
     page = ctx.headless.new_page()
     try:
-        response = page.goto(job["url"], wait_until="domcontentloaded", timeout=30000)
+        response = goto(page, job["url"], timeout=30000)
         if response and response.status in (404, 410):
             raise forms.Closed(f"The posting page returns {response.status}.")
         try:
@@ -414,11 +414,11 @@ def walk(page, packet, files, ask, *, email, tracker, before_final, known, log):
     by_key = {a["key"]: a for a in packet["answers"]}
     context = page.context
     log("  replaying the recorded application")
-    page.goto(recording["start"], wait_until="domcontentloaded")
+    goto(page, recording["start"])
     for number, step in enumerate(recording["steps"], 1):
         settle(page)
         if step["action"] == "goto":
-            page.goto(step["url"], wait_until="domcontentloaded")
+            goto(page, step["url"])
             continue
         target = step["target"]
         found = find(page, target, strict=step["auth"])

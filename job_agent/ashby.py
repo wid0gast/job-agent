@@ -9,6 +9,7 @@ is which. Widgets: text inputs, yes/no buttons, radios, checkboxes, type-ahead
 comboboxes (location, school) and month/year dropdowns (education dates).
 """
 
+from .pageview import goto
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
                     select_native, type_into, visible_text, wait_for_result)
 
@@ -157,7 +158,7 @@ def page_fields(page, schema: dict | None = None) -> list[dict]:
 
 
 def read_form(page, board: str, job_id: str, data: dict) -> tuple[list[dict], list[str]]:
-    page.goto(apply_url(board, job_id), wait_until="domcontentloaded")
+    goto(page, apply_url(board, job_id))
     try:
         page.locator(".ashby-application-form-field-entry").first.wait_for(timeout=20000)
     except Exception:  # noqa: BLE001

@@ -9,6 +9,7 @@ and is never retried automatically after that.
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .pageview import goto
 from . import answers, companies, forms, packets, systems, trace, web
 
 
@@ -60,7 +61,7 @@ def _submit(job_id: int, ctx, ask, log) -> str:
             return step.summary
     with trace.step("Opening the form and comparing it") as step:
         log("  opening the form")
-        page.goto(packet["job"]["apply_url"], wait_until="domcontentloaded")
+        goto(page, packet["job"]["apply_url"])
         page.wait_for_load_state("networkidle", timeout=20000)
         page.wait_for_timeout(1000)
         fields = system.page_fields(page)
