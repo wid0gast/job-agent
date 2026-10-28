@@ -33,7 +33,8 @@ DEFAULT_API_MODEL = "claude-opus-5-5"
 TIERS = {"light": "claude-haiku-5-5", "standard": "claude-sonnet-5-5", "best": "claude-opus-5-5"}
 # Task (the JSON schema name, or the agent) -> (tier, effort).
 TASKS = {
-    "match_scores": ("light", "low"),          # ~60 job titles per call; the fit check reads postings later
+    "match_scores": ("light", "low"),
+    "posting_facts": ("light", "low"),         # a pasted link's title, company and place          # ~60 job titles per call; the fit check reads postings later
     "resume_markdown": ("standard", "low"),    # a PDF's text to Markdown, wording kept
     "resume_merge": ("standard", "medium"),    # which lines of several resume versions say the same thing
     "resume_facts": ("standard", "low"),       # contact, education, work authorization: used in every form

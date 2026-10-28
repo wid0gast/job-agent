@@ -425,3 +425,32 @@ def test_a_form_page_that_wont_load_is_tried_longer_then_prepared_without_it(ctx
     assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
     packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
     assert len(tries) == 2 and any("didn't load" in n for n in packet["form_notes"])
+
+
+def test_a_pasted_link_is_named_from_its_posting_and_prepared_past_your_filters(ctx, monkeypatch):
+    from job_agent import filters, links, worker
+
+    monkeypatch.setattr(filters, "check", lambda *a: "Location: Boston, MA (you're looking in New York).")
+
+    scripted = ctx.llm.json
+    ctx.llm.json = lambda *a: ({"title": "Wrong title", "company": "Contoso AI", "location": "Boston, MA"}
+                               if a[3] == "posting_facts" else scripted(*a))
+    url = "https://job-boards.greenhouse.io/contoso/jobs/4001"
+    job_id, queued, _ = actions.prepare_link(ctx.tracker, url)
+    assert queued and ctx.tracker.get(job_id)["title"] == links.PLACEHOLDER
+    [task] = [t for t in ctx.tracker.tasks(5) if t["kind"] == "link"]
+    result = worker._link(task, ctx, lambda *_: None)
+    job = ctx.tracker.get(job_id)
+    # Greenhouse gives the title and place itself; the model only supplies the company the API lacks.
+    assert (job["title"], job["company"], job["location"]) == (demo_greenhouse.JOBS["4001"], "Contoso AI", "New York, NY")
+    assert job["status"] == "prepared", result  # Your filters would set it aside: you chose it anyway.
+    assert actions.prepare_link(ctx.tracker, url)[1] is False  # The same link again prepares nothing twice.
+
+
+def test_a_link_that_isnt_one_is_refused_before_anything_is_added(ctx):
+    from job_agent import links
+
+    with pytest.raises(ValueError, match="doesn't look like a link"):
+        links.add(ctx.tracker, "senior engineer at acme")
+    assert links.clean("jobs.lever.co/acme/123") == "https://jobs.lever.co/acme/123"
+    assert not ctx.tracker.leads(5)

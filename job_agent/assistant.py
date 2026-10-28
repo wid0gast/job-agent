@@ -170,6 +170,13 @@ class Assistant:
     def rank_jobs(self):
         return self.queue("score_matches", note="Claude scores the best keyword matches (a minute or two).")
 
+    def prepare_from_link(self, url: str):
+        job_id, queued, said = actions.prepare_link(self.tracker, url)
+        if queued:
+            self.chat.start_worker()
+        return {"job_id": job_id, "queued": queued, "result": said,
+                "page": f"/job/{job_id}"}
+
     def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False,
                              confirmed: bool = False):
         ids = list(dict.fromkeys(int(i) for i in job_ids))
@@ -551,6 +558,10 @@ class Assistant:
                  "agreed to that number.",
                  schema({"job_ids": ids, "note": string, "anyway": boolean, "confirmed": boolean}, ["job_ids"]),
                  self.prepare_applications),
+            Tool("prepare_from_link", "The user pasted a job posting's link: add that job and prepare it (reads "
+                 "the posting, checks fit, then the whole application; a low fit stops and is set aside for the "
+                 "user to decide, like any job). The user's Search filters don't apply to a job they chose. "
+                 "Background task; nothing is sent.", schema({"url": string}, ["url"]), self.prepare_from_link),
             Tool("edit_answer", "Change one answer in a packet (keys from get_packet). Short answers and choices "
                  "must be facts the user stated (in this chat or their profile); essays (long text answers) may be "
                  "written for them. remember=true saves a short answer for future applications.",

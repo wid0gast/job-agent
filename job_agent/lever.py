@@ -8,6 +8,7 @@ resume goes first and everything else is typed over it. Submit runs an
 invisible hCaptcha; a visible challenge is handed to you.
 """
 
+import html
 from urllib.parse import quote
 
 from .pageview import goto
@@ -68,7 +69,10 @@ def fetch(client, board: str, job_id: str) -> dict:
         response = client.get(f"{api}/{board}/{job_id}", params={"mode": "json"})
         if response.status_code == 200:
             data = response.json()
-            parts = [data.get("description", "")]
+            # Lever keeps the place and the kind of job beside the text, not in it.
+            facts = [f"{name}: {html.escape(value)}" for name, value in (data.get("categories") or {}).items()
+                     if isinstance(value, str) and value]
+            parts = ([f"<p>{' · '.join(facts)}</p>"] if facts else []) + [data.get("description", "")]
             parts += [f"<h3>{item['text']}</h3>{item['content']}" for item in data.get("lists", [])]
             parts.append(data.get("additional", ""))
             return {"title": data.get("text"), "html": "".join(parts), "data": data}

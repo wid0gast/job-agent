@@ -104,6 +104,23 @@ def prepare_anyway(tracker, job_id: int) -> int:
     return tracker.add_task("prepare", job_id)
 
 
+def prepare_link(tracker, url: str) -> tuple[int, bool, str]:
+    """Prepare the job at a link you pasted (links.py). Returns (job id, whether a task was queued,
+    what happened in words). A job already known is prepared only if it's still new."""
+    from . import links
+
+    job_id, new = links.add(tracker, url)
+    job = tracker.get(job_id)
+    busy = any(t["job_id"] == job_id and t["kind"] in ("prepare", "link") and t["status"] in ("queued", "running")
+               for t in tracker.tasks(40))
+    if busy:
+        return job_id, False, "This job is already being prepared."
+    if not new and job["status"] != "found":
+        return job_id, False, f"You already have this job: {job['title']} at {job['company']} ({job['status'].replace('_', ' ')})."
+    tracker.add_task("link" if job["title"] == links.PLACEHOLDER else "prepare", job_id)
+    return job_id, True, "Preparing the job from your link. Its page shows each step as it happens."
+
+
 def top_picks(tracker, settings, count: int) -> tuple[list[dict], list[dict]]:
     """The best-ranked found jobs to prepare: one per role and one per company (several at one
     company would use up its limit at once), none at a company already at its limit, and none

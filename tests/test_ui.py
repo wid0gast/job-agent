@@ -67,11 +67,11 @@ def test_whole_flow_in_the_dashboard(env, tmp_path, monkeypatch):  # noqa: F811
 
             page.goto(f"{base}/queue")
             for _ in range(60):
-                if page.get_by_text("Machine Learning Intern").count():
+                if page.locator("main").get_by_text("Machine Learning Intern").count():
                     break
                 time.sleep(0.5)
                 page.reload()
-            page.get_by_role("link", name="Machine Learning Intern").click()
+            page.locator("main").get_by_role("link", name="Machine Learning Intern").click()
             # The decision at a glance, then tabs: the fit check is under its own.
             expect(page.locator(".decide")).to_contain_text("Ready to approve")
             page.get_by_role("link", name="Fit and research").click()
@@ -85,7 +85,7 @@ def test_whole_flow_in_the_dashboard(env, tmp_path, monkeypatch):  # noqa: F811
             # One form for every answer; only the one you changed is saved.
             expect(page.locator(".flash")).to_contain_text("Saved 1 change(s).")
             page.get_by_role("button", name="Approve").click()
-            expect(page.locator(".pill").first).to_have_text("approved")
+            expect(page.locator(".pill").first).to_have_text("Approved")
 
             page.get_by_role("button", name="Submit now").click()
             # The demo Greenhouse emails a security code; the dashboard asks for it.
@@ -103,7 +103,7 @@ def test_whole_flow_in_the_dashboard(env, tmp_path, monkeypatch):  # noqa: F811
                     break
                 time.sleep(0.5)
             page.goto(f"{base}/job/{job_id}")
-            expect(page.locator(".pill").first).to_have_text("submitted")
+            expect(page.locator(".pill").first).to_have_text("Applied")
             expect(page.get_by_role("link", name="screenshot")).to_be_visible()
             browser.close()
         sent = demo_greenhouse.SUBMISSIONS[-1]

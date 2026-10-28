@@ -25,7 +25,7 @@ KEEP_RUNS = 8           # Per job: older traces are deleted.
 MAX_TEXT = 60_000       # A prompt or reply longer than this is cut in the trace.
 KINDS = {"prepare": "Prepare", "people": "Find people to contact", "redraft": "Rewrite messages",
          "render": "Typeset documents", "letter": "Write a cover letter", "draft": "Draft missing answers", "submit": "Submit",
-         "first_read": "A hiring manager's first read"}
+         "first_read": "A hiring manager's first read", "link": "Read a pasted link"}
 
 _current: contextvars.ContextVar = contextvars.ContextVar("trace", default=None)
 

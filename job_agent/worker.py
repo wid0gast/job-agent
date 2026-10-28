@@ -45,6 +45,18 @@ def browser_lock():
         handle.close()
 
 
+def running() -> bool:
+    """Whether a worker (or a CLI command) holds the browser lock right now."""
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK_PATH.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        return False
+
+
 class Context:
     """Shared by pipeline steps: settings, tracker, model, HTTP and browsers."""
 
@@ -147,6 +159,25 @@ def _prepare(task, ctx, log) -> str:
     return said
 
 
+def _link(task, ctx, log) -> str:
+    """A pasted link: name the job from its posting, then prepare it."""
+    from . import links
+
+    job = ctx.tracker.get(task["job_id"])
+    if job["title"] == links.PLACEHOLDER and job["status"] == "found":
+        ctx.tracker.move(job["id"], "found", "preparing", reason="Reading the link.")
+        try:
+            links.name(job, ctx, log)
+        except stopping.Stopped:
+            ctx.tracker.move(job["id"], "preparing", "found", reason="Stopped by you; prepare it again any time.")
+            raise
+        except Exception as error:
+            ctx.tracker.move(job["id"], "preparing", "failed", reason=f"Couldn't read the link: {error}"[:1500])
+            raise
+        ctx.tracker.move(job["id"], "preparing", "found", reason=None)
+    return _prepare(task, ctx, log)
+
+
 def _refresh(task, ctx, log) -> str:
     from . import matching, sources
 
@@ -200,6 +231,7 @@ HANDLERS = {
     "score_matches": lambda task, ctx, log: score_matches(ctx, log),
     # arg: a note on what to change, for a redo.
     "prepare": lambda task, ctx, log: _prepare(task, ctx, log),
+    "link": lambda task, ctx, log: _link(task, ctx, log),
     "draft": lambda task, ctx, log: step("prepare", "draft_missing")(task["job_id"], ctx, log),
     "render": lambda task, ctx, log: step("prepare", "render")(task["job_id"], ctx, log),
     "letter": lambda task, ctx, log: step("prepare", "add_letter")(task["job_id"], ctx, log),
@@ -207,7 +239,7 @@ HANDLERS = {
     "first_read": lambda task, ctx, log: step("first_read", "again")(task["job_id"], ctx, log),
     "submit": lambda task, ctx, log: step("submit", "submit")(task["job_id"], ctx, ctx.ask, log),
 }
-NEEDS_MODEL = ("sync_profile", "import_resume", "first_read")
+NEEDS_MODEL = ("sync_profile", "import_resume", "first_read", "link")
 
 
 def score_matches(ctx: Context, log) -> str:

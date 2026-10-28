@@ -29,8 +29,27 @@ from .worker import DB_PATH
 
 LOG_PATH = config.DATA_DIR / "logs" / "worker.log"
 QUEUE = ("prepared", "needs_you", "approved", "submitting")
+PREPARES = ("prepare", "link")  # Task kinds that prepare a job (link: from a pasted link).
 ORDER = ("found", "preparing", "prepared", "needs_you", "approved", "submitting", "submitted",
          "filtered_out", "failed", "rejected", "skipped", "closed", "working")
+# What each status is called on the page: the stored names are for code.
+STATUS_WORDS = {
+    "found": "New", "preparing": "Preparing", "prepared": "Ready for review", "needs_you": "Needs you",
+    "approved": "Approved", "submitting": "Sending", "submitted": "Applied", "filtered_out": "Set aside",
+    "failed": "Couldn't finish", "rejected": "Dropped", "skipped": "Not interested", "closed": "Posting closed",
+    "working": "Agent working",
+    # Background tasks.
+    "queued": "Waiting to start", "running": "Running", "stopping": "Stopping", "waiting": "Needs your answer",
+    "done": "Done", "stopped": "Stopped",
+}
+
+
+def say(status: str) -> str:
+    return STATUS_WORDS.get(status, status.replace("_", " "))
+
+
+def pill(status: str) -> str:
+    return f'<span class="pill {esc(status)}">{esc(say(status))}</span>'
 
 # A briefcase with a spark: the app's mark, inline so the page loads nothing else.
 LOGO = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
@@ -38,6 +57,12 @@ LOGO = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="cur
         '<path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M3 13h18"/></svg>')
 
 CSS = """
+#tray{position:fixed;right:16px;bottom:16px;z-index:6;max-width:min(440px,calc(100vw - 32px));background:var(--card);
+border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px rgba(15,23,42,.14);padding:10px 14px;font-size:14px}
+#tray summary{cursor:pointer}#tray ul{margin:8px 0 4px;padding:0;list-style:none;max-height:40vh;overflow:auto}
+#tray li{padding:4px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}#tray li.bad{color:var(--bad)}
+#tray li.bad .muted{color:var(--muted)}body.chat #tray{top:70px;bottom:auto}#tray form{display:inline}#tray .spin{flex:none}
+.posting{white-space:pre-wrap;max-height:480px;overflow:auto;margin-top:10px;font-size:14px;line-height:1.5}
 :root{--bg:#f6f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--line:#e4e7ef;--soft:#f1f3f9;
 --accent:#4f46e5;--accent-2:#7c3aed;--accent-soft:#eef0ff;--good:#059669;--good-soft:#e7f8f1;
 --bad:#dc2626;--bad-soft:#fdecec;--warn:#b45309;--warn-soft:#fff5e5;--info:#0369a1;--info-soft:#e8f4fb;
@@ -114,7 +139,7 @@ button:hover,.button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(
 button:active{transform:translateY(1px)}
 button.primary,.button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
 box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover,.button.primary:hover{filter:brightness(1.06);text-decoration:none}
-input[type=text],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
+input[type=text],input[type=url],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
 padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);
 transition:border-color .15s,box-shadow .15s}
 input[type=file]{font:inherit;color:var(--muted)}
@@ -129,7 +154,7 @@ background:var(--card);box-shadow:var(--shadow);overflow:hidden;transition:trans
 .stat:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
 .stat::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--muted)}
 .stat b{display:block;font-size:28px;letter-spacing:-.02em;line-height:1.15}
-.stat span{font-size:12.5px;font-weight:500;text-transform:capitalize}
+.stat span{font-size:12.5px;font-weight:500}
 .st-found::before{background:var(--info)}.st-prepared::before{background:var(--accent)}
 .st-needs_you::before{background:var(--warn)}.st-approved::before{background:var(--good)}
 .st-submitted::before{background:linear-gradient(90deg,var(--good),var(--accent))}
@@ -141,7 +166,7 @@ border:1px solid color-mix(in srgb,var(--info) 25%,transparent)}
 .flash.warn,.flash.bad{color:var(--text)}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px}
 .tab{padding:6px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--muted);
-font-weight:600;font-size:13px;text-transform:capitalize}
+font-weight:600;font-size:13px}
 .tab:hover{color:var(--text);text-decoration:none;border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
 .tab.on{background:var(--text);border-color:var(--text);color:var(--card)}
 pre{white-space:pre-wrap;font:12px/1.55 ui-monospace,"SF Mono",monospace;max-height:520px;overflow:auto;
@@ -250,6 +275,7 @@ class Dashboard:
         self.model = llm.model if llm else ""  # Set only when CLAUDE_MODEL forces one model.
         self.plan = llm.plan() if llm else {}  # Task -> (model, effort)
         self._missing: bool | None = None  # Tests set llm_missing directly.
+        self.tray_seen = 0  # Failed tasks up to this id are hidden from the tray ("Hide failures").
         self.chats = ChatStore(DB_PATH)
         self.chats.recover()
         self.turns = Turns(self.chats, self.tracker, settings, lambda: self.ensure_worker())
@@ -345,9 +371,9 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=referrer content=same-origin><meta name=viewport "
             f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
             f"<title>{esc(title + ' · ' if title else '')}Job Agent</title><style>{FIRST_PAINT}</style>"
-            f"<link rel=stylesheet href=/style.css></head><body{live}><header>"
+            f"<link rel=stylesheet href=/style.css></head><body{live}{' class=chat' if active == '/assistant' else ''}><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
-            f"<main>{banner}{note}{body}</main><script src=/live.js></script></body></html>").encode()
+            f"<main>{banner}{note}{body}</main>{tray(app)}<script src=/live.js></script></body></html>").encode()
 
 
 # The page's background before the stylesheet arrives, so moving between pages never flashes white.
@@ -378,6 +404,24 @@ LIVE_JS = r"""// Pages with work running update in place: no reload, no flash, s
     setTimeout(tick, 2500);
   };
   setTimeout(tick, 2500);
+})();
+// The background-work tray, on every page: it follows the work while any is running.
+(() => {
+  const poll = async () => {
+    const tray = document.getElementById("tray");
+    if (!tray) return;
+    if (!document.hidden) {
+      try {
+        const html = await (await fetch("/tray", {cache: "no-store"})).text();
+        const open = tray.querySelector("details")?.open ?? true;
+        tray.outerHTML = html;
+        const details = document.querySelector("#tray details");
+        if (details) details.open = open;
+      } catch (_) { /* The next poll tries again. */ }
+    }
+    setTimeout(poll, document.getElementById("tray")?.hasAttribute("data-active") ? 3000 : 15000);
+  };
+  setTimeout(poll, 3000);
 })();"""
 
 
@@ -504,11 +548,84 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
 # What each background task is, in words (tasks are stored by kind).
 TASK_NAMES = {
     "refresh": "Refresh job lists", "discover": "Discover companies", "score_matches": "Rank jobs",
-    "prepare": "Prepare", "draft": "Draft missing answers", "render": "Typeset again", "letter": "Write a cover letter",
+    "prepare": "Prepare", "link": "Prepare from a link", "draft": "Draft missing answers", "render": "Typeset again", "letter": "Write a cover letter",
     "people": "Find people to contact", "redraft": "Redraft messages", "submit": "Submit",
     "first_read": "Hiring manager's first read",
     "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes", "import_resume": "Read a resume PDF",
 }
+
+
+# A failed task's error, said plainly, with what to do about it: (pattern, what happened, what to do).
+ERRORS = [
+    (r"No (Claude|model) connection|not signed in|log ?in|auth", "The model isn't connected or signed in.",
+     "Sign in again on the Connect page, then try again."),
+    (r"spending cap|SPEND_CAP", "This run reached its spending cap.", "Raise SPEND_CAP_USD or try again later."),
+    (r"usage limit|rate.?limit|\b429\b|Too Many Requests|overloaded",
+     "The model or the site is limiting requests for now.", "Wait a few minutes, then try again."),
+    (r"net::ERR_|network problem|timed? ?out|Timeout|connection|socket",
+     "A network problem on the way to the site.", "Trying again is safe; it usually works the second time."),
+    (r"Couldn't read (this posting|a job posting)|signed in", "The posting couldn't be read.",
+     "Open the posting yourself to check it's still up."),
+]
+
+
+def plain_error(text: str) -> tuple[str, str]:
+    """(what happened, what to do) for a task's error text."""
+    text = re.sub(r"^\w+(Error|Exception|Exit): ", "", (text or "").strip()).split("\n")[0]
+    for pattern, happened, todo in ERRORS:
+        if re.search(pattern, text, re.I):
+            return happened, todo
+    return (text[:200] or "It stopped without saying why."), "Try again; if it fails the same way, open Activity."
+
+
+def task_line(app: Dashboard, task: dict, tasks: list[dict]) -> str:
+    """One background task in words: what it is, what it's on, and where it's got to."""
+    from .worker import OWN_LANE
+
+    about = app.tracker.get(task["job_id"]) if task["job_id"] else None
+    name = TASK_NAMES.get(task["kind"], task["kind"])
+    on = (f' · <a href="/job/{about["id"]}">{esc(about["title"][:50])}</a>' if about else "")
+    if task["status"] == "waiting":
+        where = '<a href="/">answer its question on Today</a>'
+    elif task["status"] == "queued":
+        ahead = sum(t["status"] in ("queued", "running") and t["id"] < task["id"] and t["kind"] not in OWN_LANE
+                    for t in tasks)
+        where = ("starts alongside other work" if task["kind"] in OWN_LANE else
+                 f"waiting for {ahead} task(s) ahead" if ahead else "starting")
+    elif task["kind"] in PREPARES and about:
+        state = prepare_progress(app, about["id"]) or {}
+        where = f'{state["current"]["name"].lower()}…' if state.get("current") else "starting…"
+    else:
+        where = esc((task["result"] or "running…")[:80])
+    return f'<li><span class=spin></span><b>{esc(name)}</b>{on} <span class=muted>· {where}</span></li>'
+
+
+def tray(app: Dashboard) -> str:
+    """Background work on every page: what's running, what's waiting, and what failed lately."""
+    from . import worker
+
+    tasks = app.tracker.tasks(40)
+    active = [t for t in tasks if t["status"] in ("queued", "running", "stopping", "waiting")]
+    since = utc_days_ago(2 / 24)
+    failed = [t for t in tasks if t["status"] == "failed" and t["updated_at"] >= since and t["id"] > app.tray_seen]
+    if not active and not failed:
+        return '<div id=tray hidden></div>'
+    items = [task_line(app, t, tasks) for t in reversed(active)]
+    for task in failed[:3]:
+        about = app.tracker.get(task["job_id"]) if task["job_id"] else None
+        happened, todo = plain_error(task["result"] or "")
+        link = f' <a href="/job/{about["id"]}">Open the job</a>' if about else ""
+        items.append(f'<li class=bad><b>{esc(TASK_NAMES.get(task["kind"], task["kind"]))} failed:</b> '
+                     f'{esc(happened)} <span class=muted>{esc(todo)}</span>{link}</li>')
+    stalled = any(t["status"] == "queued" for t in active) and not worker.running()
+    if stalled:
+        items.append('<li class=bad><b>Background work isn\'t running,</b> so queued tasks can\'t start. '
+                     + form(app, "/start-worker", "Start it") + '</li>')
+    clear = form(app, "/tray/clear", "Hide failures") if failed else ""
+    head = (f'{len(active)} running or waiting' if active else "Recent problems") + (
+        f' · {len(failed)} failed' if failed and active else "")
+    return (f'<div id=tray{" data-active" if active else ""}><details open><summary><b>Background work</b> '
+            f'<span class=muted>{head}</span></summary><ul>{"".join(items)}</ul>{clear}</details></div>')
 
 
 def waiting_on_you(app: Dashboard) -> list[dict]:
@@ -529,7 +646,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     counts["needs_you"] = len(waiting_on_you(app))  # Incl. prepared packets with blank required answers.
     stats = "".join(f'<a class="stat st-{s}" href="{"/queue" if s == "needs_you" else f"/jobs?status={s}"}" '
                     'style="text-decoration:none;color:inherit">'
-                    f'<b>{counts[s]}</b><span class="muted">{s.replace("_", " ")}</span></a>'
+                    f'<b>{counts[s]}</b><span class="muted">{say(s)}</span></a>'
                     for s in ("found", "prepared", "needs_you", "approved", "submitted", "filtered_out")
                     if s in counts)
     tasks = app.tracker.tasks(12)
@@ -550,15 +667,18 @@ def page_today(app: Dashboard, flash: str) -> bytes:
         job = (f'<br><a href="/job/{about["id"]}">{esc(about["title"])} at {esc(about["company"])}</a>'
                if about else "")
         result = (task["result"] or "")[:160]
+        if task["status"] == "failed":
+            result = " ".join(plain_error(task["result"] or ""))
         if task["kind"] == "prepare" and re.fullmatch(r"[a-z_]+", result):  # A status: say why,
             latest = about and about["id"] not in explained  # with the job's reason for its newest run only.
-            result = result.replace("_", " ") + (f": {about['reason']}" if latest and about["reason"] else "")
+            result = say(result) + (f": {about['reason']}" if latest and about["reason"] else "")
             explained.add(task["job_id"])
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(TASK_NAMES.get(task["kind"], task["kind"]))}{job}</td>'
-                    f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
+                    f'<td>{pill(task["status"])}{reply}</td>'
                     f'<td class="muted">{esc(result[:220])}</td></tr>')
     body = f"""
     <h1>Today</h1>
+    {link_card(app)}
     <div class="stats">{stats}</div>
     <div class="card" style="margin-top:16px"><div class="row">
       {form(app, "/refresh", "Refresh job lists", primary=True)}
@@ -567,6 +687,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
       · {esc(app.connection)}</span>
     </div></div>
+    {top_matches_card(app)}
     {outreach_card(app)}
     <div class="card"><h2>Ask the assistant</h2>
     <form method=get action="/assistant"><textarea name=q rows=2 required
@@ -578,6 +699,49 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     {"".join(rows) or '<tr><td colspan=4 class=muted>Nothing yet. Refresh the job lists to start.</td></tr>'}
     </table></div>"""
     return layout(app, "/", body, flash, refresh=running)
+
+
+def link_card(app: Dashboard) -> str:
+    """Paste a job's link: the whole application is made for that one job."""
+    return (f'<div class="card link-card"><h2>Apply to a job you found</h2>'
+            f'<form method=post action="/link" class=row><input type=hidden name=token value="{app.token}">'
+            f'<input type=url name=url required placeholder="Paste a job posting link, e.g. https://jobs.lever.co/…" '
+            f'style="flex:1;min-width:240px"><button class=primary>Prepare this job</button></form>'
+            f'<p class=muted style="margin:8px 0 0">Job Agent reads the posting and checks how well you fit. If the fit '
+            f'is low it stops and asks you. Otherwise it tailors your resume, writes the cover letter and answers, '
+            f'fills in the application and stops before submitting, for you to review. Usually a few minutes; '
+            f'you can keep using the app meanwhile.</p></div>')
+
+
+def top_matches_card(app: Dashboard) -> str:
+    """When the latest "Prepare top matches" prepared nothing because every job scored under
+    your fit threshold: the closest ones, to prepare anyway."""
+    from .worker import TOP_PICK
+
+    since = utc_days_ago(RECENT_HOURS / 24)
+    batch = [t for t in app.tracker.tasks(60) if t["kind"] == "prepare" and (t["arg"] or "").startswith(TOP_PICK)
+             and t["updated_at"] >= since]
+    if not batch or any(t["status"] in ("queued", "running", "stopping") for t in batch):
+        return ""
+    jobs = {t["job_id"]: app.tracker.get(t["job_id"]) for t in batch}
+    jobs = [j for j in jobs.values() if j]
+    if any(j["status"] in ("prepared", "needs_you", "approved", "submitting", "submitted") for j in jobs):
+        return ""
+    low = sorted((j for j in jobs if actions.below_threshold(j)), key=lambda j: -(j["fit_score"] or 0))
+    if not low:
+        return ""
+    threshold = config.fit_threshold(config.load_profile(), app.settings)
+    rows = "".join(f'<tr><td><input type=checkbox name=ids value="{j["id"]}" checked></td>'
+                   f'<td><a href="/job/{j["id"]}">{esc(j["title"])}</a><div class=muted>{esc(j["company"])}</div></td>'
+                   f'<td><b>{j["fit_score"]}</b></td></tr>' for j in low)
+    return (f'<div class=card><h2>None of your top matches passed your fit threshold</h2>'
+            f'<p class=muted>Prepare top matches checked {len(jobs)} job(s); each scored under {threshold} after '
+            f'reading the whole posting. Open one to see why, or prepare the closest anyway: it reuses the fit '
+            f'check and writes the rest of the application, which you still review before anything is sent.</p>'
+            f'<form method=post action="/prepare-anyway-many"><input type=hidden name=token value="{app.token}">'
+            f'<table><tr><th></th><th>Job</th><th>Fit</th></tr>{rows}</table>'
+            f'<div class=row style="margin-top:10px"><button class=primary>Prepare these anyway</button>'
+            f'<a class=button href="/search">Change your threshold</a></div></form></div>')
 
 
 def outreach_card(app: Dashboard) -> str:
@@ -617,8 +781,7 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
         rows.append(f'<tr><td>{box}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
                     f'<td>{esc(job["fit_score"])}</td><td style="max-width:320px">{route}</td>'
-                    f'<td><span class="pill {job["status"]}">'
-                    f'{job["status"].replace("_", " ")}</span><div class=muted>{esc(job["reason"] or "")}</div></td></tr>')
+                    f'<td>{pill(job["status"])}<div class=muted>{esc(job["reason"] or "")}</div></td></tr>')
     approved = [j for j in app.tracker.with_status("approved")]
     send = (form(app, "/submit", f"Submit {len(approved)} approved", {"ids": ",".join(str(j["id"]) for j in approved)}, True)
             if approved else "")
@@ -647,8 +810,8 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
     counts = app.tracker.status_counts()
     # Tabs only for statuses that have jobs, each with its count.
     views = [("active", "To apply", sum(counts.get(s, 0) for s in ACTIVE)),
-             *[(s, s.replace("_", " "), counts[s]) for s in ORDER if s != "working" and counts.get(s)],
-             ("all", "all", sum(counts.values()))]
+             *[(s, say(s), counts[s]) for s in ORDER if s != "working" and counts.get(s)],
+             ("all", "All", sum(counts.values()))]
     keep = f"&q={quote(query)}" if query else ""
     tabs = "".join(f'<a class="tab{" on" if key == status else ""}" href="/jobs?status={key}{keep}">{name} '
                    f'<span class=muted>{n}</span></a>' for key, name, n in views)
@@ -676,7 +839,7 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
             act = (prepare_button(app, job) + " "
                    + quiet(form(app, "/skip", "Not interested", {"job_id": job["id"], "back": f"/jobs?status={status}{keep}&page={page}"})))
         elif job["status"] in ("failed", "rejected", "skipped", "closed", "filtered_out"):
-            act = form(app, "/requeue", "Back to found", {"job_id": job["id"]})
+            act = form(app, "/requeue", "Move back to New", {"job_id": job["id"]})
         else:
             act = f'<a href="/job/{job["id"]}">open</a>'
         below = score is not None and kind != "keyword" and score < threshold
@@ -686,11 +849,12 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
                  else '<span class=muted>—</span>')
         rows.append(f'<tr class="{"below" if below else ""}"><td>{badge}</td>'
                     f'<td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
-                    f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])}</div>'
+                    f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])} · '
+                    f'<a href="{esc(job["url"])}" target=_blank rel=noopener>posting ↗</a></div>'
                     f'{f"<div class=src>{esc(why)}</div>" if why else ""}{route}{also_listed(others)}</td>'
                     f'<td class=muted style="white-space:nowrap">{esc((job["posted_at"] or "")[:10])}'
                     f'<div class=src>{esc(job["ats"] or "")}</div></td>'
-                    f'<td><span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span>'
+                    f'<td>{pill(job["status"])}'
                     f'<div class=muted>{esc((job["reason"] or "")[:120])}</div></td><td><div class=row>{act}</div></td></tr>')
     pager = ""
     if pages > 1:
@@ -740,7 +904,7 @@ def recent_prepares(app: Dashboard) -> tuple[str, bool]:
     since = utc_days_ago(RECENT_HOURS / 24)
     seen, rows, running = set(), [], False
     for task in app.tracker.tasks(40):
-        if task["kind"] != "prepare" or task["job_id"] in seen or task["updated_at"] < since:
+        if task["kind"] not in PREPARES or task["job_id"] in seen or task["updated_at"] < since:
             continue
         seen.add(task["job_id"])
         job = app.tracker.get(task["job_id"])
@@ -752,10 +916,10 @@ def recent_prepares(app: Dashboard) -> tuple[str, bool]:
             state = prepare_progress(app, job["id"]) or {}
             now = ("queued" if "waiting" in state else
                    f'{state["current"]["name"]}…' if state.get("current") else "starting…")
-            outcome = (f'<span class="pill preparing">preparing</span> <span class=muted>{esc(now)} '
+            outcome = (f'{pill("preparing")} <span class=muted>{esc(now)} '
                        f'({len(state.get("done", []))} step(s) done)</span>')
         else:
-            outcome = (f'<span class="pill {esc(job["status"])}">{esc(job["status"].replace("_", " "))}</span> '
+            outcome = (f'{pill(job["status"])} '
                        f'<span class=muted>{esc((job["reason"] or "")[:140])}</span>')
             if actions.below_threshold(job):
                 outcome += " " + form(app, "/prepare-anyway", "Prepare anyway", {"job_id": job["id"]})
@@ -774,7 +938,7 @@ def also_listed(others: list[dict]) -> str:
         return ""
     places = sorted({(o["location"] or "").split(";")[0].strip() for o in others} - {""})
     items = "".join(f'<li><a href="/job/{o["id"]}">{esc(o["location"] or o["title"])}</a> '
-                    f'<span class=muted>· {esc((o["posted_at"] or "")[:10])} · {o["status"].replace("_", " ")}</span></li>'
+                    f'<span class=muted>· {esc((o["posted_at"] or "")[:10])} · {say(o["status"])}</span></li>'
                     for o in others)
     return (f'<details class=src><summary>Also listed {len(others)} more time{"s" if len(others) > 1 else ""}'
             f'{": " + esc(", ".join(places[:3])) if places else ""}</summary><ul style="margin:4px 0">{items}</ul></details>')
@@ -914,6 +1078,19 @@ def fit_card(fit: dict, flags: bool = False) -> str:
 NOT_PREPARED = {"filtered_out": "Set aside", "failed": "Preparing failed", "closed": "The posting has closed"}
 
 
+def description_card(job: dict, packet: dict | None = None, open_: bool = False) -> str:
+    """The posting as it was read (preparing reads it), folded; or where to read it."""
+    text = (packet or {}).get("description") or json.loads(job["details"] or "{}").get("description") or ""
+    link = (f'<a href="{esc(job["url"])}" target=_blank rel=noopener>Open the posting on '
+            f'{esc(urlsplit(job["url"]).hostname or "its site")} ↗</a>' if job["url"] else "")
+    if not text:
+        return (f'<div class=card><h2>Job description</h2><p class=muted style="margin:0">Not read yet: preparing '
+                f'reads it. {link}</p></div>')
+    return (f'<div class=card><details{" open" if open_ else ""}><summary><b>Job description</b> '
+            f'<span class=muted>({len(text.split()):,} words, as read when preparing)</span></summary>'
+            f'<div class=posting>{esc(text)}</div></details><p class=muted style="margin:8px 0 0">{link}</p></div>')
+
+
 def not_prepared_card(app: Dashboard, job: dict) -> str:
     """Why a job you asked for wasn't prepared, and what you can do about it."""
     if job["status"] not in NOT_PREPARED:
@@ -925,10 +1102,10 @@ def not_prepared_card(app: Dashboard, job: dict) -> str:
     if job["status"] == "failed" and job["url"]:  # Most often a page it couldn't read: you can.
         buttons.append(f'<a class="button primary" target=_blank rel=noopener href="{esc(job["url"])}">'
                        'Open the posting</a>')
-    buttons.append(form(app, "/requeue", "Back to found", {"job_id": job["id"]}))
+    buttons.append(form(app, "/requeue", "Move back to New", {"job_id": job["id"]}))
     hint = ("The fit check below is why: read it before deciding. Prepare anyway reuses it (no second fit "
             "check) and makes the rest of the packet." if actions.below_threshold(job) else
-            "Your filters are on the Search page; after changing one, Back to found puts the job up "
+            "Your filters are on the Search page; after changing one, Move back to New puts the job up "
             "for preparing again." if job["status"] == "filtered_out" else "")
     trail = (f' <a href="/job/{job["id"]}/trace">How it decided</a>' if trace.runs(job["id"]) else "")
     return (f'<div class="card" id=why><h2>{NOT_PREPARED[job["status"]]}</h2>'
@@ -988,7 +1165,7 @@ def prepare_progress(app: Dashboard, job_id: int) -> dict | None:
     from .prepare import STEPS
 
     tasks = app.tracker.tasks(40)
-    task = next((t for t in tasks if t["kind"] == "prepare" and t["job_id"] == job_id
+    task = next((t for t in tasks if t["kind"] in PREPARES and t["job_id"] == job_id
                  and t["status"] in ("queued", "running", "stopping", "waiting")), None)
     if task is None:
         return None
@@ -999,7 +1176,7 @@ def prepare_progress(app: Dashboard, job_id: int) -> dict | None:
                     for t in tasks)
         return {"waiting": ahead, "task": task["id"]}
     entries = trace.read(trace.runs(job_id)[0]) if trace.runs(job_id) else []
-    if not entries or entries[0].get("kind") != "prepare" or entries[-1]["type"] == "end_run":
+    if not entries or entries[0].get("kind") not in PREPARES or entries[-1]["type"] == "end_run":
         return {"done": [], "current": None, "next": list(STEPS), "seconds": 0, "task": task["id"]}
     steps = [n for n in trace.tree(entries)["root"]["children"] if n["type"] == "step"]
     done = [n for n in steps if n.get("done")]
@@ -1043,7 +1220,7 @@ def progress_card(app: Dashboard, job_id: int) -> str:
             f'job are skipped. <a href="/job/{job_id}/trace">Every model request and check</a>.</p>'
             f'<ul class=progress>{"".join(rows)}</ul>'
             f'<div class=row style="margin-top:8px">{stop}<span class=muted style="font-size:13px">Stops after the '
-            'step running now; the job goes back to found.</span></div></div>')
+            'step running now; the job goes back to New.</span></div></div>')
 
 
 def decision_bar(job: dict, packet: dict, advice: dict | None, blockers: int, needs: int) -> str:
@@ -1081,7 +1258,7 @@ def decision_bar(job: dict, packet: dict, advice: dict | None, blockers: int, ne
     elif job["status"] in ("prepared", "needs_you"):
         state = ("Ready to approve", "Every required answer is filled.", "ok")
     else:
-        state = (job["status"].replace("_", " ").capitalize(), job["reason"] or "", "")
+        state = (say(job["status"]), job["reason"] or "", "")
     tiles.append(tile("#t-application", "Application", state[0], state[1], state[2]))
     return f'<div class=decide>{"".join(tiles)}</div>'
 
@@ -1109,16 +1286,17 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     if job is None:
         return layout(app, "/queue", "<h1>No such job</h1>")
     packet = packets.load(job)
-    head = (f'<h1>{esc(job["title"])}</h1><p class=muted>{esc(job["company"])} · {esc(job["location"])} · '
-            f'<a href="{esc(job["url"])}" target=_blank rel=noopener>posting</a> · '
-            f'<span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span> '
+    where = " · ".join(esc(part) for part in (job["company"], job["location"]) if part)
+    head = (f'<h1>{esc(job["title"])}</h1><p class=muted>{where} · '
+            f'<a href="{esc(job["url"])}" target=_blank rel=noopener>open the posting ↗</a> · '
+            f'{pill(job["status"])} '
             # Said in full below for jobs that weren't prepared.
             f'{"" if packet is None and job["status"] in NOT_PREPARED else esc(job["reason"] or "")}</p>')
     if packet is None:
         details = json.loads(job["details"] or "{}")
         fit = details.get("fit")
         preparing = job["status"] == "preparing" or any(
-            t["kind"] == "prepare" and t["job_id"] == job_id and t["status"] in ("queued", "running", "stopping")
+            t["kind"] in PREPARES and t["job_id"] == job_id and t["status"] in ("queued", "running", "stopping")
             for t in app.tracker.tasks(30))
         note = ""
         if preparing:
@@ -1127,13 +1305,14 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
             note = (f'<div class=row style="margin:0 0 14px">{prepare_button(app, job, True)}<span class=muted>Not '
                     'prepared yet: reads the posting, checks your fit, then writes the application.</span></div>')
         elif job["status"] in ("rejected", "skipped"):
-            note = form(app, "/requeue", "Back to found", {"job_id": job_id}) + " "
+            note = form(app, "/requeue", "Move back to New", {"job_id": job_id}) + " "
         mark = (form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id})
                 if job["status"] in ("found", "filtered_out", "closed", "skipped", "failed", "rejected") else "")
         advice = strategy.Advisor(app.tracker, app.settings).advise(job)
         return layout(app, "/applications" if job["status"] == "submitted" else "/jobs",
                       head + note + ("" if preparing else not_prepared_card(app, job)) + route_card(advice)
-                      + application_block(app, job) + (fit_card(fit, flags=True) if fit else "") + mark,
+                      + application_block(app, job) + (fit_card(fit, flags=True) if fit else "")
+                      + description_card(job) + mark,
                       flash, refresh=preparing, title=f"{job['title']} at {job['company']}")
     editable = job["status"] in ("prepared", "approved", "needs_you")
     fit = packet["fit"]
@@ -1219,7 +1398,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         ("review", "Review", route_card(advice) + first_read_card(app, job, packet)),
         ("application", "Application" + (f" · {len(problems)} need you" if problems else ""),
          answers_card + tailoring + recorded),
-        ("fit", "Fit and research", fit_card(fit, flags=True) + researched),
+        ("fit", "Fit and research", fit_card(fit, flags=True) + researched + description_card(job, packet)),
         ("people", "People" + (f" · {len(listed)}" if listed else ""), people_card(app, job, packet)),
     ]
     body = f"""{head}
@@ -1678,7 +1857,7 @@ def page_trace(app: Dashboard, job_id: int, run_id: str) -> bytes:
     steps = [n for n in shown["root"]["children"] if n["type"] == "step"]
     strip = "".join(f'<a class="{node_state(n)}" href="#s{n["n"]}">{esc(n["name"])}'
                     f'<span>{seconds_text(n.get("seconds"))}</span></a>' for n in steps)
-    status = (end.get("status") or "running…").replace("_", " ")
+    status = say(end.get("status") or "running") + ("…" if not end.get("status") else "")
     cost = (f'<div><b>${totals["cost"]:.2f}</b><span>'
             f'{"API price equivalent (your Claude plan pays)" if totals.get("plan") else "model cost"}'
             f'</span></div>') if totals["cost"] else ""
@@ -1903,7 +2082,7 @@ def page_activity(app: Dashboard) -> bytes:
         job = app.tracker.get(job_id)
         shown = trace.tree(trace.read(path))
         end, totals = shown["end"], shown["totals"]
-        status = (end.get("status") or "running").replace("_", " ")
+        status = say(end.get("status") or "running")
         rows.append(f'<tr><td class=muted style="white-space:nowrap">{path.stem[4:6]}/{path.stem[6:8]} '
                     f'{path.stem[9:11]}:{path.stem[11:13]}</td>'
                     f'<td><a href="/job/{job_id}/trace?run={path.stem}">{esc(trace.KINDS.get(shown["run"].get("kind"), ""))}'
@@ -1988,6 +2167,8 @@ def handler_for(app: Dashboard):
                     # The Assistant tab goes back to your latest chat; "+ New chat" starts one.
                     return self.send(b"", 303, headers={"Location": f"/assistant?chat={latest[0]['id']}"})
                 return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
+            if url.path == "/tray":
+                return self.send(tray(app).encode())
             if url.path == "/live.js":
                 return self.send(LIVE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/people.js":
@@ -2219,6 +2400,24 @@ def handler_for(app: Dashboard):
                 return message + " Rank them on the Ranked jobs page.", "/search"
             if path == "/stop-task":
                 return tracker.stop_task(int(one["task_id"])), back
+            if path == "/link":
+                if app.llm_missing:
+                    raise ValueError("Connect a model first (the Connect page): reading and preparing a job needs one.")
+                job_id, queued, said = actions.prepare_link(tracker, one.get("url", ""))
+                if queued:
+                    app.ensure_worker()
+                return said, f"/job/{job_id}"
+            if path == "/start-worker":
+                app.ensure_worker()
+                return "Started background work: queued tasks will begin in a moment.", back
+            if path == "/tray/clear":
+                app.tray_seen = max((t["id"] for t in tracker.tasks(1)), default=0)
+                return "", back
+            if path == "/prepare-anyway-many":
+                app.ensure_worker()
+                for job_id in ids:
+                    actions.prepare_anyway(tracker, job_id)
+                return f"Preparing {len(ids)} job(s) anyway. Each shows on this page as it finishes.", "/"
             if path == "/prepare-anyway":
                 app.ensure_worker()
                 actions.prepare_anyway(tracker, int(one["job_id"]))
@@ -2298,11 +2497,11 @@ def handler_for(app: Dashboard):
             if path == "/skip":
                 actions.skip(tracker, int(one["job_id"]))
                 where = one.get("back", "")
-                return ("Set aside: not interested. “Back to found” on the Skipped tab undoes it.",
+                return ("Set aside: not interested. “Move back to New” on the Not interested tab undoes it.",
                         where if where.startswith("/jobs?") else back)
             if path == "/requeue":
                 actions.requeue(tracker, int(one["job_id"]))
-                return "Back in found.", back
+                return "Moved back to New.", back
             if path == "/outcome":
                 tracker.set_outcome(int(one["job_id"]), one["outcome"], None, one.get("note", ""))
                 return "Saved.", back

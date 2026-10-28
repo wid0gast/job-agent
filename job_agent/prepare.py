@@ -157,8 +157,11 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
     # Systems without a coded adapter are explored by an agent and replayed in code (web.py).
     system = systems.adapter(job["ats"]) or web
     with trace.step("Your filters and limits") as step:
-        reason = filters.check(job, details, profile)
-        trace.check("Passes your filters (location, season, degree, seniority)", not reason, reason or "")
+        # A job you pasted the link of is one you chose: your Search filters don't set it aside.
+        reason = None if details.get("from_link") else filters.check(job, details, profile)
+        trace.check("Passes your filters (location, season, degree, seniority)", not reason,
+                    reason or ("You pasted this job's link, so your Search filters don't apply."
+                               if details.get("from_link") else ""))
         if reason:
             raise Stop("filtered_out", reason)
         company_id = job["company_id"] or companies.Companies().resolve(job["company"])
@@ -214,6 +217,9 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                 raise Stop("failed", f"Couldn't read this posting: the page that loaded never mentions "
                                      f"“{job['title']}”, so it isn't this job's posting (it may need you signed "
                                      "in, or the job moved). Open the posting to check, then prepare again.")
+        # Kept on the job, so its page shows the description even when it's set aside below.
+        details["description"] = description[:20000]
+        ctx.tracker.update(job["id"], details=details)
         reason = filters.sponsorship_problem(description, profile)
         trace.check("Sponsorship wording fits your work authorization", not reason, reason or "")
         if reason:

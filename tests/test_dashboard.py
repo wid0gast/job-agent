@@ -183,3 +183,34 @@ def test_pages_with_work_running_update_in_place_without_reloading(tmp_path, mon
             browser.close()
     finally:
         server.shutdown()
+
+
+def test_failed_tasks_are_said_plainly_with_what_to_do():
+    from job_agent.dashboard import plain_error
+
+    happened, todo = plain_error("Error: Page.goto: net::ERR_SOCKET_NOT_CONNECTED at https://x.example/job")
+    assert happened.startswith("A network problem") and "safe" in todo
+    assert plain_error("RuntimeError: No Claude connection: install Claude Code")[1].startswith("Sign in")
+    assert plain_error("ValueError: Something odd happened")[0] == "Something odd happened"
+
+
+def test_top_matches_that_all_fall_short_are_offered_and_failures_show_in_the_tray(tmp_path, monkeypatch):
+    from job_agent.worker import TOP_PICK
+
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    tracker = Tracker(tmp_path / "t.db")
+    for n, fit in ((1, 52), (2, 41)):
+        tracker.add_lead(f"https://job-boards.greenhouse.io/acme{n}/jobs/{n}", "s", f"Acme {n}", f"ML Intern {n}", "NYC")
+        tracker.move(n, "found", "filtered_out", fit_score=fit, reason=f"Fit {fit} is below your threshold of 60.")
+        task = tracker.add_task("prepare", n, f"{TOP_PICK}2")
+        tracker.set_task(task, status="done", result="filtered_out")
+    failed = tracker.add_task("refresh")
+    tracker.set_task(failed, status="failed", result="ConnectError: [Errno 8] connection failed")
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
+    today = dashboard.page_today(app, "").decode()
+    assert "None of your top matches passed your fit threshold" in today and "Prepare these anyway" in today
+    assert today.index("ML Intern 1") < today.index("ML Intern 2")  # Closest first.
+    assert "Refresh job lists failed:" in today and "A network problem" in today  # The tray, in words.
+    app.tray_seen = failed
+    assert "failed:" not in dashboard.tray(app)
