@@ -580,6 +580,8 @@ def _refresh(job_id: int, ctx, log) -> str:
     keep = [p for p in (packet.get("people") or {}).get("people", []) if p.get("sent_at")]
     found = find(ctx, job, packet.get("description", ""), profile, master, log, keep,
                  (packet.get("research") or {}).get("facts"))
+    # The search takes minutes: what you changed meanwhile (answers, approval) stays.
+    job, packet = load(ctx.tracker, job_id)
     packet["people"] = found
     packets.store(packet)
     fresh = len(found["people"]) - len(keep)

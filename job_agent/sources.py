@@ -455,10 +455,11 @@ def wanted(profile: dict):
     return keep
 
 
-def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=None) -> dict:
+def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=None, lists_read=None) -> dict:
     """Pull the lists into the tracker in batches: the lists, then company boards a batch at a
     time, each filtered and ranked as it lands (so Ranked jobs fills in while it runs).
-    New jobs are 'found'; closed ones drop out."""
+    New jobs are 'found'; closed ones drop out. `lists_read()` is called once the lists are in,
+    a second or so in, before the boards' minutes."""
     from . import matching
 
     fields = chosen_fields(profile)
@@ -478,6 +479,8 @@ def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=No
         names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}
         ingest(tracker, companies, jobs, fields, counts, keep)
         settle("Job lists read")
+        if lists_read:
+            lists_read()
         if boards:
             todo = [(ats, row) for ats in BOARD_FEEDS for row in companies.boards(ats)]
             batch = []

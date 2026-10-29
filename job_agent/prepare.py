@@ -5,9 +5,11 @@ a submit button. Cheap checks run first so the model is called only for jobs
 worth preparing (each fit check is a full read of the posting by the strongest model).
 """
 
+import contextvars
 import html
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, wait as wait_all
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -99,7 +101,7 @@ LETTER_SCHEMA = {
 STEPS = ("Your filters and limits", "Reading the posting", "Fit check", "Reading the application form",
          "Answers from your profile", "Tailoring the resume", "Company research", "Cover letter",
          "Filling the application (browser agent)", "Drafting the remaining answers",
-         "Checking against your profile", "A hiring manager's first read", "People to contact")
+         "Checking against your profile", "A hiring manager's first read")  # People are found after.
 MIN_POSTING_WORDS = 80  # Fewer, and the "posting" is a sign-in wall, an error page or a page that didn't load.
 FILL_TARGET = 0.88  # A tailored resume should use most of its last page.
 NUMBERS_CHECK = "Tailored resume uses only numbers from your resume"
@@ -309,80 +311,102 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
     full_name = profile.get("contact", {}).get("name", "Applicant")
     stem = re.sub(r"[^A-Za-z0-9]+", "_", full_name).strip("_")
 
-    with trace.step("Tailoring the resume") as step:
-        log("  tailoring the resume")
-        tailored, resume = tailored_resume(ctx, job, description, profile, master, folder, stem,
-                                           full_name, log, note)
-        printed = resume.pop("doc")  # After fitting to the page: what edits change and typesetting reuses.
-        trimmed = resume.get("trimmed") or []
-        if trimmed:
-            trace.note("Cut to fit the page (least relevant first): " + " · ".join(t[:90] for t in trimmed))
-        step.summary = (f"{resume['pages']} page(s), {round(100 * resume.get('fill', 1))}% of the last page used"
-                        + (f"; {len(trimmed)} least relevant line(s) cut to fit" if trimmed else ""))
-    docs = {"resume": resume, "cover_letter": None}
+    def tailoring():
+        with trace.step("Tailoring the resume") as step:
+            log("  tailoring the resume")
+            tailored, resume = tailored_resume(ctx, job, description, profile, master, folder, stem,
+                                               full_name, log, note)
+            printed = resume.pop("doc")  # After fitting to the page: what edits change and typesetting reuses.
+            trimmed = resume.get("trimmed") or []
+            if trimmed:
+                trace.note("Cut to fit the page (least relevant first): " + " · ".join(t[:90] for t in trimmed))
+            step.summary = (f"{resume['pages']} page(s), {round(100 * resume.get('fill', 1))}% of the last page "
+                            f"used" + (f"; {len(trimmed)} least relevant line(s) cut to fit" if trimmed else ""))
+            return tailored, resume, printed
 
-    found: dict = {}
+    # The resume is tailored alongside the letter and answers (they work from your master resume,
+    # not the tailored one): the longest model calls of a prepare overlap instead of adding up.
+    pool = ThreadPoolExecutor(max_workers=1)
+    pending = pool.submit(contextvars.copy_context().run, tailoring)
+    pool.shutdown(wait=False)
+    docs = {"resume": None, "cover_letter": None}
 
-    def company_facts() -> list[dict]:
-        """Researched once per job, when a letter or a "why us" answer first needs it."""
-        if settings.research == "off":
-            return []
-        if "facts" not in found:
-            with trace.step("Company research") as step:
-                topics = [f["label"] for f in drafted if research.wanted(f, job)]
-                found.update(research.research(ctx, job, description, log, topics))
-                step.summary = f"{len(found['facts'])} fact(s), each quoted from a page it read"
-        return found["facts"]
+    def tailored_now():
+        if docs["resume"] is None:
+            docs["tailoring"] = pending.result()
+            docs["resume"] = docs["tailoring"][1]
+        return docs["tailoring"]
 
-    def make_letter():
-        docs["cover_letter"] = write_letter(ctx, job, description, profile, master, company_facts(),
-                                            folder, note, log)
+    try:
+        found: dict = {}
 
-    mode = config.letter_mode(profile, settings)
-    letter_field = next((a for a in drafted if answers.is_cover_letter(a)), None)
-    wants_letter = letter_field and mode != "never" and (mode == "always" or letter_field["required"])
-    if wants_letter:
-        make_letter()
-        letter_field.update(value="cover_letter", source="model-essay",
-                            note="Tailored cover letter (see documents).")
-    elif letter_field:
-        trace.note(f"No cover letter: the form's letter field is {'required' if letter_field['required'] else 'optional'} "
-                   f"and your setting is “{LETTER_MODES[mode]}” (Search page).")
+        def company_facts() -> list[dict]:
+            """Researched once per job, when a letter or a "why us" answer first needs it."""
+            if settings.research == "off":
+                return []
+            if "facts" not in found:
+                with trace.step("Company research") as step:
+                    topics = [f["label"] for f in drafted if research.wanted(f, job)]
+                    found.update(research.research(ctx, job, description, log, topics))
+                    step.summary = f"{len(found['facts'])} fact(s), each quoted from a page it read"
+            return found["facts"]
 
-    recording = None
-    if system is web:
-        def document(kind: str) -> Path:
-            if kind == "cover_letter" and not docs["cover_letter"]:
-                if mode == "never":
-                    raise ValueError("The user turned cover letters off; skip optional letter uploads.")
-                make_letter()
-            return Path(docs[kind]["pdf"])
+        def make_letter():
+            docs["cover_letter"] = write_letter(ctx, job, description, profile, master, company_facts(),
+                                                folder, note, log)
 
-        with trace.step("Filling the application (browser agent)") as step:
-            log("  filling the application (explore agent)")
-            try:
-                explored = web.explore(ctx, job, description, document, log, company_facts)
-            except ValueError as error:
-                raise Stop("failed", str(error)[:1500]) from None
-            step.summary = f"{len(explored['answers'])} fields filled; stopped before the final submit"
-        drafted, open_fields, recording = explored["answers"], [], explored["recording"]
-        form_notes = [f"Filled by the explore agent: {explored['report']}"]
+        mode = config.letter_mode(profile, settings)
+        letter_field = next((a for a in drafted if answers.is_cover_letter(a)), None)
+        wants_letter = letter_field and mode != "never" and (mode == "always" or letter_field["required"])
+        if wants_letter:
+            make_letter()
+            letter_field.update(value="cover_letter", source="model-essay",
+                                note="Tailored cover letter (see documents).")
+        elif letter_field:
+            trace.note(f"No cover letter: the form's letter field is {'required' if letter_field['required'] else 'optional'} "
+                       f"and your setting is “{LETTER_MODES[mode]}” (Search page).")
 
-    if open_fields:
-        facts = (company_facts() if any(research.wanted(f, job) for f in open_fields)
-                 else found.get("facts"))  # Already researched for the letter: use it.
-        letter = docs["cover_letter"] and Path(docs["cover_letter"]["markdown"]).read_text(encoding="utf-8")
-        with trace.step("Drafting the remaining answers") as step:
-            log(f"  drafting {len(open_fields)} answer(s)")
-            answers.ask_model(ctx.llm, open_fields, profile, master, job, description,
-                              config.read_optional("story-bank.md"),
-                              config.read_optional("writing-sample.md"), facts, letter or None)
-            unsupported = [f for f in open_fields if f.get("value") in (None, "", [])]
-            trace.check("Answers the model couldn't support from your material are left for you",
-                        not unsupported, "; ".join(f["label"][:80] for f in unsupported))
-            step.summary = (f"{len(open_fields) - len(unsupported)} drafted; {len(unsupported)} left for you"
-                            if unsupported else f"{len(open_fields)} drafted")
+        recording = None
+        if system is web:
+            def document(kind: str) -> Path:
+                if kind == "resume":
+                    tailored_now()
+                if kind == "cover_letter" and not docs["cover_letter"]:
+                    if mode == "never":
+                        raise ValueError("The user turned cover letters off; skip optional letter uploads.")
+                    make_letter()
+                return Path(docs[kind]["pdf"])
 
+            with trace.step("Filling the application (browser agent)") as step:
+                log("  filling the application (explore agent)")
+                try:
+                    explored = web.explore(ctx, job, description, document, log, company_facts)
+                except ValueError as error:
+                    raise Stop("failed", str(error)[:1500]) from None
+                step.summary = f"{len(explored['answers'])} fields filled; stopped before the final submit"
+            drafted, open_fields, recording = explored["answers"], [], explored["recording"]
+            form_notes = [f"Filled by the explore agent: {explored['report']}"]
+
+        if open_fields:
+            facts = (company_facts() if any(research.wanted(f, job) for f in open_fields)
+                     else found.get("facts"))  # Already researched for the letter: use it.
+            letter = docs["cover_letter"] and Path(docs["cover_letter"]["markdown"]).read_text(encoding="utf-8")
+            with trace.step("Drafting the remaining answers") as step:
+                log(f"  drafting {len(open_fields)} answer(s)")
+                answers.ask_model(ctx.llm, open_fields, profile, master, job, description,
+                                  config.read_optional("story-bank.md"),
+                                  config.read_optional("writing-sample.md"), facts, letter or None)
+                unsupported = [f for f in open_fields if f.get("value") in (None, "", [])]
+                trace.check("Answers the model couldn't support from your material are left for you",
+                            not unsupported, "; ".join(f["label"][:80] for f in unsupported))
+                step.summary = (f"{len(open_fields) - len(unsupported)} drafted; {len(unsupported)} left for you"
+                                if unsupported else f"{len(open_fields)} drafted")
+
+    except BaseException:
+        wait_all([pending])  # Tailoring ends too (its own error, if any, is in the trace) before this stops.
+        raise
+    tailored, resume, printed = tailored_now()
+    docs.pop("tailoring")
     policy = answers.ai_policy(description, drafted)
     essays = [a for a in drafted if a.get("source") == "model-essay" and a["kind"] == "textarea"]
     trace.check("The application allows AI help with written answers", not (policy and essays),
@@ -428,22 +452,20 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                     " ".join(problems))
         step.summary = f"{len(problems)} problem(s) to fix before approval" if problems else "Consistent"
     first_read.add(ctx, packet, log)
-    # People to contact, with drafts (the Search page chooses who). A redo keeps the ones
-    # you've already emailed. Agents need complete(), which test stand-ins may lack.
+    # People to contact are found after, as a task of their own (worker._prepare queues it): the
+    # search takes minutes, and the application is ready to review without it. A redo keeps
+    # the ones you've already emailed.
     before = packets.load(job)
     keep = [p for p in ((before or {}).get("people") or {}).get("people", []) if p.get("sent_at")]
-    if people.wanted(profile)[0] and hasattr(ctx.llm, "complete"):
-        try:
-            with trace.step("People to contact") as step:
-                packet["people"] = people.find(ctx, job, description, profile, master, log, keep,
-                                               found.get("facts"))
-                step.summary = people.summary_line(packet["people"])
-        except Exception as error:  # noqa: BLE001 - a bonus: the application stands without it.
-            packet["people"] = {"found_at": people.now(), "people": keep, "email_format": None,
-                                "summary": f"Stopped: {type(error).__name__}: {error}"[:300]}
-    elif keep:
+    if keep:
         packet["people"] = before["people"] | {"people": keep}
     return packet
+
+
+def wants_people(ctx) -> bool:
+    """Whether a prepared application goes on to find people: chosen on Search, and a model that
+    can run the search agent (test stand-ins may not)."""
+    return people.wanted(config.load_profile())[0] and hasattr(ctx.llm, "complete")
 
 
 def letter_length(letter: str) -> list[str]:

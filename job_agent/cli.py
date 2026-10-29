@@ -163,34 +163,46 @@ def cmd_worker(_args) -> None:
 
 
 def cmd_demo(args) -> None:
-    """A rehearsable demo: `demo save` snapshots a demo home; `demo` restores it and opens its dashboard.
-    A demo home is a separate folder (profile/ and data/) with made-up data, never your own."""
+    """A rehearsable demo: `demo save` snapshots a demo home; `demo` restores it and opens its dashboard;
+    `demo fresh` empties one and opens it as a new user would first see the app (your resume added
+    live). A demo home is a separate folder (profile/ and data/), never your own profile and data."""
     import os
     import socket
     import subprocess
     import sys
 
-    home = (config.ROOT / args.home).resolve()
+    home = (config.ROOT / (args.home or (".demo-live" if args.action == "fresh" else ".demo-readme"))).resolve()
     saved = home.with_name(home.name + ".saved")
+    again = "uv run job-agent demo" + ("" if home.name == ".demo-readme" else f" --home {home.name}")
     if home in (config.HOME.resolve(), config.ROOT.resolve()) or home.name == ".demo":
         raise SystemExit(f"{home} holds real data; use a demo home with made-up data (e.g. .demo-readme).")
-    if not (home / "profile").exists() and not saved.exists():
-        raise SystemExit(f"No demo home at {home}: create it with JOB_AGENT_HOME={args.home} first.")
     ignore = shutil.ignore_patterns("worker.lock", "browser-profile", "*.saved")
     if args.action == "save":
+        if not (home / "profile").exists():
+            raise SystemExit(f"No demo home at {home} to save.")
         shutil.rmtree(saved, ignore_errors=True)
         shutil.copytree(home, saved, ignore=ignore)
-        print(f"Saved the demo as it is now ({saved.name}). `uv run job-agent demo` brings it back.")
+        print(f"Saved the demo as it is now ({saved.name}). `{again}` brings it back.")
         return
     with socket.socket() as probe:
         if probe.connect_ex(("127.0.0.1", args.port)) == 0:
             raise SystemExit(f"Port {args.port} is in use: stop the running demo dashboard first.")
-    if saved.exists():
+    if args.action == "fresh":
+        # Emptied, so only a demo folder (ignored by git) and never the README's screenshot demo.
+        if not home.name.startswith(".demo-") or home.name == ".demo-readme" or home.parent != config.ROOT:
+            raise SystemExit("A fresh demo empties its folder: use one named .demo-something in the app's folder.")
+        shutil.rmtree(home, ignore_errors=True)
+        home.mkdir()
+        print(f"Emptied {home.name}: the app opens as a new user first sees it. After a rehearsal, "
+              f"`uv run job-agent demo save --home {home.name}` keeps the finished run to fall back on.")
+    elif saved.exists():
         shutil.rmtree(home, ignore_errors=True)
         shutil.copytree(saved, home, ignore=ignore)
         print(f"Restored the demo from {saved.name}.")
-    else:
+    elif (home / "profile").exists():
         print("No saved demo yet (`uv run job-agent demo save`): opening it as it is.")
+    else:
+        raise SystemExit(f"No demo home at {home}: `uv run job-agent demo fresh` starts one.")
     env = {**os.environ, "JOB_AGENT_HOME": str(home)}
     subprocess.run([sys.executable, "-m", "job_agent.cli", "dashboard", "--port", str(args.port)], env=env)
 
@@ -223,9 +235,10 @@ def main() -> None:
     dash = sub.add_parser("dashboard", help="Open the local dashboard (starts the worker).")
     dash.add_argument("--port", type=int, default=8770)
     sub.add_parser("worker", help="Run queued tasks (the dashboard starts this for you).")
-    rehearse = sub.add_parser("demo", help="Restore the saved demo and open its dashboard (or `demo save`).")
-    rehearse.add_argument("action", nargs="?", choices=["run", "save"], default="run")
-    rehearse.add_argument("--home", default=".demo-readme", help="The demo's folder (made-up data only).")
+    rehearse = sub.add_parser("demo", help="Restore the saved demo and open its dashboard (`demo save` keeps "
+                                           "it; `demo fresh` starts from empty).")
+    rehearse.add_argument("action", nargs="?", choices=["run", "save", "fresh"], default="run")
+    rehearse.add_argument("--home", help="The demo's folder (default .demo-readme; .demo-live for fresh).")
     rehearse.add_argument("--port", type=int, default=8771)
     demo = sub.add_parser("demo-site", help="Serve a fake job board for safe testing.")
     demo.add_argument("--port", type=int, default=8765)

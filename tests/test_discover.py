@@ -217,7 +217,15 @@ def test_a_refresh_from_get_started_ranks_what_it_found(tmp_path, monkeypatch):
     from job_agent import matching, worker
     from job_agent.tracker import Tracker
 
-    monkeypatch.setattr(sources, "refresh", lambda *a, **k: {"new": 3, "closed": 0, "seen": 0, "skipped": 0})
+    ranked_early = []
+
+    def read(tracker, profile, lists_read=None, **_):  # The lists are in, then the boards take minutes.
+        if lists_read:
+            lists_read()
+            ranked_early.append(any(t["kind"] == "score_matches" for t in tracker.tasks(10)))
+        return {"new": 3, "closed": 0, "seen": 0, "skipped": 0}
+
+    monkeypatch.setattr(sources, "refresh", read)
     monkeypatch.setattr(matching, "keyword_rank", lambda *a: 0)
     tracker = Tracker(tmp_path / "t.db")
     for arg, ranked in ((None, False), ("rank", True)):
@@ -225,3 +233,4 @@ def test_a_refresh_from_get_started_ranks_what_it_found(tmp_path, monkeypatch):
         worker._refresh(task, SimpleNamespace(tracker=tracker), print)
         tracker.set_task(task["id"], status="done")
         assert any(t["kind"] == "score_matches" for t in tracker.tasks(10)) is ranked
+    assert ranked_early == [True]  # Ranking starts once the lists are in, before the boards.

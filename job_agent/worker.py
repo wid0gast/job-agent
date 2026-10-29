@@ -146,6 +146,8 @@ def _prepare(task, ctx, log) -> str:
     arg = task["arg"] or ""
     left = int(arg[len(TOP_PICK):] or 0) if arg.startswith(TOP_PICK) else None
     status = step("prepare", "prepare")(task["job_id"], ctx, log, note="" if left is not None else arg)
+    if status in ("prepared", "needs_you") and step("prepare", "wants_people")(ctx):
+        ctx.tracker.add_task("people", task["job_id"])  # Alongside: the application is ready now.
     reason = (ctx.tracker.get(task["job_id"]) or {}).get("reason")
     said = PREPARE_OUTCOMES.get(status, status) + (f": {reason}" if reason else
                                                    ": ready for your review." if status == "prepared" else "")
@@ -181,11 +183,14 @@ def _link(task, ctx, log) -> str:
 def _refresh(task, ctx, log) -> str:
     from . import matching, sources
 
+    # From Get started: rank what the lists hold at once, alongside reading the company boards,
+    # so your first matches show in under a minute; then again for what the boards added.
+    rank = (lambda: ctx.tracker.add_task("score_matches")) if task["arg"] == "rank" else None
     counts = sources.refresh(ctx.tracker, config.load_profile(), boards=True, log=log,
-                             progress=lambda text: ctx.tracker.set_task(task["id"], result=text))
+                             progress=lambda text: ctx.tracker.set_task(task["id"], result=text), lists_read=rank)
     matching.keyword_rank(ctx.tracker, config.load_profile())  # Free; the model ranks only the best of these.
-    if task["arg"] == "rank":  # From Get started: rank what was found, for you to pick a first job.
-        ctx.tracker.add_task("score_matches")
+    if rank:
+        rank()
     return (f"{counts['new']} new, {counts['closed']} closed, {counts['seen']} already known; "
             f"{counts['skipped']} outside your search not kept")
 
@@ -258,7 +263,7 @@ def score_matches(ctx: Context, log) -> str:
 # others, one at a time per lane. A prepare needn't wait for a long ranking, or for a
 # refresh (on the class platform reading every company board took over 15 minutes, most
 # of a session).
-LANES = (("score_matches",), ("refresh", "discover"))
+LANES = (("score_matches",), ("refresh", "discover"), ("people",))
 OWN_LANE = tuple(kind for kinds in LANES for kind in kinds)
 
 

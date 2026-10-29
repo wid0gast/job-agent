@@ -42,9 +42,13 @@ class Run:
         self.id = f"{datetime.now():%Y%m%d-%H%M%S}-{kind}"
         self.path = folder(job_id) / f"{self.id}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.stack: list[int] = []
+        self.stacks: dict[int, list[int]] = {}  # Open steps per thread: steps may run side by side.
         self.count = 0
         self.lock = threading.Lock()
+
+    @property
+    def stack(self) -> list[int]:
+        return self.stacks.setdefault(threading.get_ident(), [])
 
     def write(self, type_: str, **data) -> int:
         with self.lock:

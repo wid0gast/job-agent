@@ -687,7 +687,7 @@ def waiting_on_you(app: Dashboard) -> list[dict]:
 
 # How long the waits take, from real runs: reading a resume PDF, reading every company's job
 # list, and preparing one application.
-TAKES = {"resume": "under 2 minutes", "refresh": "2 to 6 minutes", "prepare": "2 to 8 minutes"}
+TAKES = {"resume": "under 2 minutes", "refresh": "2 to 6 minutes", "prepare": "a minute or two"}
 STARTED = ("prepared", "needs_you", "approved", "submitting", "submitted")  # An application exists.
 SETUP_SKIPPED = "setup-skipped"  # Files in data/: you chose to skip Get started,
 REVIEW_SEEN = "first-review-seen"  # and you've read the note on your first application.
@@ -805,12 +805,12 @@ def first_step(app: Dashboard, busy: set, tasks: list[dict]) -> str:
     note = (f'<div class="flash warn">Your pick, <a href="/job/{stopped["id"]}">{esc(stopped["title"])} at '
             f'{esc(stopped["company"])}</a>, was {say(stopped["status"]).lower()}: {esc(stopped["reason"] or "")} '
             f'That\'s found only once the whole posting is read. Pick another below.</div>' if stopped else "")
-    if "refresh" in busy:
-        find = (f'<p><span class=spin></span> Reading the job lists of thousands of companies for your search. '
-                f'Usually {TAKES["refresh"]}. You can paste a link above meanwhile.</p>')
-    elif "score_matches" in busy:
-        find = '<p><span class=spin></span> Ranking the jobs found against what you want. Usually under a minute.</p>'
-    elif app.tracker.with_status("found"):
+    found = app.tracker.with_status("found")
+    ranked = [j for j in found if matching.ranking_score(j)[1] != "keyword"]
+    if not ranked and busy & {"refresh", "score_matches"}:
+        find = (f'<p><span class=spin></span> {"Ranking the jobs found against what you want" if "score_matches" in busy else "Reading the job lists for your search"}. '
+                f'Your first matches usually show in under a minute. You can paste a link above meanwhile.</p>')
+    elif found:
         picks, _ = actions.top_picks(app.tracker, app.settings, 5)
         rows = []
         for job in picks:
@@ -820,8 +820,10 @@ def first_step(app: Dashboard, busy: set, tasks: list[dict]) -> str:
             rows.append(f'<tr><td>{badge}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a><div class=muted>'
                         f'{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
                         f'<td>{form(app, "/prepare", "Prepare this one", {"job_id": job["id"]})}</td></tr>')
-        find = (f'<p class=muted>Your best matches, one per company. Pick one to start: it takes {TAKES["prepare"]}, '
-                f'and you can prepare more later from <a href="/jobs">Ranked jobs</a>.</p>'
+        more = (f' <span class=spin></span> Still reading company job boards ({TAKES["refresh"]} in all): more '
+                f'matches join as they\'re found.' if busy & {"refresh", "score_matches"} else "")
+        find = (f'<p class=muted>Your best matches so far, one per company. Pick one to start: it takes '
+                f'{TAKES["prepare"]}, and you can prepare more later from <a href="/jobs">Ranked jobs</a>.{more}</p>'
                 f'<table><tr><th>Match</th><th>Job</th><th></th></tr>{"".join(rows)}</table>')
     elif app.tracker.all():
         find = ('<p>None of the jobs read passed your search. Widen the places or season above (or on '
@@ -864,7 +866,7 @@ def page_setup(app: Dashboard, flash: str) -> bytes:
             form(app, "/setup/skip", "Skip, show me everything"))
     body = (f'<div class=row style="justify-content:space-between"><h1>Get started</h1>{quiet(skip)}</div>'
             f'<p class=muted style="margin-top:-6px">{done} of {len(steps)} done. Four steps to your first '
-            f'application, about 15 minutes, most of it waiting. Nothing is ever sent without you.</p>'
+            f'application, about 5 minutes. Nothing is ever sent without you.</p>'
             f'<div class=progress><span style="width:{done * 100 // len(steps)}%"></span></div>{"".join(cards)}')
     return layout(app, "/setup", body, flash, refresh=bool(busy), title="Get started")
 
