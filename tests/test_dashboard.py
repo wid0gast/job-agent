@@ -40,6 +40,10 @@ def test_pages_and_request_checks(tmp_path, monkeypatch):
         for path in ("/", "/queue", "/jobs?status=found", "/activity"):
             status, body, _ = request(port, "GET", path)
             assert status == 200, path
+        for path in dashboard.ASSETS:  # The style and scripts, from static/.
+            status, body, headers = request(port, "GET", path)
+            assert status == 200 and body.strip() and ("css" if path.endswith(".css") else "javascript") in \
+                headers["Content-Type"], path
         assert "ML Intern" in request(port, "GET", "/jobs?status=found")[1]
         # The class platform's no-referrer header left form posts without a Referer, refused as cross-origin.
         assert "<meta name=referrer content=same-origin>" in request(port, "GET", "/")[1]
