@@ -57,8 +57,20 @@ PRICES = {"claude-fable-5-1": (10, 50), "claude-opus-5-5": (4, 20), "claude-opus
           "claude-sonnet-5-5": (2, 10), "claude-haiku-5-5": (0.1, 0.5)}
 
 
+# Prompt caching (API key only; Claude Code caches by itself). A cached prefix costs a tenth
+# of fresh input to read back, and a quarter more to write once.
+CACHE = {"type": "ephemeral"}
+# Server-side refusal fallbacks ("default" routing) are offered on these models.
+FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 TRANSIENT = re.compile(r"overloaded|\b5\d\d\b|timed? ?out|took more than|connection|network|"
                        r"temporar|ECONNRESET|socket|try again", re.I)
+
+
+def usage_of(usage: dict) -> dict:
+    """Tokens in and out of one request; input counts cached reads and writes too."""
+    return {"input": sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens",
+                                                       "cache_creation_input_tokens")),
+            "output": usage.get("output_tokens") or 0}
 
 
 class SpendCapReached(RuntimeError):
@@ -201,11 +213,8 @@ Tools:
             raise RuntimeError(f"Claude Code failed (exit {done.returncode}): {detail}") from None
         # Your plan pays, so this is a notional cost: shown, never capped.
         self.count(float(reply.get("total_cost_usd") or 0))
-        usage = reply.get("usage") or {}
-        self.last_usage = {"input": (usage.get("input_tokens") or 0) + (usage.get("cache_read_input_tokens") or 0)
-                           + (usage.get("cache_creation_input_tokens") or 0),
-                           "output": usage.get("output_tokens") or 0,
-                           "cost_usd": float(reply.get("total_cost_usd") or 0), "plan": True}
+        self.last_usage = {**usage_of(reply.get("usage") or {}), "cost_usd": float(reply.get("total_cost_usd") or 0),
+                           "plan": True}
         if reply.get("is_error") or reply.get("subtype") != "success":
             message = str(reply.get("result") or reply.get("subtype"))[:400]
             if re.search(r"log ?in|auth|credential", message, re.I):
@@ -289,10 +298,7 @@ class AnthropicAPI(Model):
     def finished(self, response, model: str) -> None:
         cost = self.cost(response.usage, model)
         self.count(cost)
-        usage = response.usage
-        self.last_usage = {"input": (usage.input_tokens or 0) + (getattr(usage, "cache_read_input_tokens", 0) or 0)
-                           + (getattr(usage, "cache_creation_input_tokens", 0) or 0),
-                           "output": usage.output_tokens or 0, "cost_usd": cost}
+        self.last_usage = {**usage_of(response.usage.model_dump()), "cost_usd": cost}
         if response.stop_reason == "refusal":
             raise RuntimeError("Claude declined this request.")
         if response.stop_reason == "max_tokens":
@@ -368,10 +374,6 @@ class AnthropicAPI(Model):
         return response
 
 
-# Prompt caching (API key only; Claude Code caches by itself). A cached prefix costs a tenth
-# of fresh input to read back, and a quarter more to write once.
-CACHE = {"type": "ephemeral"}
-
 
 def cached(system: str) -> list[dict]:
     """Standing instructions marked for caching: the same text starts every request of a step."""
@@ -390,9 +392,6 @@ def recorded(client, task: str, model: str, effort: str, system: str = "", promp
     trace.model_call(task, model, effort, time.time() - started, system, prompt, done.get("text", ""),
                      getattr(client, "last_usage", {}), turn=turn)
 
-
-# Server-side refusal fallbacks ("default" routing) are offered on these models.
-FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
 
 def to_anthropic(messages: list[dict]) -> list[dict]:
@@ -451,24 +450,10 @@ def parse_json(text: str):
         raise ValueError(f"not JSON ({error})") from None
 
 
-def check(value, schema: dict, path: str = "$") -> None:
-    """A small JSON Schema check: types, required keys, enums, nested objects and arrays."""
-    kind = schema.get("type")
-    types = {"object": dict, "array": list, "string": str, "integer": int,
-             "number": (int, float), "boolean": bool}
-    if kind in types and not isinstance(value, types[kind]):
-        raise ValueError(f"{path} should be {kind}")
-    if kind in ("integer", "number") and isinstance(value, bool):
-        raise ValueError(f"{path} should be {kind}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ValueError(f"{path} must be one of {schema['enum']}")
-    if kind == "object":
-        for key in schema.get("required", []):
-            if key not in value:
-                raise ValueError(f"{path}.{key} is missing")
-        for key, sub in schema.get("properties", {}).items():
-            if key in value:
-                check(value[key], sub, f"{path}.{key}")
-    if kind == "array" and "items" in schema:
-        for index, item in enumerate(value):
-            check(item, schema["items"], f"{path}[{index}]")
+def check(value, schema: dict) -> None:
+    """A model's JSON reply against its schema (the harness's checker; extra keys allowed)."""
+    from .harness import argument_problems
+
+    problems = argument_problems(schema, value, "the reply", strict=False)
+    if problems:
+        raise ValueError("; ".join(problems[:3]))

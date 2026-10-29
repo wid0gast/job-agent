@@ -33,8 +33,8 @@ def test_submitted_today_counts_only_submissions(tmp_path):
     tracker.add_lead("https://a.com/jobs/1", "x", "A", "One", "")
     tracker.add_lead("https://a.com/jobs/2", "x", "A", "Two", "")
     first, second = tracker.leads(10)
-    tracker.update(first["id"], status="working")
-    tracker.update(first["id"], status="submitted")
+    for status in ("preparing", "prepared", "approved", "submitting", "submitted"):
+        tracker.update(first["id"], status=status)
     tracker.update(second["id"], status="skipped")
     assert tracker.submitted_today() == 1
     assert tracker.leads(10) == []

@@ -290,3 +290,20 @@ def test_the_application_is_ready_before_people_are_found(ctx, monkeypatch):  # 
     worker._prepare(task, ctx, lambda *_: None)
     assert ctx.tracker.get(job_id)["status"] == "prepared" and "people" not in packets.load(ctx.tracker.get(job_id))
     assert [t["kind"] for t in ctx.tracker.tasks(5)].count("people") == 1 and ("people",) in worker.LANES
+
+
+def test_someone_you_email_while_people_are_searched_stays_sent(ctx, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
+    ctx.llm = PeopleModel(scout_steps())
+    job_id = add_job(ctx, "4001")
+    prepare_and_find(job_id, ctx, log=lambda *_: None)
+    maria = packets.load(ctx.tracker.get(job_id))["people"]["people"][0]
+
+    def search_while_you_send(*args):
+        people.mark_sent(ctx.tracker, job_id, maria["id"])
+        return {"found_at": people.now(), "people": [], "email_format": None, "summary": "No one new."}
+
+    monkeypatch.setattr(people, "find", search_while_you_send)
+    people.refresh(job_id, ctx, log=lambda *_: None)
+    kept = packets.load(ctx.tracker.get(job_id))["people"]["people"]
+    assert [p["name"] for p in kept] == ["Maria Gomez"] and kept[0]["sent_at"]

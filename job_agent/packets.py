@@ -49,6 +49,18 @@ def store(packet: dict) -> None:
     packet["_dir"] = str(folder)
 
 
+def update(job: dict, change) -> dict:
+    """Apply `change` to the packet as it is on disk now, and store it. A step that spends
+    minutes on the model works out its part first and changes only that here, so what you
+    edited or approved meanwhile stays."""
+    packet = load(job)
+    if packet is None:
+        raise ValueError(f"Job {job['id']} has no packet.")
+    change(packet)
+    store(packet)
+    return packet
+
+
 def content_hash(packet: dict) -> str:
     """What approval covers: every answer value plus the exact document files."""
     digest = hashlib.sha256()

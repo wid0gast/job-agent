@@ -466,3 +466,41 @@ def test_without_latex_the_resume_is_printed_by_the_browser_on_its_own_thread(ct
     assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
     packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
     assert packet["documents"]["resume"]["pdf"].endswith(".pdf")
+
+
+def test_what_you_change_while_a_slow_step_runs_stays(ctx, monkeypatch):
+    """A step that spends minutes on the model changes only its own part when it finishes: an
+    answer you typed meanwhile isn't overwritten by the older copy it started from."""
+    from job_agent import answers, first_read, packets
+
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    job = ctx.tracker.get(job_id)
+    texts = [a["key"] for a in packets.load(job)["answers"] if a["kind"] in ("text", "textarea")][:2]
+    yours, blank = texts
+
+    def you_type(key, value):
+        def change(packet):
+            next(a for a in packet["answers"] if a["key"] == key)["value"] = value
+        packets.update(job, change)
+
+    # A hiring manager's read, again: you answer a question while it reads.
+    reader = first_read.read
+    monkeypatch.setattr(first_read, "read", lambda c, p: (you_type(yours, "Mine"), reader(c, p))[1])
+    first_read.again(job_id, ctx, log=lambda *_: None)
+    packet = packets.load(job)
+    assert by_key(packet, yours)["value"] == "Mine" and packet["first_read"]
+
+    # Drafting what's blank: a question you answer meanwhile keeps your answer; the other gets the draft.
+    you_type(yours, None)
+    you_type(blank, None)
+
+    def model_drafts(llm, fields, *rest):
+        you_type(yours, "Mine again")
+        for field in fields:
+            field["value"] = "Drafted"
+
+    monkeypatch.setattr(answers, "ask_model", model_drafts)
+    prepare.draft_missing(job_id, ctx, log=lambda *_: None)
+    packet = packets.load(job)
+    assert by_key(packet, yours)["value"] == "Mine again" and by_key(packet, blank)["value"] == "Drafted"

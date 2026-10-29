@@ -1,4 +1,4 @@
-"""A3: company research for cover letters and "why us" answers.
+"""Company research for cover letters and "why us" answers.
 
 An agent searches the web and reads pages about the company and team, and
 saves facts. Code keeps a fact only if its quote appears in the visible text

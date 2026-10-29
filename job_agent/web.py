@@ -1,4 +1,4 @@
-"""A2: application systems without a coded adapter (iCIMS, SmartRecruiters,
+"""Application systems without a coded adapter (iCIMS, SmartRecruiters,
 custom career pages), handled by an agent that explores and code that replays.
 
 EXPLORE (during prepare): an agent works through the site in the browser.

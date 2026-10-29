@@ -326,14 +326,6 @@ DRAFT_SCHEMA = {
 DRAFT_CHECK = "Message follows the advice (under 100 words, one question) and invents no numbers"
 
 
-def summary_line(found: dict) -> str:
-    listed = found.get("people") or []
-    if not listed:
-        return found.get("summary", "")[:200] or "No one found"
-    with_email = sum(bool(p.get("email")) for p in listed)
-    return f"{len(listed)} people ({with_email} with an email address)"
-
-
 # Numbers the advice itself puts in a message (a 15-minute chat).
 ASKS = "10 15 20 30 minutes"
 
@@ -580,10 +572,14 @@ def _refresh(job_id: int, ctx, log) -> str:
     keep = [p for p in (packet.get("people") or {}).get("people", []) if p.get("sent_at")]
     found = find(ctx, job, packet.get("description", ""), profile, master, log, keep,
                  (packet.get("research") or {}).get("facts"))
-    # The search takes minutes: what you changed meanwhile (answers, approval) stays.
-    job, packet = load(ctx.tracker, job_id)
-    packet["people"] = found
-    packets.store(packet)
+
+    def replace(latest: dict) -> None:
+        # The search takes minutes: only its people change, and anyone you emailed meanwhile stays as you left them.
+        sent = {p["id"]: p for p in (latest.get("people") or {}).get("people", []) if p.get("sent_at")}
+        new = [sent.pop(p["id"], p) for p in found["people"]]
+        latest["people"] = {**found, "people": new + list(sent.values())}
+
+    packets.update(job, replace)
     fresh = len(found["people"]) - len(keep)
     return f"Found {fresh} people to contact." if fresh else f"No one found. {found['summary']}"[:300]
 
@@ -604,5 +600,12 @@ def _redraft(job_id: int, ctx, person_ids: list[str], note: str) -> str:
         raise ValueError("No unsent drafts to rewrite.")
     draft(ctx.llm, people, job, packet.get("description", ""), config.load_profile(),
           config.read_master_resume(), (packet.get("research") or {}).get("facts"), note)
-    packets.store(packet)
+    drafted = {p["id"]: p for p in people}
+
+    def rewrite(latest: dict) -> None:  # Only drafts still unsent: one you sent meanwhile keeps its words.
+        for person in (latest.get("people") or {}).get("people", []):
+            if person["id"] in drafted and not person.get("sent_at"):
+                person.update(draft=drafted[person["id"]]["draft"], checks=drafted[person["id"]]["checks"])
+
+    packets.update(job, rewrite)
     return f"Redrafted {len(people)} message(s)."

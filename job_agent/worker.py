@@ -224,6 +224,16 @@ def _redraft(task, ctx, log) -> str:  # arg: {"people": [ids], "note": "what to 
     return people.redraft(task["job_id"], ctx, request.get("people") or [], request.get("note", ""), log)
 
 
+def _score_matches(task, ctx: Context, log) -> str:
+    from . import matching
+
+    if ctx.llm is None:
+        raise ValueError(NOT_SET_UP)
+    result = matching.score(ctx.llm, ctx.tracker, log=log)
+    return (f"Ranked {result['scored']} job(s) with the model; {result['remaining']} not yet "
+            "(they keep their keyword score).")
+
+
 def step(module: str, name: str):
     """A pipeline function, imported when first used (the dashboard imports this module too)."""
     import importlib
@@ -235,10 +245,9 @@ def step(module: str, name: str):
 HANDLERS = {
     "discover": _discover, "refresh": _refresh, "sync_profile": _sync_profile,
     "merge_resumes": _merge_resumes, "import_resume": _import_resume, "redraft": _redraft,
-    "score_matches": lambda task, ctx, log: score_matches(ctx, log),
-    # arg: a note on what to change, for a redo.
-    "prepare": lambda task, ctx, log: _prepare(task, ctx, log),
-    "link": lambda task, ctx, log: _link(task, ctx, log),
+    "score_matches": _score_matches,
+    "prepare": _prepare,  # arg: a note on what to change, for a redo.
+    "link": _link,
     "draft": lambda task, ctx, log: step("prepare", "draft_missing")(task["job_id"], ctx, log),
     "render": lambda task, ctx, log: step("prepare", "render")(task["job_id"], ctx, log),
     "letter": lambda task, ctx, log: step("prepare", "add_letter")(task["job_id"], ctx, log),
@@ -249,16 +258,6 @@ HANDLERS = {
 NEEDS_MODEL = ("sync_profile", "import_resume", "first_read", "link")
 
 
-def score_matches(ctx: Context, log) -> str:
-    from . import matching
-
-    if ctx.llm is None:
-        raise ValueError(NOT_SET_UP)
-    result = matching.score(ctx.llm, ctx.tracker, log=log)
-    return (f"Ranked {result['scored']} job(s) with the model; {result['remaining']} not yet "
-            "(they keep their keyword score).")
-
-
 # Tasks with lanes of their own: they never open the browser, so they run alongside the
 # others, one at a time per lane. A prepare needn't wait for a long ranking, or for a
 # refresh (on the class platform reading every company board took over 15 minutes, most
@@ -267,26 +266,36 @@ LANES = (("score_matches",), ("refresh", "discover"), ("people",))
 OWN_LANE = tuple(kind for kinds in LANES for kind in kinds)
 
 
+def finish(task: dict, ctx: Context, log, work) -> None:
+    """Run one task and record how it ended. One task's failure, even a missing file
+    (config raises SystemExit), never stops the loop that runs it."""
+    tracker = ctx.tracker
+    stopping.watch(lambda: tracker.stop_asked(task["id"]))
+    try:
+        tracker.set_task(task["id"], status="done", result=str(work())[:2000])
+    except stopping.Stopped:
+        log(f"Task {task['id']} stopped at your request")
+        tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
+    except (Exception, SystemExit) as error:  # noqa: BLE001 - reported on the task, like any other.
+        log(traceback.format_exc())
+        tracker.set_task(task["id"], status="failed", result=f"{type(error).__name__}: {error}"[:2000])
+
+
 def lane(ctx: Context, log, stop: threading.Event, kinds: tuple[str, ...] = LANES[0]) -> None:
+    def work(task):
+        if task["kind"] in NEEDS_MODEL and ctx.llm is None:
+            raise ValueError(NOT_SET_UP)
+        # The handler directly, not run_task: that sets ctx.ask, the way a prepare's agent
+        # asks you things, and it must stay pointed at the prepare's task.
+        return HANDLERS[task["kind"]](task, ctx, log)
+
     while not stop.is_set():
         task = ctx.tracker.claim_task(kinds=kinds)
         if task is None:
             stop.wait(1)
             continue
         log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
-        stopping.watch(lambda task_id=task["id"]: ctx.tracker.stop_asked(task_id))
-        try:
-            if task["kind"] in NEEDS_MODEL and ctx.llm is None:
-                raise ValueError(NOT_SET_UP)
-            # The handler directly, not run_task: that sets ctx.ask, the way a prepare's agent
-            # asks you things, and it must stay pointed at the prepare's task.
-            result = HANDLERS[task["kind"]](task, ctx, log)
-            ctx.tracker.set_task(task["id"], status="done", result=str(result)[:2000])
-        except stopping.Stopped:
-            ctx.tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
-        except Exception as error:  # noqa: BLE001 - reported on the task, like any other.
-            log(traceback.format_exc())
-            ctx.tracker.set_task(task["id"], status="failed", result=f"{type(error).__name__}: {error}"[:2000])
+        finish(task, ctx, log, lambda: work(task))
 
 
 def serve(settings, log=print, idle_exit: float | None = None) -> None:
@@ -319,17 +328,7 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
                     continue
                 label = f"{task['kind']}" + (f" job {task['job_id']}" if task["job_id"] else "")
                 log(f"Task {task['id']}: {label}")
-                stopping.watch(lambda task_id=task["id"]: tracker.stop_asked(task_id))
-                try:
-                    result = run_task(task, ctx, log)
-                    tracker.set_task(task["id"], status="done", result=str(result)[:2000])
-                except stopping.Stopped:
-                    log(f"Task {task['id']} stopped at your request")
-                    tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
-                except (Exception, SystemExit) as error:  # noqa: BLE001 - one task's failure doesn't stop the worker.
-                    log(traceback.format_exc())
-                    tracker.set_task(task["id"], status="failed",
-                                     result=f"{type(error).__name__}: {error}"[:2000])
+                finish(task, ctx, log, lambda: run_task(task, ctx, log))
                 idle_since = time.time()
         finally:
             stop.set()

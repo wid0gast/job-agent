@@ -27,7 +27,7 @@ class Tool:
     fn: Callable[..., object]
     # Results of ephemeral tools (page snapshots) are pruned once superseded.
     ephemeral: bool = False
-    # Reads only: safe to run alongside other reads.
+    # Changes nothing (told to the chat's MCP host as readOnlyHint).
     read_only: bool = False
     # A guard in code (e.g. "Fact is quoted from a page it read"): each call is a check in the job's trace.
     guard: str = ""
@@ -42,9 +42,10 @@ TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": 
          "integer": int, "number": (int, float)}
 
 
-def argument_problems(schema: dict, value, where: str = "arguments") -> list[str]:
-    """What's wrong with a tool call's arguments against its declared schema (the parts tools use:
-    type, enum, required, no extra properties, items, minItems), checked before anything runs."""
+def argument_problems(schema: dict, value, where: str = "arguments", strict: bool = True) -> list[str]:
+    """What's wrong with a value against a JSON Schema (the parts the app uses: type, enum,
+    required, items, minItems, and with `strict` no extra properties). Tool calls are checked
+    strictly before anything runs; a model's JSON reply (llm.check) may carry extra keys."""
     kinds = schema.get("type")
     if kinds:
         kinds = [kinds] if isinstance(kinds, str) else kinds
@@ -57,17 +58,17 @@ def argument_problems(schema: dict, value, where: str = "arguments") -> list[str
     if isinstance(value, dict):
         properties = schema.get("properties", {})
         problems += [f"{where} is missing {name!r}" for name in schema.get("required", []) if name not in value]
-        if schema.get("additionalProperties") is False:
+        if strict and schema.get("additionalProperties") is False:
             problems += [f"{where} has an unknown field {name!r}" for name in value if name not in properties]
         for name, item in value.items():
             if name in properties:
-                problems += argument_problems(properties[name], item, f"{name!r}")
+                problems += argument_problems(properties[name], item, f"{name!r}", strict)
     if isinstance(value, list):
         if len(value) < schema.get("minItems", 0):
             problems.append(f"{where} needs at least {schema['minItems']} item(s)")
         if "items" in schema:
             for i, item in enumerate(value):
-                problems += argument_problems(schema["items"], item, f"{where}[{i}]")
+                problems += argument_problems(schema["items"], item, f"{where}[{i}]", strict)
     return problems
 
 
@@ -170,19 +171,18 @@ class AgentRun:
     def check(self, call: dict) -> dict | None:
         """Why this call can't run (unknown tool, arguments not JSON or not matching the tool's
         schema), as the result the model gets back; None when it may run."""
-        name = call["function"]["name"]
+        name, raw = call["function"]["name"], call["function"].get("arguments") or "{}"
         tool = self.by_name.get(name)
-        if tool is None:
-            return {"ok": False, "error": f"Unknown tool {name!r}."}
         try:
-            args = json.loads(call["function"].get("arguments") or "{}")
+            args = json.loads(raw)
         except json.JSONDecodeError as error:
-            return {"ok": False, "error": f"Arguments were not valid JSON: {error}"}
-        problems = argument_problems(tool.parameters, args)
-        if problems:
-            self.trace("call", {"name": name, "args": args, "refused": problems})
-            return {"ok": False, "error": f"Not run: {'; '.join(problems)}."}
-        return None
+            args, problems = raw, [f"arguments were not valid JSON ({error})"]
+        else:
+            problems = [f"unknown tool {name!r}"] if tool is None else argument_problems(tool.parameters, args)
+        if not problems:
+            return None
+        self.trace("call", {"name": name, "args": args, "refused": problems})
+        return {"ok": False, "error": f"Not run: {'; '.join(problems)}."}
 
     def execute(self, call: dict) -> dict:
         name = call["function"]["name"]
@@ -197,8 +197,6 @@ class AgentRun:
             return result
         except StopRun:
             raise
-        except TypeError as error:
-            return {"ok": False, "error": f"Bad arguments for {name}: {error}"}
         except Exception as error:  # noqa: BLE001 - the model decides how to recover.
             if tool.guard and isinstance(error, ValueError):
                 trace.check(tool.guard, False, f"Refused {what}: {error}")

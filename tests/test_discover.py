@@ -234,3 +234,32 @@ def test_a_refresh_from_get_started_ranks_what_it_found(tmp_path, monkeypatch):
         tracker.set_task(task["id"], status="done")
         assert any(t["kind"] == "score_matches" for t in tracker.tasks(10)) is ranked
     assert ranked_early == [True]  # Ranking starts once the lists are in, before the boards.
+
+
+def test_a_task_that_hits_a_missing_file_fails_without_stopping_its_lane(tmp_path, monkeypatch):
+    """config raises SystemExit for a missing file (no master resume yet). In a lane of its own
+    that once ended the lane's thread, leaving the task "running" and the lane dead."""
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from job_agent import worker
+    from job_agent.tracker import Tracker
+
+    def no_resume(task, ctx, log):
+        raise SystemExit("Add your master resume at profile/resume.md.")
+
+    monkeypatch.setitem(worker.HANDLERS, "people", no_resume)
+    tracker = Tracker(tmp_path / "t.db")
+    ids = [tracker.add_task("people", job_id) for job_id in (1, 2)]
+    stop = threading.Event()
+    side = threading.Thread(target=worker.lane, daemon=True,
+                            args=(SimpleNamespace(tracker=tracker, llm=object()), lambda *_: None, stop, ("people",)))
+    side.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and any(tracker.task(i)["status"] != "failed" for i in ids):
+        time.sleep(0.2)
+    stop.set()
+    side.join(timeout=5)
+    assert [tracker.task(i)["status"] for i in ids] == ["failed", "failed"]  # The second ran too.
+    assert "resume.md" in tracker.task(ids[0])["result"]

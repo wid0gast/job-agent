@@ -113,7 +113,8 @@ def again(job_id: int, ctx, log=print) -> str:
             raise ValueError(f"Job {job_id} has no packet to read (it is {job['status']}).")
         with trace.step("A hiring manager's first read") as step:
             log("  reading it as the hiring manager")
-            packet["first_read"] = read(ctx, packet)
-            step.summary = summary(packet["first_read"])
-        packets.store(packet)  # Advice only: the approval fingerprint covers what's sent, not this.
+            found = read(ctx, packet)
+            step.summary = summary(found)
+        # Advice only: the approval fingerprint covers what's sent, not this.
+        packets.update(job, lambda latest: latest.update(first_read=found))
         return step.summary

@@ -31,13 +31,12 @@ LOG_PATH = config.DATA_DIR / "logs" / "worker.log"
 QUEUE = ("prepared", "needs_you", "approved", "submitting")
 PREPARES = ("prepare", "link")  # Task kinds that prepare a job (link: from a pasted link).
 ORDER = ("found", "preparing", "prepared", "needs_you", "approved", "submitting", "submitted",
-         "filtered_out", "failed", "rejected", "skipped", "closed", "working")
+         "filtered_out", "failed", "rejected", "skipped", "closed")
 # What each status is called on the page: the stored names are for code.
 STATUS_WORDS = {
     "found": "New", "preparing": "Preparing", "prepared": "Ready for review", "needs_you": "Needs you",
     "approved": "Approved", "submitting": "Sending", "submitted": "Applied", "filtered_out": "Set aside",
     "failed": "Couldn't finish", "rejected": "Dropped", "skipped": "Not interested", "closed": "Posting closed",
-    "working": "Agent working",
     # Background tasks.
     "queued": "Waiting to start", "running": "Running", "stopping": "Stopping", "waiting": "Needs your answer",
     "done": "Done", "stopped": "Stopped",
@@ -103,7 +102,7 @@ td a{font-weight:600;color:var(--text)}td a:hover{color:var(--accent)}
 .pill{display:inline-block;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--muted);
 font-size:12px;font-weight:600;white-space:nowrap}
 .pill.found{background:var(--info-soft);color:var(--info)}
-.pill.preparing,.pill.working,.pill.running,.pill.queued,.pill.submitting{background:var(--accent-soft);color:var(--accent)}
+.pill.preparing,.pill.running,.pill.queued,.pill.submitting{background:var(--accent-soft);color:var(--accent)}
 .pill.prepared{background:var(--accent-soft);color:var(--accent)}
 .pill.approved,.pill.submitted,.pill.done{background:var(--good-soft);color:var(--good)}
 .pill.needs_you,.pill.waiting{background:var(--warn-soft);color:var(--warn)}
@@ -1062,7 +1061,7 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
     counts = app.tracker.status_counts()
     # Tabs only for statuses that have jobs, each with its count.
     views = [("active", "To apply", sum(counts.get(s, 0) for s in ACTIVE)),
-             *[(s, say(s), counts[s]) for s in ORDER if s != "working" and counts.get(s)],
+             *[(s, say(s), counts[s]) for s in ORDER if counts.get(s)],
              ("all", "All", sum(counts.values()))]
     keep = f"&q={quote(query)}" if query else ""
     tabs = "".join(f'<a class="tab{" on" if key == status else ""}" href="/jobs?status={key}{keep}">{name} '

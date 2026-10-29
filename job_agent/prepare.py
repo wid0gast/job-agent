@@ -540,17 +540,24 @@ def add_letter(job_id: int, ctx, log=print) -> str:
             raise ValueError("This application form has no place for a cover letter.")
         profile, master = config.load_profile(), config.read_master_resume()
         description = packet.get("description", "")
-        facts = (packet.get("research") or {}).get("facts")
-        if facts is None and ctx.settings.research != "off":
+        found = packet.get("research")
+        if (found or {}).get("facts") is None and ctx.settings.research != "off":
             with trace.step("Company research") as step:
-                packet["research"] = research.research(ctx, job, description, log)
-                facts = packet["research"]["facts"]
-                step.summary = f"{len(facts)} fact(s), each quoted from a page it read"
-        packet["documents"]["cover_letter"] = write_letter(ctx, job, description, profile, master, facts or [],
-                                                           Path(packet["_dir"]), log=log)
-        field.update(value="cover_letter", source="model-essay", note="Tailored cover letter (see documents).")
-        packet["approved_hash"] = None
-        packets.store(packet)
+                found = research.research(ctx, job, description, log)
+                step.summary = f"{len(found['facts'])} fact(s), each quoted from a page it read"
+        letter = write_letter(ctx, job, description, profile, master, (found or {}).get("facts") or [],
+                              Path(packet["_dir"]), log=log)
+
+        def add(latest: dict) -> None:  # Only the letter and its field: your edits meanwhile stay.
+            if found:
+                latest["research"] = found
+            latest["documents"]["cover_letter"] = letter
+            next(a for a in latest["answers"] if a["key"] == field["key"]).update(
+                value="cover_letter", source="model-essay", note="Tailored cover letter (see documents).")
+            latest["approved_hash"] = None
+
+        packets.update(job, add)
+        job = ctx.tracker.get(job_id)
         if job["status"] == "approved":  # Approval covers exact content.
             ctx.tracker.move(job_id, "approved", "prepared", reason="Cover letter added; approve again.")
         return "Cover letter written. Review it, then approve."
@@ -835,8 +842,18 @@ def _draft_missing(job_id: int, ctx, log) -> str:
         answers.ask_model(ctx.llm, open_fields, config.load_profile(), config.read_master_resume(),
                           job, packet.get("description", ""), config.read_optional("story-bank.md"),
                           config.read_optional("writing-sample.md"))
-    packet["approved_hash"] = None
-    packets.store(packet)
+    drafted = {a["key"]: a for a in open_fields}
+    if tracker.get(job_id)["status"] == "approved":  # You approved it meanwhile: that stands.
+        return "You approved it while the answers were drafted, so they weren't added."
+
+    def fill(latest: dict) -> None:  # Only questions still blank: ones you answered meanwhile keep yours.
+        for answer in latest["answers"]:
+            if answer["key"] in drafted and answer.get("value") in (None, "", []):
+                answer.update(drafted[answer["key"]])
+        latest["approved_hash"] = None
+
+    packet = packets.update(job, fill)
+    job = tracker.get(job_id)
     waiting = len(packets.missing(packet))
     if job["status"] == "needs_you" and not waiting:
         tracker.move(job_id, "needs_you", "prepared", reason="Drafted the new answers; review and approve.")
