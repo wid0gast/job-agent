@@ -166,7 +166,7 @@ def test_each_task_gets_a_fitting_model():
     assert model.choose("resume_facts") == ("claude-sonnet-5-5", "low")
     assert model.choose("research") == ("claude-sonnet-5-5", "medium")
     assert model.choose("fit") == ("claude-opus-5-5", "medium")
-    assert model.choose("tailored_resume") == ("claude-opus-5-5", "high")
+    assert model.choose("tailored_resume") == ("claude-opus-5-5", "medium")
     assert model.choose("form_answers") == ("claude-opus-5-5", "medium")
     assert model.choose("something new") == ("claude-sonnet-5-5", "medium")
     assert set(model.plan()) == set(llm.TASKS)

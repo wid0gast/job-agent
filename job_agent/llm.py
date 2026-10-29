@@ -41,7 +41,7 @@ TASKS = {
     "research": ("standard", "medium"),        # agent: reads company pages, keeps quoted facts
     "assistant": ("standard", "medium"),       # the chat (pick per chat); the writing is done by Opus steps
     "fit": ("best", "medium"),                 # decides whether you apply at all
-    "tailored_resume": ("best", "high"),       # what recruiters read; must not invent
+    "tailored_resume": ("best", "medium"),     # what recruiters read; must not invent (high wrote the same page, slower)
     "cover_letter": ("best", "high"),
     "form_answers": ("best", "medium"),        # answers and essays sent to employers
     "explore": ("best", "medium"),             # agent: fills unfamiliar forms on live sites
