@@ -424,15 +424,29 @@ def fit(doc: dict, contact: dict, pages: int, output: Path, limit: int = 40) -> 
     for sec in doc["sections"]:  # Fit what will actually print.
         if sec["kind"] == "skills":
             sec["skills"] = unique_skills(sec["skills"])
-    removed = []
     count = compile_pdf(resume_tex(doc, contact, pages), output)
-    while count > pages and len(removed) < limit:
-        cut = trim_once(doc)
+    if count <= pages:
+        return doc, count, []
+    # Each cut in order, without typesetting; then the fewest cuts that fit, found by halving
+    # (about 5 typesets instead of one per cut line, the same resume as cutting one at a time).
+    versions, removed, work = [doc], [], copy.deepcopy(doc)
+    while len(removed) < limit:
+        cut = trim_once(work)
         if cut is None:
             break
         removed.append(cut if isinstance(cut, str) else str(cut))
-        count = compile_pdf(resume_tex(doc, contact, pages), output)
-    return doc, count, removed
+        versions.append(copy.deepcopy(work))
+    low, high, best, last = 1, len(removed), len(removed), None
+    while low <= high:
+        middle = (low + high) // 2
+        last, count = middle, compile_pdf(resume_tex(versions[middle], contact, pages), output)
+        if count <= pages:
+            best, high = middle, middle - 1
+        else:
+            low = middle + 1
+    if last != best:  # The PDF on disk is the version returned.
+        count = compile_pdf(resume_tex(versions[best], contact, pages), output)
+    return versions[best], count, removed[:best]
 
 
 def ensure_education(doc: dict, master: str) -> dict:
