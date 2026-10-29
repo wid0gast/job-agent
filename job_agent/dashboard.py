@@ -585,8 +585,9 @@ def first_review_note(app: Dashboard, job: dict) -> str:
             or app.tracker.with_status("approved", "submitting", "submitted")):
         return ""
     return (f'<div class="card first-review"><h2>Your first application is ready. Here\'s what to check</h2><ol>'
-            f'<li><b>Anything that needs you</b> (the Application tab): questions only you can answer. Job Agent '
-            f'never guesses a fact about you.</li>'
+            f'<li><b>The Application tab</b>: first the questions only you can answer (Job Agent never guesses a '
+            f'fact about you), then the answers the model wrote in your name. Read those; the rest came from '
+            f'what you\'ve already told it.</li>'
             f'<li><b>The tailored resume</b>, and the cover letter when the form has a place for one (the PDF '
             f'buttons): every line comes from your master resume, but read them as the hiring manager would.</li>'
             f'<li><b>The Review tab</b>: how to apply, and a hiring manager\'s quick first read.</li></ol>'
