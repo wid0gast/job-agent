@@ -317,8 +317,10 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
     return value, "profile"
 
 
-def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[list[dict], list[dict]]:
-    """Answers code can give, and the fields still open for the model."""
+def draft(fields: list[dict], profile: dict, job: dict, saved: dict,
+          yours: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Answers code can give, and the fields still open for the model. `yours`: what you wrote
+    in the packet a redo replaces, by (key, fingerprint); it stands while the question does."""
     bank = load_bank()
     saved_by_label = {norm(q): a for q, a in saved.items()}
     answers, open_fields = [], []
@@ -326,7 +328,9 @@ def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[li
         answer = {**field, "fingerprint": fingerprint(field), "value": None,
                   "source": "blank", "note": ""}
         hit = from_profile(field, profile, job)
-        if hit:
+        if (field["key"], answer["fingerprint"]) in (yours or {}):
+            answer.update(value=yours[field["key"], answer["fingerprint"]], source="you", note="Edited by you.")
+        elif hit:
             answer["value"], answer["source"] = hit
         elif EDUCATION_ROW.match(field["key"]):
             # One row per degree: only your resume knows which degree's dates these are.

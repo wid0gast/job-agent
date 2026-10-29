@@ -62,7 +62,7 @@ def cmd_prepare(args) -> None:
             for job_id in ids:
                 job = tracker.get(job_id)
                 print(f"\n-- #{job_id} {job['title']} at {job['company']}")
-                if prepare(job_id, ctx, print) in ("prepared", "needs_you") and wants_people(ctx):
+                if prepare(job_id, ctx, print) in ("prepared", "needs_you") and wants_people(ctx, job_id):
                     people.refresh(job_id, ctx, print)  # The worker does this as a task of its own.
         finally:
             print(f"\nModel calls: {ctx.llm.calls}, spent ${ctx.llm.spent_usd:.4f}")

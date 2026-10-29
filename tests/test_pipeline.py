@@ -11,7 +11,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from job_agent import (actions, answers, companies, config, demo_greenhouse, demo_site,
+from job_agent import (actions, answers, companies, config, demo_greenhouse, demo_site, packets,
                        greenhouse, prepare, submit)
 from job_agent.tracker import Tracker
 from job_agent.worker import Context
@@ -504,3 +504,21 @@ def test_what_you_change_while_a_slow_step_runs_stays(ctx, monkeypatch):
     prepare.draft_missing(job_id, ctx, log=lambda *_: None)
     packet = packets.load(job)
     assert by_key(packet, yours)["value"] == "Mine again" and by_key(packet, blank)["value"] == "Drafted"
+
+
+def test_a_redo_keeps_your_answers_and_reuses_what_nothing_changed(ctx):
+    job_id = add_job(ctx, "4001")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    actions.edit_answer(ctx.tracker, job_id, "question_9004", "https://linkedin.com/in/jane")
+    fits = sum(name == "fit" for name, _ in ctx.llm.seen)
+
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None, note="lead with research") == "prepared"
+    packet = packets.load(ctx.tracker.get(job_id))
+    assert by_key(packet, "question_9004")["value"] == "https://linkedin.com/in/jane"
+    assert by_key(packet, "question_9004")["source"] == "you"
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits, "same posting, profile and resume today"
+    assert sum(name == "tailored_resume" for name, _ in ctx.llm.seen) == 2, "the documents are redone"
+
+    (config.PROFILE_DIR / "resume.md").write_text(config.read_master_resume() + "\n- Built a parser.\n")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits + 1, "a changed resume is checked again"

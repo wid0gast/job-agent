@@ -61,6 +61,12 @@ def update(job: dict, change) -> dict:
     return packet
 
 
+def basis(inputs) -> str:
+    """A short fingerprint of everything a step read. Stored with its result, it says whether
+    that result still holds: a redo reuses what nothing it read has changed since."""
+    return hashlib.sha1(json.dumps(inputs, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
 def content_hash(packet: dict) -> str:
     """What approval covers: every answer value plus the exact document files."""
     digest = hashlib.sha256()

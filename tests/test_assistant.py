@@ -43,6 +43,8 @@ def test_packet_tools_and_their_guards(ctx, tmp_path):  # noqa: F811 - pytest fi
     assert packet["link"] == f"/job/{job_id}" and isinstance(packet["needs_you"], list)
     assert "## Education" in packet["resume"]["text"] and packet["cover_letter"] is None
     assert tools.find_jobs("prepared")["jobs"][0]["id"] == job_id
+    assert tools.find_jobs("any", "contoso ai")["total"] == 1
+    assert tools.find_jobs("any", "toso")["total"] == 0, "words match from their start"
 
     # A fact the user never gave is refused; their own words go in, marked as theirs.
     with pytest.raises(ValueError, match="isn't something the user said"):

@@ -11,7 +11,6 @@ words that aren't there is dropped). Nothing is changed for you: you decide what
 by editing or asking the assistant.
 """
 
-import hashlib
 import json
 import re
 from datetime import UTC, date, datetime
@@ -52,7 +51,7 @@ def material(packet: dict) -> dict:
 
 def basis(packet: dict) -> str:
     """Changes when what the employer reads changes: an older read is then out of date."""
-    return hashlib.sha1(json.dumps(material(packet), sort_keys=True).encode()).hexdigest()[:12]
+    return packets.basis(material(packet))
 
 
 def flat(text: str) -> str:

@@ -84,7 +84,7 @@ def scout_steps():
 def prepare_and_find(job_id, ctx, **kwargs):  # noqa: F811
     """Prepare, then find people, as the worker does (people are a task of their own, after)."""
     status = prepare.prepare(job_id, ctx, **kwargs)
-    if status in ("prepared", "needs_you") and prepare.wants_people(ctx):
+    if status in ("prepared", "needs_you") and prepare.wants_people(ctx, job_id):
         people.refresh(job_id, ctx, log=lambda *_: None)
     return status
 
@@ -141,11 +141,12 @@ def test_people_are_checked_drafted_and_sent_only_by_you(ctx, monkeypatch):  # n
     people.set_state(ctx.tracker, job_id, maria["id"], "replied")
     assert people.due(ctx.tracker) == []
 
-    # A redo of the packet keeps the people you've emailed.
-    ctx.llm = PeopleModel([("finish", {"summary": "No one new."})])
+    # A redo of the packet keeps the people found, with their drafts, and doesn't search again.
+    ctx.llm = PeopleModel([])
     prepare_and_find(job_id, ctx, log=lambda *_: None, note="shorter")
     kept = packets.load(ctx.tracker.get(job_id))["people"]["people"]
-    assert [p["name"] for p in kept] == ["Maria Gomez"] and kept[0]["replied_at"]
+    assert [p["name"] for p in kept] == ["Maria Gomez", "Leo Chen"] and kept[0]["replied_at"]
+    assert not prepare.wants_people(ctx, job_id)
 
 
 def test_search_page_choices_and_no_contact_postings(ctx, monkeypatch):  # noqa: F811

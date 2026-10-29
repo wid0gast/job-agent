@@ -84,11 +84,12 @@ class Assistant:
                   coded_only: bool = False):
         if status not in (*STATUSES, "any"):
             raise ValueError(f"status must be one of: any, {', '.join(STATUSES)}.")
-        words = [w for w in query.lower().split() if w]
+        # Each word starts a word ("intern" finds Internship); "AI" no longer finds Zscaler or Chain.
+        words = [re.compile(rf"\b{re.escape(w)}", re.I) for w in query.split()]
         rows = []
         for job in self.tracker.with_status(*STATUSES) if status == "any" else self.tracker.with_status(status):
-            text = f"{job['title']} {job['company']} {job['location']}".lower()
-            if words and not all(w in text for w in words):
+            text = f"{job['title']} {job['company']} {job['location']}"
+            if not all(w.search(text) for w in words):
                 continue
             if coded_only and job["ats"] not in systems.SUPPORTED:
                 continue

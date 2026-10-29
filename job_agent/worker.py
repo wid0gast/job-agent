@@ -146,7 +146,7 @@ def _prepare(task, ctx, log) -> str:
     arg = task["arg"] or ""
     left = int(arg[len(TOP_PICK):] or 0) if arg.startswith(TOP_PICK) else None
     status = step("prepare", "prepare")(task["job_id"], ctx, log, note="" if left is not None else arg)
-    if status in ("prepared", "needs_you") and step("prepare", "wants_people")(ctx):
+    if status in ("prepared", "needs_you") and step("prepare", "wants_people")(ctx, task["job_id"]):
         ctx.tracker.add_task("people", task["job_id"])  # Alongside: the application is ready now.
     reason = (ctx.tracker.get(task["job_id"]) or {}).get("reason")
     said = PREPARE_OUTCOMES.get(status, status) + (f": {reason}" if reason else
