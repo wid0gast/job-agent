@@ -220,8 +220,7 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                                      f"“{job['title']}”, so it isn't this job's posting (it may need you signed "
                                      "in, or the job moved). Open the posting to check, then prepare again.")
         # Kept on the job, so its page shows the description even when it's set aside below.
-        details["description"] = description[:20000]
-        ctx.tracker.update(job["id"], details=details)
+        ctx.tracker.merge_details(job["id"], description=description[:20000])
         reason = filters.sponsorship_problem(description, profile)
         trace.check("Sponsorship wording fits your work authorization", not reason, reason or "")
         if reason:
@@ -262,7 +261,8 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                                  "score was recorded and the job wasn't set aside. Prepare it again, or try "
                                  "another model.")
         ctx.tracker.update(job["id"], fit_score=fit["score"], company_id=company_id,
-                           ats_board=board, details={**details, "fit": fit})
+                           ats_board=board)
+        ctx.tracker.merge_details(job["id"], fit=fit, prepare_anyway=None)  # Used: cleared.
         threshold = config.fit_threshold(profile, settings)
         met = sum(r["met"] == "yes" for r in fit["requirements"])
         step.summary = f"Score {fit['score']}; {met} of {len(fit['requirements'])} requirements met"

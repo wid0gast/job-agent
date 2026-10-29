@@ -337,6 +337,20 @@ class Tracker:
         self.db.commit()
 
     @locked
+    def merge_details(self, job_id: int, **parts) -> None:
+        """Set some keys of a job's details (None removes one), keeping the others as stored now.
+        Ranking, a refresh and preparing run side by side: writing back a copy read earlier would
+        undo the others."""
+        row = self.db.execute("SELECT details FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"No job {job_id}.")
+        details = {key: value for key, value in {**json.loads(row["details"] or "{}"), **parts}.items()
+                   if value is not None}
+        self.db.execute("UPDATE jobs SET details = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(details), now(), job_id))
+        self.db.commit()
+
+    @locked
     def move(self, job_id: int, expected: str | tuple, to: str, **fields) -> None:
         """Atomically change status, only if the job is still in `expected`."""
         if to not in TRANSITIONS:
