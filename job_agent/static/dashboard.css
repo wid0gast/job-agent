@@ -114,6 +114,7 @@ pre{white-space:pre-wrap;font:12px/1.55 ui-monospace,"SF Mono",monospace;max-hei
 background:var(--soft);border-radius:10px;padding:12px}
 code{font:12.5px ui-monospace,"SF Mono",monospace;background:var(--soft);padding:1px 6px;border-radius:6px}
 .src{font-size:12px;color:var(--muted);margin-top:2px}
+.aiflag{font-size:12px;margin-top:6px;padding:5px 8px;border-radius:6px;background:var(--warn-soft);color:var(--text)}
 .below{opacity:.45}
 .score{display:inline-grid;place-items:center;min-width:42px;height:30px;padding:0 8px;border-radius:9px;
 font-weight:700;font-size:14.5px;background:var(--soft);color:var(--text)}

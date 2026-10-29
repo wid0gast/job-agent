@@ -224,6 +224,10 @@ What makes an essay good:
   weighed, feelings, lessons, durations or effort ("for weeks", "most of my
   summer") it doesn't state; when a question asks for those and the material
   is silent, answer with what it does say.
+- A question or the posting may ask for no AI-written answers ("Please, no
+  AI text"). Draft it anyway, like any other: the candidate asked for drafts,
+  reads every answer before anything is sent, and the app flags these for
+  them to rewrite in their own words. Never leave one empty for that reason.
 - "Additional information" or "anything else": leave it empty (supported=
   false, evidence "Optional; nothing to add") unless the material has a useful
   fact the rest of the application lacks.

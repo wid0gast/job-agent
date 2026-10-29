@@ -143,6 +143,7 @@ class Assistant:
                                          if r.get("must_have") and r.get("met") != "yes"]},
             "answers": [{"key": a["key"], "label": a["label"][:300], "kind": a["kind"], "required": a["required"],
                          "value": a.get("value"), "source": a.get("source"),
+                         **({"employer_asked_for_no_ai": a["ai_policy"]["quote"]} if a.get("ai_policy") else {}),
                          **({"options": a["options"][:25]} if a.get("options") else {})}
                         for a in packet["answers"] if a["kind"] != "file" or answer_is_document(a)],
             "needs_you": [{"key": a["key"], "label": a["label"][:200], "kind": a["kind"]}

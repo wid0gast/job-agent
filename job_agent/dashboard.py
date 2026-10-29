@@ -1022,10 +1022,18 @@ def answer_groups(answers: list[dict], shown, editable: bool) -> str:
     def blank(a):
         return a.get("value") in (None, "", [])
 
+    def asked_no_ai(a):  # Drafted anyway, as you chose; gone once the words are yours.
+        policy = a.get("ai_policy")
+        if not policy or not str(a["source"]).startswith("model"):
+            return ""
+        return (f'<div class=aiflag>⚑ {"This question" if policy["where"] == "question" else "This application"} '
+                f'says “{esc(policy["quote"])}” The model drafted it as you asked: rewrite it in your own words '
+                f'before approving.</div>')
+
     def table(group):
         return '<table class=stack>' + "".join(
             f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
-            f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
+            f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div>{asked_no_ai(a)}</td>'
             f'<td style="width:50%">{answer_input(a, editable)}</td></tr>' for a in group) + '</table>'
 
     groups = [

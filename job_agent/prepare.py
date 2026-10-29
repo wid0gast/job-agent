@@ -441,16 +441,12 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
         raise
     tailored, resume, printed = tailored_now()
     docs.pop("tailoring")
-    policy = answers.ai_policy(description, drafted)
-    essays = [a for a in drafted if a.get("source") == "model-essay" and a["kind"] == "textarea"]
-    trace.check("The application allows AI help with written answers", not (policy and essays),
-                f"The form or posting says: “{policy}”. The essays are drafted as you chose, each "
-                "flagged; rewrite them in your own words if the policy asks for that." if policy else "")
-    if policy:
-        form_notes.append(f"AI policy: this application limits AI help: “{policy}”")
-        for essay in essays:
-            essay["note"] = ("This form limits AI help with answers; rewrite in your own words before "
-                             "approving. " + (essay.get("note") or ""))[:400]
+    flagged = answers.flag_ai_policy(drafted, description)
+    trace.check("The application allows AI help with written answers", not flagged,
+                f"{len(flagged)} answer(s) drafted where the employer asked for no AI, each flagged: "
+                + " · ".join(f"“{a['ai_policy']['quote'][:100]}”" for a in flagged[:3]) if flagged else "")
+    if posting_policy := answers.ai_policy(description):
+        form_notes.append(f"AI policy: this posting limits AI help: “{posting_policy}”")
     packet = {
         "schema": packets.SCHEMA_VERSION,
         "job": {"id": job["id"], "company": job["company"], "title": job["title"],
@@ -871,6 +867,7 @@ def _draft_missing(job_id: int, ctx, log) -> str:
         answers.ask_model(ctx.llm, open_fields, config.load_profile(), config.read_master_resume(),
                           job, packet.get("description", ""), config.read_optional("story-bank.md"),
                           config.read_optional("writing-sample.md"))
+        answers.flag_ai_policy(packet["answers"], packet.get("description", ""))  # The whole form: acknowledgements too.
     drafted = {a["key"]: a for a in open_fields}
     if tracker.get(job_id)["status"] == "approved":  # You approved it meanwhile: that stands.
         return "You approved it while the answers were drafted, so they weren't added."
