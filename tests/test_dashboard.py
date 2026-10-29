@@ -325,3 +325,16 @@ def test_answers_needing_your_eye_come_first_and_code_filled_ones_fold_away():
     assert order == sorted(order)
     assert html.index("<details") > html.index('id="a-visa"')  # Only the settled and optional groups fold.
     assert html.index('id="a-email"') > html.index("<details")
+
+
+def test_an_education_row_says_which_degree_it_is_for():
+    from job_agent import answers
+
+    profile = {"education": [{"degree": "Master of Science", "school": "New York University"},
+                             {"degree": "Bachelor of Engineering", "school": "BITS Pilani"}]}
+    rows = [{"key": f"start-year--{i}", "label": "Start date year", "options": []} for i in (0, 1)]
+    shown = dashboard.labeler(rows, profile)
+    assert [shown(r) for r in rows] == ["Start date year · Master of Science, New York University",
+                                        "Start date year · Bachelor of Engineering, BITS Pilani"]
+    note = answers.row_note(rows[1], profile)
+    assert "start year of your Bachelor of Engineering, BITS Pilani" in note

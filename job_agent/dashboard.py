@@ -132,15 +132,19 @@ NAV = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jo
        ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
 
 
-def labeler(answers: list[dict]):
-    """A question's label, told apart from others with the same wording by its choices
-    (a form once asked "select the combination that matches your results" four times)."""
+def labeler(items: list[dict], profile: dict | None = None):
+    """A question's label, told apart from others with the same wording: an education row by the
+    degree it's for, others by their choices (a form once asked "select the combination that
+    matches your results" four times)."""
     from collections import Counter
 
-    counts = Counter(a["label"] for a in answers)
+    counts = Counter(a["label"] for a in items)
     seen = Counter()
 
     def label(a: dict) -> str:
+        degree = answers.education_row(a, profile or {})
+        if degree:
+            return f'{a["label"]} · {degree}'
         if counts[a["label"]] < 2:
             return a["label"]
         options = a.get("options") or []
@@ -1319,7 +1323,7 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     problems = packets.missing(packet)
     checks = packet["checks"]
     warn = []
-    shown = labeler(packet["answers"])
+    shown = labeler(packet["answers"], config.load_profile())
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
              + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(shown(a))}</a></li>' for a in problems)

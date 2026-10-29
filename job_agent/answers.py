@@ -133,7 +133,27 @@ def sponsorship_answer(label: str, auth: dict) -> str | None:
 EDUCATION_ROW = re.compile(r"^(school|degree|discipline|start-year|end-year|start-month|end-month)--(\d+)$")
 
 
-ROW_NOTE = "Not in your resume (or profile.yaml's education): enter it yourself."
+ROW_PARTS = {"school": "school", "degree": "degree", "discipline": "field of study", "start-year": "start year",
+             "end-year": "end year", "start-month": "start month", "end-month": "end month"}
+
+
+def education_row(field: dict, profile: dict) -> str | None:
+    """Which of your degrees a form's education row is for ("Master of Science, New York
+    University"): the form numbers its rows, and "#1" or "#2" says nothing to you."""
+    row = EDUCATION_ROW.match(field["key"])
+    if not row:
+        return None
+    degrees, index = profile.get("education") or [], int(row.group(2))
+    if index >= len(degrees):
+        return f"degree {index + 1} (your resume lists {len(degrees)})"
+    return ", ".join(part for part in (degrees[index].get("degree"), degrees[index].get("school")) if part)
+
+
+def row_note(field: dict, profile: dict) -> str:
+    """Why an education row's part is blank, naming the degree it belongs to."""
+    part = ROW_PARTS[EDUCATION_ROW.match(field["key"]).group(1)]
+    return unlisted_note(field) or (f"Your resume doesn't give the {part} of your {education_row(field, profile)}: "
+                                    "enter it yourself (or add it to profile.yaml's education).")
 
 
 def unlisted_note(field: dict) -> str:
@@ -310,7 +330,7 @@ def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[li
             answer["value"], answer["source"] = hit
         elif EDUCATION_ROW.match(field["key"]):
             # One row per degree: only your resume knows which degree's dates these are.
-            answer["note"] = unlisted_note(field) or ROW_NOTE
+            answer["note"] = row_note(field, profile)
         elif norm(field["label"]) in saved_by_label:
             answer["value"], answer["source"] = saved_by_label[norm(field["label"])], "saved"
         elif answer["fingerprint"] in bank:
@@ -435,7 +455,7 @@ def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dic
     """Fill open_fields in place from one model call. `letter`: the cover letter, if one was
     written, so the essays tell other stories."""
     for field in [f for f in open_fields if EDUCATION_ROW.match(f["key"])]:
-        field["note"] = unlisted_note(field) or ROW_NOTE  # Never the model's guess.
+        field["note"] = row_note(field, profile)  # Never the model's guess.
     open_fields = [f for f in open_fields if not EDUCATION_ROW.match(f["key"])]
     if not open_fields:
         return
