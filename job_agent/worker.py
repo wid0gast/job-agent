@@ -196,9 +196,13 @@ def _refresh(task, ctx, log) -> str:
 
 
 def _sync_profile(task, ctx, log) -> str:
-    from . import profile_sync
+    from . import profile_sync, sources
 
-    return "Profile updated from your resume. " + " ".join(profile_sync.sync(ctx.llm, log))
+    said = "Profile updated from your resume. " + " ".join(profile_sync.sync(ctx.llm, log))
+    # Your education decides the degree filter. A new user's first jobs are found before the
+    # resume is accepted, so they're filtered again now that it's known.
+    moved = sources.apply_filters(ctx.tracker, config.load_profile())
+    return said + (f" {moved} job(s) set aside by your filters." if moved else "")
 
 
 def _merge_resumes(task, ctx, log) -> str:

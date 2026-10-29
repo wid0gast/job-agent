@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from job_agent import companies, filters
+from job_agent import companies, config, filters
 from job_agent.ats import identify
 from job_agent.llm import check, parse_json
 from job_agent.tracker import Tracker
@@ -151,3 +151,26 @@ def test_itar_is_a_word_not_part_of_military():
                                        "spouses are encouraged to apply.", profile) is None
     said = filters.sponsorship_problem("This role is subject to ITAR, so applicants must be U.S. persons.", profile)
     assert "subject to ITAR" in said and not said.endswith(".”.")
+
+
+def test_jobs_found_before_your_resume_is_accepted_are_filtered_once_your_education_is_known(monkeypatch):
+    """Get started finds jobs while your resume is still being read. The degree filter needs your
+    education, so the jobs are filtered again when your profile is updated from the resume."""
+    from types import SimpleNamespace
+
+    from job_agent import profile_sync, sources, worker
+    from job_agent.tracker import Tracker
+
+    (config.PROFILE_DIR / "resume-profile.yaml").unlink()  # No resume accepted yet: education unknown.
+    tracker = Tracker(config.DATA_DIR / "t.db")
+    tracker.add_lead("https://a.com/jobs/1", "x", "A", "ML Intern", "NYC", details={"degrees": ["Master's"]})
+    sources.apply_filters(tracker, config.load_profile())
+    assert tracker.leads(5)[0]["status"] == "found"
+
+    def accepted(llm, log):  # Your resume says you have a bachelor's.
+        (config.PROFILE_DIR / "resume-profile.yaml").write_text("education:\n- degree: B.S. Computer Science\n")
+        return []
+
+    monkeypatch.setattr(profile_sync, "sync", accepted)
+    said = worker._sync_profile({}, SimpleNamespace(llm=None, tracker=tracker), print)
+    assert tracker.get(1)["status"] == "filtered_out" and "1 job(s) set aside" in said
