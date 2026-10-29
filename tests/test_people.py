@@ -313,3 +313,16 @@ def test_a_message_quotes_a_job_id_only_when_a_recruiter_would_know_it():
     assert people.requisition("R-12345") == "R-12345" and people.requisition("JR102345") == "JR102345"
     for key in ("bb45b7f6-dd7e-40e5-84e6-52e21650a7b8", "4523416007", "", None):  # Lever/Ashby, Greenhouse keys.
         assert people.requisition(key) == ""
+
+
+def test_the_people_search_can_be_limited_to_one_site(ctx, monkeypatch):  # noqa: F811
+    """The tool offers site (linkedin.com is where people's roles show), so the search takes it:
+    without it every search the agent limited to LinkedIn failed, and nobody was found."""
+    asked = []
+    monkeypatch.setattr(research, "search", lambda http, query: asked.append(query) or RESULTS)
+    ctx.llm = PeopleModel([])  # No web_json: the free search, as for test stand-ins.
+    job = ctx.tracker.get(add_job(ctx, "4001"))
+    scout = people.Scout(ctx, job, "", lambda *_: None, list(people.KINDS), 2, "")
+    tool = next(t for t in scout.tools() if t.name == "web_search")
+    tool.fn(query="Contoso recruiter", site="linkedin.com")
+    assert asked == ["site:linkedin.com Contoso recruiter"]

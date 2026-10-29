@@ -150,17 +150,20 @@ class Model:
 # ----- Claude Code (your Claude plan) -------------------------------------------
 
 class ClaudeCode(Model):
-    # Agent turns: the reply is a short thought plus the tool calls to make.
+    # Agent turns: the reply is a short thought plus the tool calls to make. Sonnet, told only that
+    # its own tools were off, tried calling the listed tools directly in 5 of 6 first turns, got
+    # "No such tool available" and gave up (people searches finding no one); worded as below, 12 of 12
+    # listed them. Opus did either way.
     TURN_PROMPT = """
 
-You are working through tools. Reply with a JSON object: "thought" (a sentence or two on
-what you're doing, shown to the user) and "tool_calls" (the calls to make now, each a tool
-"name" and its "arguments" object, in order). Call only the tools listed below, with
-arguments that match their schemas. Your own built-in tools are switched off: a tool
-runs only when you list it in tool_calls, and its result arrives in the next message.
-When the work is done, call the finishing tool.
+You work by replying with JSON, never by calling functions: this session has no function calling,
+and calling anything directly fails with "No such tool available" (that error never means a tool
+below is missing or broken). Reply with a JSON object: "thought" (a sentence or two on what you're
+doing, shown to the user) and "tool_calls" (the tools to run now, each a "name" from the list below
+and its "arguments" object, in order). The app runs each one you list and sends back its result in
+the next message. When the work is done, list the finishing tool.
 
-Tools:
+Tools you can list in tool_calls:
 """
 
     def __init__(self, model: str = "", tiers: dict | None = None):

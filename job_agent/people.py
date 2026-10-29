@@ -75,8 +75,8 @@ class Scout(Researcher):
         self.people: list[dict] = []
         self.email_format: dict | None = None
 
-    def web_search(self, query: str):
-        found = super().web_search(query)
+    def web_search(self, query: str, site: str = ""):  # site: as declared, e.g. linkedin.com for profiles
+        found = super().web_search(query, site)
         for r in found["results"]:
             self.seen[r["url"]] = f"{r['title']} {r['snippet']}"
         return found
