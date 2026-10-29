@@ -46,6 +46,14 @@ def test_packet_tools_and_their_guards(ctx, tmp_path):  # noqa: F811 - pytest fi
     assert tools.find_jobs("any", "contoso ai")["total"] == 1
     assert tools.find_jobs("any", "toso")["total"] == 0, "words match from their start"
 
+    # A setting for one job stays with that job; the Search page's is untouched.
+    search = config.load_search()
+    tools.prepare_applications([job_id], settings={"resume_pages": 2})
+    assert json.loads(ctx.tracker.get(job_id)["details"])["settings"] == {"resume_pages": 2}
+    assert config.load_search() == search
+    tools.prepare_applications([job_id], settings={"resume_pages": None})
+    assert "settings" not in json.loads(ctx.tracker.get(job_id)["details"])
+
     # A fact the user never gave is refused; their own words go in, marked as theirs.
     with pytest.raises(ValueError, match="isn't something the user said"):
         tools.edit_answer(job_id, "question_9004", "https://linkedin.com/in/someone-else")

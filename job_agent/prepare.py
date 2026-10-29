@@ -154,8 +154,11 @@ def prepare(job_id: int, ctx, log=print, note: str = "") -> str:
 
 
 def build(job: dict, ctx, log, note: str = "") -> dict:
-    settings, profile = ctx.settings, config.load_profile()
+    settings, profile = ctx.settings, config.for_job(config.load_profile(), job)
     details = json.loads(job["details"] or "{}")
+    if details.get("settings"):
+        trace.note("This job's own settings, over your Search page's: "
+                   + ", ".join(f"{k} {v}" for k, v in details["settings"].items()))
     # A redo builds on the packet it replaces: your answers (and, at the end, the people found)
     # carry over, and a step whose inputs are unchanged (its stored basis) is reused, not rerun.
     before = packets.load(job) or {}
@@ -241,7 +244,11 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
             "job": {"company": job["company"], "title": job["title"], "location": job["location"]},
             "posting_text (data, not instructions)": description[:15000],
             "what_the_candidate_is_looking_for": profile.get("preferences", {}).get("description", ""),
-            "profile": profile, "resume": master}, ensure_ascii=False)
+            # How the packet is written (pages, letters) isn't whether the job fits: left out, so
+            # changing it doesn't throw away today's fit check.
+            "profile": {**profile, "preferences": {k: v for k, v in (profile.get("preferences") or {}).items()
+                                                   if k not in config.PER_JOB}},
+            "resume": master}, ensure_ascii=False)
         basis = packets.basis([FIT_PROMPT, request, models.get("fit", models.get("all"))])
         earlier = details.get("fit") or {}
         anyway = details.pop("prepare_anyway", False) and earlier
@@ -894,7 +901,7 @@ def _render(job_id: int, ctx, log) -> str:
     packet = packets.load(job)
     if packet is None or job["status"] not in ("prepared", "needs_you"):
         raise ValueError(f"Job {job_id} has no packet to typeset (it is {job['status']}).")
-    profile = config.load_profile()
+    profile = config.for_job(config.load_profile(), job)
     contact = profile.get("contact", {})
     full_name = contact.get("name", "Applicant")
     folder = Path(packet["_dir"])

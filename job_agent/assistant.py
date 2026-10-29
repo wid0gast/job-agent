@@ -157,6 +157,7 @@ class Assistant:
             "problems": (checks.get("consistency") or []) + [f"invented number: {n}" for n in
                                                               checks.get("invented_numbers") or []],
             "reviewer_note": packet.get("reviewer_note"),
+            "own_settings": json.loads(job["details"] or "{}").get("settings"),
             "people_to_contact": people_brief(packet),
             **route_brief(strategy.Advisor(self.tracker, self.settings).advise(job, packet), full=True),
             "hiring_manager_read": read_brief(packet),
@@ -179,7 +180,7 @@ class Assistant:
                 "page": f"/job/{job_id}"}
 
     def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False,
-                             confirmed: bool = False):
+                             confirmed: bool = False, settings: dict | None = None):
         ids = list(dict.fromkeys(int(i) for i in job_ids))
         if len(ids) > MAX_UNASKED and not (confirmed and asked_for(self.chat.said(), len(ids))):
             # Each prepare is minutes of model work and spend. Asked to "submit everything", a
@@ -220,6 +221,9 @@ class Assistant:
             if problem:
                 problems.append(f"#{job_id}: {problem}")
                 continue
+            if settings:  # This job's own, kept for later redos; null puts one back to the Search page's.
+                own = {**(json.loads(job["details"] or "{}").get("settings") or {}), **settings}
+                self.tracker.merge_details(job_id, settings={k: v for k, v in own.items() if v is not None} or None)
             self.chat.start_worker()
             queued.append({"job_id": job_id, "task_id": self.tracker.add_task("prepare", job_id, note.strip()[:800] or None)})
         return {"queued": queued, "problems": problems,
@@ -556,8 +560,12 @@ class Assistant:
                  "e.g. 'lead with the robotics project'. Nothing is sent. anyway=true prepares a job set aside "
                  "only because its fit scored below the threshold, reusing that fit check: only when the user "
                  f"asks after seeing why. More than {MAX_UNASKED} at once needs confirmed=true, after the user "
-                 "agreed to that number.",
-                 schema({"job_ids": ids, "note": string, "anyway": boolean, "confirmed": boolean}, ["job_ids"]),
+                 "agreed to that number. settings (resume_pages, cover_letter): for these jobs only, over the Search "
+                 "settings, and kept for their later redos (null goes back to the Search setting). Use it when "
+                 "the user asks for one job; update_search changes every job.",
+                 schema({"job_ids": ids, "note": string, "anyway": boolean, "confirmed": boolean,
+                         "settings": {"type": "object", "additionalProperties": False, "properties": {
+                             k: {"enum": [*v, None]} for k, v in config.PER_JOB.items()}}}, ["job_ids"]),
                  self.prepare_applications),
             Tool("prepare_from_link", "The user pasted a job posting's link: add that job and prepare it (reads "
                  "the posting, checks fit, then the whole application; a low fit stops and is set aside for the "
@@ -612,7 +620,8 @@ class Assistant:
                  "file). The user gets an Undo button. Read the file first.",
                  schema({"file": {"type": "string", "enum": list(FILES)}, "edits": edits, "content": string},
                         ["file"]), self.edit_file),
-            Tool("update_search", "Change search settings: pass only the keys to change. Keys: "
+            Tool("update_search", "Change search settings for every job (for one job's resume_pages or "
+                 "cover_letter, use prepare_applications' settings): pass only the keys to change. Keys: "
                  + ", ".join(config.SEARCH_KEYS) + f". fields: any of {sources.ALL_FIELDS} ([] = all). "
                  "job_types: internship, full_time. locations: list (Remote, a city, or any).",
                  schema({"changes": {"type": "object"}}), self.update_search),

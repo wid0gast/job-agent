@@ -522,3 +522,17 @@ def test_a_redo_keeps_your_answers_and_reuses_what_nothing_changed(ctx):
     (config.PROFILE_DIR / "resume.md").write_text(config.read_master_resume() + "\n- Built a parser.\n")
     prepare.prepare(job_id, ctx, log=lambda *_: None)
     assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits + 1, "a changed resume is checked again"
+
+
+def test_a_job_can_have_its_own_settings(ctx):
+    job_id, other = add_job(ctx, "4001"), add_job(ctx, "4002")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    fits = sum(name == "fit" for name, _ in ctx.llm.seen)
+
+    ctx.tracker.merge_details(job_id, settings={"resume_pages": 2})
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    sent = [json.loads(user) for name, user in ctx.llm.seen if name == "tailored_resume"][-1]
+    assert sent["page_limit"] == 2
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits, "page count isn't fit: today's check stands"
+    profile = config.load_profile()
+    assert int(config.for_job(profile, ctx.tracker.get(other))["preferences"].get("resume_pages") or 1) == 1

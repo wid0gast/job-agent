@@ -1333,8 +1333,16 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
                           if any("work_authorization" in (a.get("note") or "") for a in problems) else "")
              + "</div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
-    if checks.get("resume_pages", 1) > 1:
-        warn.append(f"The resume is {checks['resume_pages']} pages.")
+    prefs = config.for_job(config.load_profile(), job).get("preferences") or {}
+    if checks.get("resume_pages", 1) > int(prefs.get("resume_pages") or 1):
+        warn.append(f"The resume is {checks['resume_pages']} pages, more than the {prefs.get('resume_pages') or 1} chosen.")
+    own = json.loads(job["details"] or "{}").get("settings")
+    if own:  # Set from the chat for this job; every other job follows the Search page.
+        from .prepare import LETTER_MODES
+
+        warn.append("This job has its own settings: " + "; ".join(
+            f"a {v}-page resume" if k == "resume_pages" else f"cover letters {LETTER_MODES[v]}"
+            for k, v in own.items()) + ". The Search page's apply to every other job.")
     if checks.get("invented_numbers"):
         warn.append(f"Tailoring invented {esc(checks['invented_numbers'])}; your resume was used unchanged.")
     warn += [esc(n) for n in packet.get("form_notes", [])]
