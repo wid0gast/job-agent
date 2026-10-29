@@ -405,18 +405,21 @@ SETUP_SKIPPED = "setup-skipped"  # Files in data/: you chose to skip Get started
 REVIEW_SEEN = "first-review-seen"  # and you've read the note on your first application.
 
 
+# Get started, in order (the demo command prints them too).
+SETUP_STEPS = (("connect", "Connect Claude"), ("resume", "Add your resume"), ("wants", "Say what you want"),
+               ("first", "Get your first application"))
+
+
 def setup_steps(app: Dashboard) -> list[dict]:
     """The steps to your first application, each done or not, worked out from what you've done."""
     try:
         prefs = config.load_profile().get("preferences") or {}
     except SystemExit:  # No profile yet.
         prefs = {}
-    return [
-        {"key": "connect", "title": "Connect Claude", "done": not app.llm_missing},
-        {"key": "resume", "title": "Add your resume", "done": (config.PROFILE_DIR / "resume.md").exists()},
-        {"key": "wants", "title": "Say what you want", "done": bool(prefs.get("description") or prefs.get("roles"))},
-        {"key": "first", "title": "Get your first application", "done": bool(app.tracker.with_status(*STARTED))},
-    ]
+    done = {"connect": not app.llm_missing, "resume": (config.PROFILE_DIR / "resume.md").exists(),
+            "wants": bool(prefs.get("description") or prefs.get("roles")),
+            "first": bool(app.tracker.with_status(*STARTED))}
+    return [{"key": key, "title": title, "done": done[key]} for key, title in SETUP_STEPS]
 
 
 def setup_open(app: Dashboard) -> bool:

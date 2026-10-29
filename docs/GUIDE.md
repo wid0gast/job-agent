@@ -306,9 +306,11 @@ or submit for you, change caps, or invent an answer; those checks are code.
   main design choices. Its text is `job_agent/static/how-it-works.md`.
 - **The chat** shows under each reply which model answered, how many requests
   it took, the time and the tokens. A running task links to its live timeline.
-- **Rehearsing a demo.** `uv run job-agent demo save` snapshots a demo home
-  with made-up data (`.demo-readme/` by default); `uv run job-agent demo`
-  restores it and opens its dashboard on port 8771, separate from yours.
+- **Rehearsing a demo.** `uv run job-agent demo` opens a fresh, empty demo
+  (`.demo-live/`, separate from your own profile and data) on port 8771, on
+  Get started, as a new user first sees the app, and lists its steps in the
+  terminal. After a good run, `uv run job-agent demo save` keeps it, and
+  `uv run job-agent demo restore` brings it back to fall back on.
 
 ### Your applications
 
