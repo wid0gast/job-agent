@@ -81,7 +81,7 @@ def scout_steps():
     ]
 
 
-def prepare_and_find(job_id, ctx, **kwargs):
+def prepare_and_find(job_id, ctx, **kwargs):  # noqa: F811
     """Prepare, then find people, as the worker does (people are a task of their own, after)."""
     status = prepare.prepare(job_id, ctx, **kwargs)
     if status in ("prepared", "needs_you") and prepare.wants_people(ctx):

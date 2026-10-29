@@ -48,21 +48,22 @@ def cmd_refresh(args) -> None:
 
 
 def cmd_prepare(args) -> None:
-    from . import systems
-    from .prepare import prepare
+    from . import actions, people
+    from .prepare import prepare, wants_people
     from .worker import Context
 
     settings = config.Settings.from_env(require_model=False)
     tracker = Tracker(DB_PATH)
-    ids = args.job_ids or [j["id"] for j in tracker.with_status("found", order="posted_at DESC")
-                           if j["ats"] in systems.SUPPORTED][: args.top]
+    # As the dashboard's "Prepare top matches": best ranked, one per company, within the limits.
+    ids = args.job_ids or [j["id"] for j in actions.top_picks(tracker, settings, args.top)[0]]
     with browser_lock():
         ctx = Context(settings, tracker, require_model=True)
         try:
             for job_id in ids:
                 job = tracker.get(job_id)
                 print(f"\n-- #{job_id} {job['title']} at {job['company']}")
-                prepare(job_id, ctx, print)
+                if prepare(job_id, ctx, print) in ("prepared", "needs_you") and wants_people(ctx):
+                    people.refresh(job_id, ctx, print)  # The worker does this as a task of its own.
         finally:
             print(f"\nModel calls: {ctx.llm.calls}, spent ${ctx.llm.spent_usd:.4f}")
             ctx.close()
@@ -221,10 +222,10 @@ def main() -> None:
     status.add_argument("--all", action="store_true", help="Include found, filtered and closed jobs.")
     refresh = sub.add_parser("refresh", help="Pull the master job list (Simplify lists).")
     refresh.add_argument("--boards", action="store_true",
-                         help="Also read every known company's Greenhouse board.")
+                         help="Also read every known company's job board (Greenhouse, Lever, Ashby and more).")
     prep = sub.add_parser("prepare", help="Prepare packets for found jobs (no submitting).")
     prep.add_argument("job_ids", nargs="*", type=int)
-    prep.add_argument("--top", type=int, default=1, help="Newest N supported jobs (default 1).")
+    prep.add_argument("--top", type=int, default=1, help="The N best-ranked jobs, one per company (default 1).")
     res = sub.add_parser("resumes", help="Build the master resume from resume PDFs.")
     res.add_argument("action", choices=["import", "merge", "accept", "discard", "list", "sync"])
     res.add_argument("pdfs", nargs="*", help="PDF files (for import).")

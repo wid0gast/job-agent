@@ -266,13 +266,13 @@ LANES = (("score_matches",), ("refresh", "discover"), ("people",))
 OWN_LANE = tuple(kind for kinds in LANES for kind in kinds)
 
 
-def finish(task: dict, ctx: Context, log, work) -> None:
+def finish(task: dict, ctx: Context, log, work) -> None:  # work(task) -> the task's result
     """Run one task and record how it ended. One task's failure, even a missing file
     (config raises SystemExit), never stops the loop that runs it."""
     tracker = ctx.tracker
     stopping.watch(lambda: tracker.stop_asked(task["id"]))
     try:
-        tracker.set_task(task["id"], status="done", result=str(work())[:2000])
+        tracker.set_task(task["id"], status="done", result=str(work(task))[:2000])
     except stopping.Stopped:
         log(f"Task {task['id']} stopped at your request")
         tracker.set_task(task["id"], status="stopped", result="Stopped by you.")
@@ -295,7 +295,7 @@ def lane(ctx: Context, log, stop: threading.Event, kinds: tuple[str, ...] = LANE
             stop.wait(1)
             continue
         log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
-        finish(task, ctx, log, lambda: work(task))
+        finish(task, ctx, log, work)
 
 
 def serve(settings, log=print, idle_exit: float | None = None) -> None:
@@ -328,7 +328,7 @@ def serve(settings, log=print, idle_exit: float | None = None) -> None:
                     continue
                 label = f"{task['kind']}" + (f" job {task['job_id']}" if task["job_id"] else "")
                 log(f"Task {task['id']}: {label}")
-                finish(task, ctx, log, lambda: run_task(task, ctx, log))
+                finish(task, ctx, log, lambda claimed: run_task(claimed, ctx, log))
                 idle_since = time.time()
         finally:
             stop.set()
