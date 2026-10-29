@@ -311,3 +311,17 @@ def test_get_started_can_be_skipped_and_found_again(monkeypatch):
         assert "<h1>Get started</h1>" in request(app.port, "GET", "/setup")[1]
     finally:
         server.shutdown()
+
+
+def test_answers_needing_your_eye_come_first_and_code_filled_ones_fold_away():
+    def answer(key, source, value, required=True):
+        return {"key": key, "label": key, "kind": "text", "required": required, "source": source, "value": value}
+
+    answers = [answer("email", "profile", "jane@example.com"), answer("why_us", "model-essay", "Because…"),
+               answer("phone", "blank", None), answer("pronouns", "blank", None, required=False),
+               answer("visa", "model", "No")]
+    html = dashboard.answer_groups(answers, lambda a: a["label"], editable=True)
+    order = [html.index(title) for title in ("Needs you", "Written by the model", "From your profile", "Optional")]
+    assert order == sorted(order)
+    assert html.index("<details") > html.index('id="a-visa"')  # Only the settled and optional groups fold.
+    assert html.index('id="a-email"') > html.index("<details")

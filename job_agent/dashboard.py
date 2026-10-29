@@ -1004,6 +1004,39 @@ def people_settings(prefs: dict) -> str:
     <select name=people_per_job style="width:auto">{options}</select></div>"""
 
 
+SETTLED = ("profile", "saved", "approved earlier", "you")  # Answers you already gave, filled in code.
+
+
+def answer_groups(answers: list[dict], shown, editable: bool) -> str:
+    """The answers, grouped by how much they need your eye. A long list of equals gets skimmed
+    and approved (automation bias), so what only you can answer and what the model wrote in
+    your name come first, open; what code filled from your own answers is folded away."""
+    def blank(a):
+        return a.get("value") in (None, "", [])
+
+    def table(group):
+        return '<table class=stack>' + "".join(
+            f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
+            f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
+            f'<td style="width:50%">{answer_input(a, editable)}</td></tr>' for a in group) + '</table>'
+
+    groups = [
+        ([a for a in answers if blank(a) and a["required"]], True, "Needs you",
+         "Required, and nothing in your material answers them."),
+        ([a for a in answers if not blank(a) and a["source"] not in SETTLED], True, "Written by the model",
+         "These go to the employer in your name: read each one, and change anything that isn't how you'd say it."),
+        ([a for a in answers if not blank(a) and a["source"] in SETTLED], False, "From your profile and saved answers",
+         "Filled in code from what you've already told the app."),
+        ([a for a in answers if blank(a) and not a["required"]], False, "Optional, left blank",
+         "Nothing in your material answers these; the form accepts them empty."),
+    ]
+    return "".join(
+        (f'<h3 class=group>{title} <span class=muted>({len(group)})</span></h3><p class=muted>{hint}</p>{table(group)}'
+         if open_ else f'<details class=group><summary><b>{title}</b> <span class=muted>({len(group)})</span>'
+                       f'</summary><p class=muted>{hint}</p>{table(group)}</details>')
+        for group, open_, title, hint in groups if group)
+
+
 def answer_input(answer: dict, editable: bool) -> str:
     """One answer's field inside the packet's single answers form (named by its key)."""
     value = answer.get("value")
@@ -1302,16 +1335,12 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     warn += [esc(n) for n in packet.get("form_notes", [])]
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
-    rows = "".join(
-        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
-        f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
-        f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
-        for a in packet["answers"])
+    rows = answer_groups(packet["answers"], shown, editable)
     answers_card = (f'<form method=post action="/edit-all" class=card><input type=hidden name=token value="{app.token}">'
-                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table class=stack>{rows}</table>'
+                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2>{rows}'
                     '<div class=save><button class=primary>Save changes</button>'
                     '<span class=muted>Only answers you changed are saved.</span></div></form>'
-                    if editable else f'<div class=card><h2>Answers</h2><table class=stack>{rows}</table></div>')
+                    if editable else f'<div class=card><h2>Answers</h2>{rows}</div>')
     tail = packet.get("submission")
     researched = recorded = proof = ""
     if packet.get("research"):  # Company facts the letter and "why us" answers could use.
