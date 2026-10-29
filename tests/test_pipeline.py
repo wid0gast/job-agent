@@ -454,3 +454,15 @@ def test_a_link_that_isnt_one_is_refused_before_anything_is_added(ctx):
         links.add(ctx.tracker, "senior engineer at acme")
     assert links.clean("jobs.lever.co/acme/123") == "https://jobs.lever.co/acme/123"
     assert not ctx.tracker.leads(5)
+
+
+def test_without_latex_the_resume_is_printed_by_the_browser_on_its_own_thread(ctx, monkeypatch):
+    """Without LaTeX the PDF is printed by the browser, which only the thread that opened it may
+    drive: the resume is then tailored in turn, not alongside the answers."""
+    from job_agent import latex
+
+    monkeypatch.setattr(latex, "available", lambda: False)
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert packet["documents"]["resume"]["pdf"].endswith(".pdf")

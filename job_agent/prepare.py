@@ -9,7 +9,7 @@ import contextvars
 import html
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor, wait as wait_all
+from concurrent.futures import Future, ThreadPoolExecutor, wait as wait_all
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -326,9 +326,15 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
 
     # The resume is tailored alongside the letter and answers (they work from your master resume,
     # not the tailored one): the longest model calls of a prepare overlap instead of adding up.
-    pool = ThreadPoolExecutor(max_workers=1)
-    pending = pool.submit(contextvars.copy_context().run, tailoring)
-    pool.shutdown(wait=False)
+    # Only when LaTeX typesets it: without LaTeX the PDF is printed by the browser, which only
+    # the thread that opened it may drive.
+    if latex.available():
+        pool = ThreadPoolExecutor(max_workers=1)
+        pending = pool.submit(contextvars.copy_context().run, tailoring)
+        pool.shutdown(wait=False)
+    else:
+        pending = Future()
+        pending.set_result(tailoring())
     docs = {"resume": None, "cover_letter": None}
 
     def tailored_now():
