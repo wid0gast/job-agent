@@ -307,3 +307,9 @@ def test_someone_you_email_while_people_are_searched_stays_sent(ctx, monkeypatch
     people.refresh(job_id, ctx, log=lambda *_: None)
     kept = packets.load(ctx.tracker.get(job_id))["people"]["people"]
     assert [p["name"] for p in kept] == ["Maria Gomez"] and kept[0]["sent_at"]
+
+
+def test_a_message_quotes_a_job_id_only_when_a_recruiter_would_know_it():
+    assert people.requisition("R-12345") == "R-12345" and people.requisition("JR102345") == "JR102345"
+    for key in ("bb45b7f6-dd7e-40e5-84e6-52e21650a7b8", "4523416007", "", None):  # Lever/Ashby, Greenhouse keys.
+        assert people.requisition(key) == ""

@@ -353,6 +353,13 @@ def problems(message: dict, known: str) -> list[str]:
     return found
 
 
+def requisition(job_id: str | None) -> str:
+    """The job's ID as a recruiter would know it (R-12345, JR102345), or "". Lever and Ashby IDs
+    are 36-character keys: quoted in an email they read like a bot wrote it (seen in a draft)."""
+    job_id = (job_id or "").strip()
+    return job_id if re.fullmatch(r"[A-Za-z]{0,4}[-_]?\d{3,9}(-\d{1,3})?", job_id) else ""
+
+
 def draft(llm, people: list[dict], job: dict, description: str, profile: dict, master: str,
           facts: list[dict] | None = None, note: str = "") -> None:
     """Write subject, email, LinkedIn note and follow-up for each person, in place."""
@@ -362,7 +369,7 @@ def draft(llm, people: list[dict], job: dict, description: str, profile: dict, m
     request = {
         "candidate": {"name": contact.get("name", ""), "linkedin": contact.get("linkedin", ""),
                       "education": profile.get("education"), "applied": job.get("status") == "submitted"},
-        "job": {"company": job["company"], "title": job["title"], "job_id": job.get("ats_job_id") or ""},
+        "job": {"company": job["company"], "title": job["title"], "job_id": requisition(job.get("ats_job_id"))},
         "people": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "title": p["title"],
                     "shared": p["shared"], "what_their_page_says": p["quote"]} for p in people],
         "resume": master, "story_bank": config.read_optional("story-bank.md"), "company_facts": facts or [],
