@@ -10,7 +10,7 @@ import contextvars
 
 # The long tasks (minutes, many steps) that only read pages and call the model, so stopping
 # them between steps is safe. Short ones (a single request) simply finish.
-STOPPABLE = ("prepare", "people")
+STOPPABLE = ("prepare", "link", "people")
 
 
 class Stopped(BaseException):

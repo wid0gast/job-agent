@@ -133,7 +133,27 @@ def sponsorship_answer(label: str, auth: dict) -> str | None:
 EDUCATION_ROW = re.compile(r"^(school|degree|discipline|start-year|end-year|start-month|end-month)--(\d+)$")
 
 
-ROW_NOTE = "Not in your resume (or profile.yaml's education): enter it yourself."
+ROW_PARTS = {"school": "school", "degree": "degree", "discipline": "field of study", "start-year": "start year",
+             "end-year": "end year", "start-month": "start month", "end-month": "end month"}
+
+
+def education_row(field: dict, profile: dict) -> str | None:
+    """Which of your degrees a form's education row is for ("Master of Science, New York
+    University"): the form numbers its rows, and "#1" or "#2" says nothing to you."""
+    row = EDUCATION_ROW.match(field["key"])
+    if not row:
+        return None
+    degrees, index = profile.get("education") or [], int(row.group(2))
+    if index >= len(degrees):
+        return f"degree {index + 1} (your resume lists {len(degrees)})"
+    return ", ".join(part for part in (degrees[index].get("degree"), degrees[index].get("school")) if part)
+
+
+def row_note(field: dict, profile: dict) -> str:
+    """Why an education row's part is blank, naming the degree it belongs to."""
+    part = ROW_PARTS[EDUCATION_ROW.match(field["key"]).group(1)]
+    return unlisted_note(field) or (f"Your resume doesn't give the {part} of your {education_row(field, profile)}: "
+                                    "enter it yourself (or add it to profile.yaml's education).")
 
 
 def unlisted_note(field: dict) -> str:
@@ -297,8 +317,10 @@ def from_profile(field: dict, profile: dict, job: dict) -> tuple[object, str] | 
     return value, "profile"
 
 
-def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[list[dict], list[dict]]:
-    """Answers code can give, and the fields still open for the model."""
+def draft(fields: list[dict], profile: dict, job: dict, saved: dict,
+          yours: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Answers code can give, and the fields still open for the model. `yours`: what you wrote
+    in the packet a redo replaces, by (key, fingerprint); it stands while the question does."""
     bank = load_bank()
     saved_by_label = {norm(q): a for q, a in saved.items()}
     answers, open_fields = [], []
@@ -306,11 +328,13 @@ def draft(fields: list[dict], profile: dict, job: dict, saved: dict) -> tuple[li
         answer = {**field, "fingerprint": fingerprint(field), "value": None,
                   "source": "blank", "note": ""}
         hit = from_profile(field, profile, job)
-        if hit:
+        if (field["key"], answer["fingerprint"]) in (yours or {}):
+            answer.update(value=yours[field["key"], answer["fingerprint"]], source="you", note="Edited by you.")
+        elif hit:
             answer["value"], answer["source"] = hit
         elif EDUCATION_ROW.match(field["key"]):
             # One row per degree: only your resume knows which degree's dates these are.
-            answer["note"] = unlisted_note(field) or ROW_NOTE
+            answer["note"] = row_note(field, profile)
         elif norm(field["label"]) in saved_by_label:
             answer["value"], answer["source"] = saved_by_label[norm(field["label"])], "saved"
         elif answer["fingerprint"] in bank:
@@ -372,17 +396,44 @@ AI_POLICY = re.compile(
     r"\b(do not|don't|please don't|refrain from|without|avoid)\b[^.]{0,40}\b(use|using|help of)\b[^.]{0,30}"
     r"\b(ai|a\.i\.|artificial intelligence|chatgpt|llms?|generative|ai assistants?|ai tools?)\b|"
     r"\bai (policy|partnership|guidance|guidelines|usage)\b|candidate-ai-guidance|"
-    r"\b(answers|responses|writing|application) (are|is) (entirely |all )?(your|my) own\b|in your own words", re.I)
+    r"\b(answers|responses|writing|application) (are|is) (entirely |all )?(your|my) own\b|in your own words|"
+    r"\bno (ai|a\.i\.|chatgpt|llms?|gpt)[- ](generated |written )?(text|writing|answers?|responses?|content|help|tools?)\b|"
+    r"\b(ai|llm)[- ](generated|written) (text|answers?|responses?|content|applications?)\b[^.]{0,40}"
+    r"\b(not|disqualif\w*|reject\w*|prohibit\w*)", re.I)
 
 
-def ai_policy(description: str, fields: list[dict]) -> str | None:
-    """The sentence where the posting or form limits AI help, if it does."""
-    for text in [description] + [f"{f.get('label', '')}. {f.get('description', '')}" for f in fields]:
-        if (match := AI_POLICY.search(text or "")):
-            start = max(text.rfind(".", 0, match.start()) + 1, match.start() - 160)
-            end = text.find(".", match.end())
-            return " ".join(text[start:end + 1 if end > 0 else match.end() + 160].split())[:300]
-    return None
+SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
+
+
+def ai_policy(text: str) -> str | None:
+    """The sentence where a posting or a question limits AI help, if it does."""
+    if not (match := AI_POLICY.search(text or "")):
+        return None
+    ends = [m.end() for m in SENTENCE_END.finditer(text)]
+    start = max([e for e in ends if e <= match.start()] + [match.start() - 160, 0])
+    end = min([e for e in ends if e > match.end()] + [match.end() + 160])
+    return " ".join(text[start:end].split())[:300]
+
+
+def flag_ai_policy(drafted: list[dict], description: str) -> list[dict]:
+    """Mark each answer the model wrote where the employer asked for no AI: the question itself
+    ("Please, no AI text"), or, for every essay, the posting or an acknowledgement on the form
+    ("I confirm these answers are my own"). Drafted anyway, as you chose; the review page shows
+    the flag until you rewrite the answer yourself. Returns the flagged ones."""
+    def asks(field: dict) -> str | None:
+        return ai_policy(f"{field['label']}. {field.get('description') or ''}")
+
+    whole = ai_policy(description) or next(
+        (said for f in drafted if f["kind"] not in ("text", "textarea") and (said := asks(f))), None)
+    flagged = []
+    for answer in drafted:
+        if not str(answer.get("source", "")).startswith("model") or answer.get("value") in (None, "", []):
+            continue
+        own = asks(answer) if answer["kind"] in ("text", "textarea") else None
+        if own or (whole and answer["kind"] == "textarea"):
+            answer["ai_policy"] = {"where": "question" if own else "application", "quote": own or whole}
+            flagged.append(answer)
+    return flagged
 
 
 RANGE = re.compile(r"(\d{2,4})\s*(?:-|–|to)\s*(\d{2,4})\s*words", re.I)
@@ -435,7 +486,7 @@ def ask_model(llm, open_fields: list[dict], profile: dict, resume: str, job: dic
     """Fill open_fields in place from one model call. `letter`: the cover letter, if one was
     written, so the essays tell other stories."""
     for field in [f for f in open_fields if EDUCATION_ROW.match(f["key"])]:
-        field["note"] = unlisted_note(field) or ROW_NOTE  # Never the model's guess.
+        field["note"] = row_note(field, profile)  # Never the model's guess.
     open_fields = [f for f in open_fields if not EDUCATION_ROW.match(f["key"])]
     if not open_fields:
         return

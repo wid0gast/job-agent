@@ -193,27 +193,22 @@ def place(*parts) -> str:
 
 
 def workable_board(client, account: str) -> list[dict]:
-    """apply.workable.com/<account>: Workable's public jobs feed, page by page."""
-    jobs, body = [], {"query": "", "location": [], "department": [], "worktype": [], "remote": []}
-    for _ in range(10):
-        response = client.post(f"https://apply.workable.com/api/v3/accounts/{account}/jobs", json=body)
-        if response.status_code == 404:
-            return []
-        response.raise_for_status()
-        data = response.json()
-        for item in data.get("results", []):
-            if item.get("state", "published") != "published":
-                continue
-            where = item.get("location") or {}
-            places = [place(where.get("city"), where.get("region"), where.get("country"))]
-            if item.get("remote"):
-                places.append("Remote")
-            jobs.append(lead("workable", f"https://apply.workable.com/{account}/j/{item['shortcode']}/", account,
-                             item["title"], places, account, item["shortcode"], item.get("published"),
-                             item.get("type") == "internship"))
-        if not data.get("nextPage"):
-            break
-        body = {**body, "token": data["nextPage"]}
+    """apply.workable.com/<account>: Workable's widget feed, every published job in one request.
+    (Its paged v3 feed refuses a refresh's worth of boards with a 429 to retry a day later.)"""
+    response = client.get(f"https://apply.workable.com/api/v1/widget/accounts/{account}")
+    if response.status_code == 404:
+        return []
+    response.raise_for_status()
+    jobs = []
+    for item in response.json().get("jobs", []):
+        places = [place(where.get("city"), where.get("region"), where.get("country"))
+                  for where in item.get("locations") or [] if not where.get("hidden")]
+        places = places or [place(item.get("city"), item.get("state"), item.get("country"))]
+        if item.get("telecommuting"):
+            places.append("Remote")
+        jobs.append(lead("workable", f"https://apply.workable.com/{account}/j/{item['shortcode']}/", account,
+                         item["title"], places, account, item["shortcode"], item.get("published_on"),
+                         "intern" in (item.get("employment_type") or "").lower()))
     return jobs
 
 
@@ -364,11 +359,18 @@ def read_boards(client, todo: list[tuple[str, dict]], fields: list[str], counts:
 def each_board(client, todo: list[tuple[str, dict]], fields: list[str], counts: dict, log=print,
                names: dict | None = None):
     """The postings in your fields, board by board as each finishes (a slow one holds up nothing)."""
+    refused: dict[str, int] = {}  # Site -> boards skipped after it answered 429 (Too Many Requests).
+
     def read(ats_row):
         ats, row = ats_row
+        if ats in refused:
+            refused[ats] += 1
+            return ats, row, None, None
         try:
             return ats, row, BOARD_FEEDS[ats](client, row["board"]), None
         except Exception as error:  # noqa: BLE001 - one bad board shouldn't stop a refresh.
+            if getattr(getattr(error, "response", None), "status_code", None) == 429:
+                refused.setdefault(ats, 0)
             return ats, row, [], error
 
     # Polite parallelism: a few boards at a time, each a single request. Hosted, the
@@ -376,14 +378,19 @@ def each_board(client, todo: list[tuple[str, dict]], fields: list[str], counts: 
     with ThreadPoolExecutor(max_workers=3 if config.HOSTED else 8) as pool:
         for future in as_completed([pool.submit(read, item) for item in todo]):
             ats, row, board_jobs, error = future.result()
-            if error:
-                log(f"  {ats} board {row['board']}: {error}")
+            if error:  # httpx adds a "For more information" line to every status error.
+                log(f"  {ats} board {row['board']}: {str(error).splitlines()[0]}")
+            if error or board_jobs is None:
                 yield []
                 continue
             counts["boards"] += 1
             # Company names from the lists (or the company list) are better than board slugs.
             yield [{**job, "company": (names or {}).get((ats, row["board"]), row["name"])}
                    for job in board_jobs if matches_field(job["title"], fields)]
+    for ats, skipped in refused.items():
+        if skipped:
+            log(f"  {ats} is refusing requests (429 Too Many Requests): skipped its other {skipped} boards "
+                "this refresh; they're read again next time.")
 
 
 # Listings sometimes carry a word from the posting as the company (Simplify listed one of
@@ -452,10 +459,11 @@ def wanted(profile: dict):
     return keep
 
 
-def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=None) -> dict:
+def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=None, lists_read=None) -> dict:
     """Pull the lists into the tracker in batches: the lists, then company boards a batch at a
     time, each filtered and ranked as it lands (so Ranked jobs fills in while it runs).
-    New jobs are 'found'; closed ones drop out."""
+    New jobs are 'found'; closed ones drop out. `lists_read()` is called once the lists are in,
+    a second or so in, before the boards' minutes."""
     from . import matching
 
     fields = chosen_fields(profile)
@@ -475,6 +483,8 @@ def refresh(tracker, profile: dict, boards: bool = False, log=print, progress=No
         names = {(job_ats(j), board_of(j)): j["company"] for j in jobs}
         ingest(tracker, companies, jobs, fields, counts, keep)
         settle("Job lists read")
+        if lists_read:
+            lists_read()
         if boards:
             todo = [(ats, row) for ats in BOARD_FEEDS for row in companies.boards(ats)]
             batch = []

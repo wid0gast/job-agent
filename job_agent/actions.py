@@ -5,7 +5,6 @@ answer is missing, an answer contradicts your profile, or the company or
 daily cap has no slot left. Approving reserves the slot.
 """
 
-import json
 import re
 from datetime import UTC, datetime
 
@@ -98,10 +97,26 @@ def prepare_anyway(tracker, job_id: int) -> int:
     job = tracker.get(job_id)
     if job is None or not below_threshold(job):
         raise ValueError("Prepare anyway is for jobs set aside only because their fit is below your threshold.")
-    details = json.loads(job["details"] or "{}")
-    tracker.update(job_id, details={**details, "prepare_anyway": True})
+    tracker.merge_details(job_id, prepare_anyway=True)
     tracker.move(job_id, "filtered_out", "found", reason="Preparing anyway, as you chose.")
     return tracker.add_task("prepare", job_id)
+
+
+def prepare_link(tracker, url: str) -> tuple[int, bool, str]:
+    """Prepare the job at a link you pasted (links.py). Returns (job id, whether a task was queued,
+    what happened in words). A job already known is prepared only if it's still new."""
+    from . import links
+
+    job_id, new = links.add(tracker, url)
+    job = tracker.get(job_id)
+    busy = any(t["job_id"] == job_id and t["kind"] in ("prepare", "link") and t["status"] in ("queued", "running")
+               for t in tracker.tasks(40))
+    if busy:
+        return job_id, False, "This job is already being prepared."
+    if not new and job["status"] != "found":
+        return job_id, False, f"You already have this job: {job['title']} at {job['company']} ({job['status'].replace('_', ' ')})."
+    tracker.add_task("link" if job["title"] == links.PLACEHOLDER else "prepare", job_id)
+    return job_id, True, "Preparing the job from your link. Its page shows each step as it happens."
 
 
 def top_picks(tracker, settings, count: int) -> tuple[list[dict], list[dict]]:

@@ -122,8 +122,7 @@ def keyword_rank(tracker, profile: dict) -> int:
         value = round(100 * raws[job["id"]] / best)
         if details.get("keyword") == {"score": value, "basis": current}:
             continue
-        details["keyword"] = {"score": value, "basis": current}
-        tracker.update(job["id"], details=details)
+        tracker.merge_details(job["id"], keyword={"score": value, "basis": current})
         changed += 1
     return changed
 
@@ -185,7 +184,6 @@ def score(llm, tracker, limit: int | None = None, log=print) -> dict:
             item = by_id.get(job["id"])
             if item is None:
                 continue
-            details = json.loads(tracker.get(job["id"])["details"] or "{}")
             value = max(0, min(100, int(item["score"])))
             if wrong_kind(prefs.get("description", ""), job):  # Said plainly by both: no model needed.
                 value = min(value, 35)
@@ -196,9 +194,7 @@ def score(llm, tracker, limit: int | None = None, log=print) -> dict:
                 value = min(value, 35)
             if item.get("level_fits") is False:
                 value = min(value, 45)
-            details["match"] = {"score": value,
-                                "why": item["why"][:120], "basis": current}
-            tracker.update(job["id"], details=details)
+            tracker.merge_details(job["id"], match={"score": value, "why": item["why"][:120], "basis": current})
             done += 1
         log(f"  scored {done} job(s)")
         return done

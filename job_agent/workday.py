@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 
 from . import config
 
+from .pageview import goto
 from .forms import (Closed, FillError, fill_all, same_text, text_value, check_labeled, clean, pick_option,  # noqa: F401
                     visible_text, wait_for_result)
 
@@ -284,7 +285,7 @@ def at_gate(page) -> bool:
 
 
 def read_form(page, board: str, job_path: str, data: dict) -> tuple[list[dict], list[str]]:
-    page.goto(apply_url(board, job_path), wait_until="domcontentloaded")
+    goto(page, apply_url(board, job_path))
     settle(page)
     if at_gate(page):
         return [], ["This Workday site asks you to sign in first; its questions are read page by "
@@ -574,7 +575,7 @@ def walk(page, packet: dict, files: dict, ask, *, email: str, tracker, before_fi
     answers for a field the packet lacks (recorded in the packet), or None.
     `before_final()` runs right before the Submit click (marks the job submitting).
     """
-    page.goto(packet["job"]["apply_url"], wait_until="domcontentloaded")
+    goto(page, packet["job"]["apply_url"])
     settle(page)
     if at_gate(page):
         sign_in_or_create(page, email, ask, tracker, log)

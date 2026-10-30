@@ -1,5 +1,6 @@
 """Paths and settings. Everything personal lives under profile/ and data/."""
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +119,17 @@ def save_search(values: dict) -> None:
     clean = {k: values[k] for k in SEARCH_KEYS if k in values}
     (PROFILE_DIR / "search.yaml").write_text(
         header + yaml.safe_dump(clean, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+# Search settings that shape how one packet is written, so a job can have its own (kept in its
+# details, set from the chat): a two-page resume for a research role leaves every other job as is.
+PER_JOB = {"resume_pages": (1, 2), "cover_letter": ("always", "required", "never")}
+
+
+def for_job(profile: dict, job: dict) -> dict:
+    """Your profile with this job's own settings over the Search page's."""
+    own = json.loads(job.get("details") or "{}").get("settings") or {}
+    return {**profile, "preferences": {**(profile.get("preferences") or {}), **own}} if own else profile
 
 
 def letter_mode(profile: dict, settings) -> str:

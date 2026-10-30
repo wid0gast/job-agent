@@ -17,9 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 from .ats import identify
 
 # found → filtered_out | preparing → prepared → approved → submitting → submitted.
-# "working" is the older single-agent run that searches, fills and submits in one go.
 TRANSITIONS = {
-    "found": {"filtered_out", "preparing", "working", "skipped", "closed"},
+    "found": {"filtered_out", "preparing", "skipped", "closed"},
     "filtered_out": {"found", "closed"},
     "preparing": {"prepared", "filtered_out", "needs_you", "failed", "found", "closed"},
     "prepared": {"approved", "rejected", "preparing", "closed"},
@@ -27,7 +26,6 @@ TRANSITIONS = {
     # Once the click may have happened, only a confirmed result or you can resolve it.
     "submitting": {"submitted", "needs_you"},
     "needs_you": {"found", "preparing", "prepared", "rejected", "skipped", "submitted", "failed"},
-    "working": {"submitted", "skipped", "failed", "needs_you"},
     "failed": {"found"},
     "rejected": {"found"},
     "skipped": {"found"},
@@ -35,7 +33,9 @@ TRANSITIONS = {
     "submitted": set(),
 }
 STATUSES = tuple(TRANSITIONS)
-RENAMED = {"lead": "found", "in_progress": "working", "needs_user": "needs_you"}
+# Older names. "in_progress"/"working" was the first version's single agent that searched,
+# filled and submitted in one run; a job left in it was mid-application, so it needs you.
+RENAMED = {"lead": "found", "in_progress": "needs_you", "working": "needs_you", "needs_user": "needs_you"}
 # Approved but not yet sent: these already hold a slot against the caps.
 RESERVED = ("approved", "submitting")
 # Query parameters that identify a posting on common boards and ATSs.
@@ -334,6 +334,20 @@ class Tracker:
         self.db.execute(
             f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id)
         )
+        self.db.commit()
+
+    @locked
+    def merge_details(self, job_id: int, **parts) -> None:
+        """Set some keys of a job's details (None removes one), keeping the others as stored now.
+        Ranking, a refresh and preparing run side by side: writing back a copy read earlier would
+        undo the others."""
+        row = self.db.execute("SELECT details FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"No job {job_id}.")
+        details = {key: value for key, value in {**json.loads(row["details"] or "{}"), **parts}.items()
+                   if value is not None}
+        self.db.execute("UPDATE jobs SET details = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(details), now(), job_id))
         self.db.commit()
 
     @locked

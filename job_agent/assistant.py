@@ -85,11 +85,12 @@ class Assistant:
                   coded_only: bool = False):
         if status not in (*STATUSES, "any"):
             raise ValueError(f"status must be one of: any, {', '.join(STATUSES)}.")
-        words = [w for w in query.lower().split() if w]
+        # Each word starts a word ("intern" finds Internship); "AI" no longer finds Zscaler or Chain.
+        words = [re.compile(rf"\b{re.escape(w)}", re.I) for w in query.split()]
         rows = []
         for job in self.tracker.with_status(*STATUSES) if status == "any" else self.tracker.with_status(status):
-            text = f"{job['title']} {job['company']} {job['location']}".lower()
-            if words and not all(w in text for w in words):
+            text = f"{job['title']} {job['company']} {job['location']}"
+            if not all(w.search(text) for w in words):
                 continue
             if coded_only and job["ats"] not in systems.SUPPORTED:
                 continue
@@ -143,6 +144,7 @@ class Assistant:
                                          if r.get("must_have") and r.get("met") != "yes"]},
             "answers": [{"key": a["key"], "label": a["label"][:300], "kind": a["kind"], "required": a["required"],
                          "value": a.get("value"), "source": a.get("source"),
+                         **({"employer_asked_for_no_ai": a["ai_policy"]["quote"]} if a.get("ai_policy") else {}),
                          **({"options": a["options"][:25]} if a.get("options") else {})}
                         for a in packet["answers"] if a["kind"] != "file" or answer_is_document(a)],
             "needs_you": [{"key": a["key"], "label": a["label"][:200], "kind": a["kind"]}
@@ -157,6 +159,7 @@ class Assistant:
             "problems": (checks.get("consistency") or []) + [f"invented number: {n}" for n in
                                                               checks.get("invented_numbers") or []],
             "reviewer_note": packet.get("reviewer_note"),
+            "own_settings": json.loads(job["details"] or "{}").get("settings"),
             "people_to_contact": people_brief(packet),
             **route_brief(strategy.Advisor(self.tracker, self.settings).advise(job, packet), full=True),
             "hiring_manager_read": read_brief(packet),
@@ -171,8 +174,15 @@ class Assistant:
     def rank_jobs(self):
         return self.queue("score_matches", note="The model scores the best keyword matches (a minute or two).")
 
+    def prepare_from_link(self, url: str):
+        job_id, queued, said = actions.prepare_link(self.tracker, url)
+        if queued:
+            self.chat.start_worker()
+        return {"job_id": job_id, "queued": queued, "result": said,
+                "page": f"/job/{job_id}"}
+
     def prepare_applications(self, job_ids: list[int], note: str = "", anyway: bool = False,
-                             confirmed: bool = False):
+                             confirmed: bool = False, settings: dict | None = None):
         ids = list(dict.fromkeys(int(i) for i in job_ids))
         if len(ids) > MAX_UNASKED and not (confirmed and asked_for(self.chat.said(), len(ids))):
             # Each prepare is minutes of model work and spend. Asked to "submit everything", a
@@ -213,6 +223,9 @@ class Assistant:
             if problem:
                 problems.append(f"#{job_id}: {problem}")
                 continue
+            if settings:  # This job's own, kept for later redos; null puts one back to the Search page's.
+                own = {**(json.loads(job["details"] or "{}").get("settings") or {}), **settings}
+                self.tracker.merge_details(job_id, settings={k: v for k, v in own.items() if v is not None} or None)
             self.chat.start_worker()
             queued.append({"job_id": job_id, "task_id": self.tracker.add_task("prepare", job_id, note.strip()[:800] or None)})
         return {"queued": queued, "problems": problems,
@@ -549,9 +562,17 @@ class Assistant:
                  "e.g. 'lead with the robotics project'. Nothing is sent. anyway=true prepares a job set aside "
                  "only because its fit scored below the threshold, reusing that fit check: only when the user "
                  f"asks after seeing why. More than {MAX_UNASKED} at once needs confirmed=true, after the user "
-                 "agreed to that number.",
-                 schema({"job_ids": ids, "note": string, "anyway": boolean, "confirmed": boolean}, ["job_ids"]),
+                 "agreed to that number. settings (resume_pages, cover_letter): for these jobs only, over the Search "
+                 "settings, and kept for their later redos (null goes back to the Search setting). Use it when "
+                 "the user asks for one job; update_search changes every job.",
+                 schema({"job_ids": ids, "note": string, "anyway": boolean, "confirmed": boolean,
+                         "settings": {"type": "object", "additionalProperties": False, "properties": {
+                             k: {"enum": [*v, None]} for k, v in config.PER_JOB.items()}}}, ["job_ids"]),
                  self.prepare_applications),
+            Tool("prepare_from_link", "The user pasted a job posting's link: add that job and prepare it (reads "
+                 "the posting, checks fit, then the whole application; a low fit stops and is set aside for the "
+                 "user to decide, like any job). The user's Search filters don't apply to a job they chose. "
+                 "Background task; nothing is sent.", schema({"url": string}, ["url"]), self.prepare_from_link),
             Tool("edit_answer", "Change one answer in a packet (keys from get_packet). Short answers and choices "
                  "must be facts the user stated (in this chat or their profile); essays (long text answers) may be "
                  "written for them. remember=true saves a short answer for future applications.",
@@ -601,7 +622,8 @@ class Assistant:
                  "file). The user gets an Undo button. Read the file first.",
                  schema({"file": {"type": "string", "enum": list(FILES)}, "edits": edits, "content": string},
                         ["file"]), self.edit_file),
-            Tool("update_search", "Change search settings: pass only the keys to change. Keys: "
+            Tool("update_search", "Change search settings for every job (for one job's resume_pages or "
+                 "cover_letter, use prepare_applications' settings): pass only the keys to change. Keys: "
                  + ", ".join(config.SEARCH_KEYS) + f". fields: any of {sources.ALL_FIELDS} ([] = all). "
                  "job_types: internship, full_time. locations: list (Remote, a city, or any).",
                  schema({"changes": {"type": "object"}}), self.update_search),

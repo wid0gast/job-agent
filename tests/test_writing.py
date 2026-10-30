@@ -28,11 +28,28 @@ def test_length_limits_come_from_the_question():
     assert answers.too_long(field, "word " * 120) and not answers.too_long(field, "word " * 90)
 
 
-def test_ai_policy_is_found_in_the_form_or_posting():
-    fields = [{"label": "Do you acknowledge that these answers are your own?", "description": ""}]
-    assert answers.ai_policy("We build models.", fields)
-    assert answers.ai_policy("Please do not use AI assistants during the application process.", [])
-    assert answers.ai_policy("We build AI assistants for banks.", [{"label": "Why us?", "description": ""}]) is None
+def test_answers_drafted_where_the_employer_asked_for_no_ai_are_flagged():
+    assert answers.ai_policy("Please do not use AI assistants during the application process.")
+    assert answers.ai_policy("What do you want to work on? Please, no AI text.")
+    assert answers.ai_policy("We build AI assistants for banks.") is None
+    assert answers.ai_policy("No AI experience required.") is None
+    assert answers.ai_policy("Please don't use AI to answer any of the questions - we want to hear from you! "
+                             "About Pangram Labs.") == ("Please don't use AI to answer any of the questions - we "
+                                                        "want to hear from you!")
+
+    def essay(key, label, value="A draft."):
+        return {"key": key, "label": label, "kind": "textarea", "source": "model-essay", "value": value}
+
+    asked, other = essay("q1", "What do you want to work on? Please, no AI text."), essay("q2", "Why us?")
+    assert answers.flag_ai_policy([asked, other], "We build models.") == [asked]
+    assert asked["ai_policy"]["where"] == "question" and "no AI text" in asked["ai_policy"]["quote"]
+    # An acknowledgement on the form, or the posting, covers every essay.
+    ack = {"key": "ack", "label": "Do you confirm these answers are your own?", "kind": "select",
+           "source": "blank", "value": None}
+    assert answers.flag_ai_policy([ack, essay("q3", "Why us?")], "We build models.")[0]["ai_policy"]["where"] == "application"
+    assert answers.flag_ai_policy([essay("q4", "Why us?")], "Please don't use AI to answer any of the questions.")
+    yours = {**essay("q5", "Why us? No AI text."), "source": "you"}
+    assert answers.flag_ai_policy([yours], "") == [], "your own answer isn't flagged"
 
 
 def test_a_stated_date_survives_the_words_around_it():

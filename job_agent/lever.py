@@ -8,8 +8,10 @@ resume goes first and everything else is typed over it. Submit runs an
 invisible hCaptcha; a visible challenge is handed to you.
 """
 
+import html
 from urllib.parse import quote
 
+from .pageview import goto
 from .forms import (Closed, FillError, fill_all, same_text, text_value, answered, check_labeled, clean, combobox,  # noqa: F401
                     pick_option, select_native, type_into, visible_text, wait_for_result)
 
@@ -67,7 +69,10 @@ def fetch(client, board: str, job_id: str) -> dict:
         response = client.get(f"{api}/{board}/{job_id}", params={"mode": "json"})
         if response.status_code == 200:
             data = response.json()
-            parts = [data.get("description", "")]
+            # Lever keeps the place and the kind of job beside the text, not in it.
+            facts = [f"{name}: {html.escape(value)}" for name, value in (data.get("categories") or {}).items()
+                     if isinstance(value, str) and value]
+            parts = ([f"<p>{' · '.join(facts)}</p>"] if facts else []) + [data.get("description", "")]
             parts += [f"<h3>{item['text']}</h3>{item['content']}" for item in data.get("lists", [])]
             parts.append(data.get("additional", ""))
             return {"title": data.get("text"), "html": "".join(parts), "data": data}
@@ -91,7 +96,7 @@ def page_fields(page) -> list[dict]:
 
 
 def read_form(page, board: str, job_id: str, data: dict) -> tuple[list[dict], list[str]]:
-    page.goto(apply_url(board, job_id), wait_until="domcontentloaded")
+    goto(page, apply_url(board, job_id))
     try:
         page.locator("#application-form, form[action*='/apply']").first.wait_for(timeout=20000)
     except Exception:  # noqa: BLE001 - no form: closed or applications paused.

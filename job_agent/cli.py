@@ -48,21 +48,22 @@ def cmd_refresh(args) -> None:
 
 
 def cmd_prepare(args) -> None:
-    from . import systems
-    from .prepare import prepare
+    from . import actions, people
+    from .prepare import prepare, wants_people
     from .worker import Context
 
     settings = config.Settings.from_env(require_model=False)
     tracker = Tracker(DB_PATH)
-    ids = args.job_ids or [j["id"] for j in tracker.with_status("found", order="posted_at DESC")
-                           if j["ats"] in systems.SUPPORTED][: args.top]
+    # As the dashboard's "Prepare top matches": best ranked, one per company, within the limits.
+    ids = args.job_ids or [j["id"] for j in actions.top_picks(tracker, settings, args.top)[0]]
     with browser_lock():
         ctx = Context(settings, tracker, require_model=True)
         try:
             for job_id in ids:
                 job = tracker.get(job_id)
                 print(f"\n-- #{job_id} {job['title']} at {job['company']}")
-                prepare(job_id, ctx, print)
+                if prepare(job_id, ctx, print) in ("prepared", "needs_you") and wants_people(ctx, job_id):
+                    people.refresh(job_id, ctx, print)  # The worker does this as a task of its own.
         finally:
             print(f"\nModel calls: {ctx.llm.calls}, spent ${ctx.llm.spent_usd:.4f}")
             ctx.close()
@@ -162,36 +163,65 @@ def cmd_worker(_args) -> None:
 
 
 def cmd_demo(args) -> None:
-    """A rehearsable demo: `demo save` snapshots a demo home; `demo` restores it and opens its dashboard.
-    A demo home is a separate folder (profile/ and data/) with made-up data, never your own."""
+    """A rehearsable demo in its own folder (profile/ and data/), never your own profile and data.
+    `demo` empties it and opens the app as a new user first sees it, on Get started; `demo save`
+    keeps a finished run, and `demo restore` brings that run back (the fallback on the day)."""
     import os
     import socket
     import subprocess
     import sys
+    import time
+    import webbrowser
 
-    home = (config.ROOT / args.home).resolve()
+    from .dashboard import SETUP_STEPS
+
+    home = (config.ROOT / (args.home or ".demo-live")).resolve()
     saved = home.with_name(home.name + ".saved")
+    named = "" if home.name == ".demo-live" else f" --home {home.name}"
     if home in (config.HOME.resolve(), config.ROOT.resolve()) or home.name == ".demo":
-        raise SystemExit(f"{home} holds real data; use a demo home with made-up data (e.g. .demo-readme).")
-    if not (home / "profile").exists() and not saved.exists():
-        raise SystemExit(f"No demo home at {home}: create it with JOB_AGENT_HOME={args.home} first.")
+        raise SystemExit(f"{home} holds real data; use a demo home with made-up data (e.g. .demo-live).")
     ignore = shutil.ignore_patterns("worker.lock", "browser-profile", "*.saved")
     if args.action == "save":
+        if not (home / "profile").exists():
+            raise SystemExit(f"No demo home at {home} to save.")
         shutil.rmtree(saved, ignore_errors=True)
         shutil.copytree(home, saved, ignore=ignore)
-        print(f"Saved the demo as it is now ({saved.name}). `uv run job-agent demo` brings it back.")
+        print(f"Saved the demo as it is now. `uv run job-agent demo restore{named}` brings it back.")
         return
+    url = f"http://127.0.0.1:{args.port}/"
     with socket.socket() as probe:
         if probe.connect_ex(("127.0.0.1", args.port)) == 0:
             raise SystemExit(f"Port {args.port} is in use: stop the running demo dashboard first.")
-    if saved.exists():
+    if args.action == "fresh":
+        # Emptied, so only a demo folder (ignored by git) and never the README's screenshot demo.
+        if not home.name.startswith(".demo-") or home.name == ".demo-readme" or home.parent != config.ROOT:
+            raise SystemExit("A fresh demo empties its folder: use one named .demo-something in the app's folder.")
+        shutil.rmtree(home, ignore_errors=True)
+        home.mkdir()
+        print(f"A fresh demo, as a new user first sees the app: {url}\nGet started walks you through:")
+        for n, (_, title) in enumerate(SETUP_STEPS, 1):
+            print(f"  {n}. {title}")
+        print(f"After a good run, `uv run job-agent demo save{named}` keeps it to fall back on.\n", flush=True)
+    elif saved.exists():
         shutil.rmtree(home, ignore_errors=True)
         shutil.copytree(saved, home, ignore=ignore)
-        print(f"Restored the demo from {saved.name}.")
+        print(f"Restored the saved demo: {url}", flush=True)
     else:
-        print("No saved demo yet (`uv run job-agent demo save`): opening it as it is.")
+        raise SystemExit(f"No saved demo for {home.name}: `uv run job-agent demo save{named}` keeps one after a run.")
     env = {**os.environ, "JOB_AGENT_HOME": str(home)}
-    subprocess.run([sys.executable, "-m", "job_agent.cli", "dashboard", "--port", str(args.port)], env=env)
+    server = subprocess.Popen([sys.executable, "-m", "job_agent.cli", "dashboard", "--port", str(args.port)], env=env)
+    for _ in range(100):  # Opened once it answers, so the first page isn't an error.
+        with socket.socket() as probe:
+            if probe.connect_ex(("127.0.0.1", args.port)) == 0:
+                webbrowser.open(url)
+                break
+        if server.poll() is not None:
+            break
+        time.sleep(0.1)
+    try:
+        server.wait()
+    except KeyboardInterrupt:
+        server.wait()
 
 
 def cmd_demo_site(args) -> None:
@@ -208,10 +238,10 @@ def main() -> None:
     status.add_argument("--all", action="store_true", help="Include found, filtered and closed jobs.")
     refresh = sub.add_parser("refresh", help="Pull the master job list (Simplify lists).")
     refresh.add_argument("--boards", action="store_true",
-                         help="Also read every known company's Greenhouse board.")
+                         help="Also read every known company's job board (Greenhouse, Lever, Ashby and more).")
     prep = sub.add_parser("prepare", help="Prepare packets for found jobs (no submitting).")
     prep.add_argument("job_ids", nargs="*", type=int)
-    prep.add_argument("--top", type=int, default=1, help="Newest N supported jobs (default 1).")
+    prep.add_argument("--top", type=int, default=1, help="The N best-ranked jobs, one per company (default 1).")
     res = sub.add_parser("resumes", help="Build the master resume from resume PDFs.")
     res.add_argument("action", choices=["import", "merge", "accept", "discard", "list", "sync"])
     res.add_argument("pdfs", nargs="*", help="PDF files (for import).")
@@ -222,9 +252,10 @@ def main() -> None:
     dash = sub.add_parser("dashboard", help="Open the local dashboard (starts the worker).")
     dash.add_argument("--port", type=int, default=8770)
     sub.add_parser("worker", help="Run queued tasks (the dashboard starts this for you).")
-    rehearse = sub.add_parser("demo", help="Restore the saved demo and open its dashboard (or `demo save`).")
-    rehearse.add_argument("action", nargs="?", choices=["run", "save"], default="run")
-    rehearse.add_argument("--home", default=".demo-readme", help="The demo's folder (made-up data only).")
+    rehearse = sub.add_parser("demo", help="Open a fresh demo on Get started, as a new user first sees the app "
+                                           "(`demo save` keeps a run; `demo restore` brings it back).")
+    rehearse.add_argument("action", nargs="?", choices=["fresh", "save", "restore"], default="fresh")
+    rehearse.add_argument("--home", help="The demo's folder (default .demo-live).")
     rehearse.add_argument("--port", type=int, default=8771)
     demo = sub.add_parser("demo-site", help="Serve a fake job board for safe testing.")
     demo.add_argument("--port", type=int, default=8765)

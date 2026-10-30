@@ -28,209 +28,37 @@ from .tracker import OUTCOMES, Tracker, utc_days_ago
 from .worker import DB_PATH
 
 LOG_PATH = config.DATA_DIR / "logs" / "worker.log"
+STATIC = Path(__file__).parent / "static"
+# The page's style and scripts, served from static/ at these addresses.
+ASSETS = {"/style.css": "dashboard.css", "/live.js": "live.js", "/people.js": "people.js",
+          "/trace.js": "trace.js", "/assistant/chat.js": "chat.js"}
 QUEUE = ("prepared", "needs_you", "approved", "submitting")
+PREPARES = ("prepare", "link")  # Task kinds that prepare a job (link: from a pasted link).
 ORDER = ("found", "preparing", "prepared", "needs_you", "approved", "submitting", "submitted",
-         "filtered_out", "failed", "rejected", "skipped", "closed", "working")
+         "filtered_out", "failed", "rejected", "skipped", "closed")
+# What each status is called on the page: the stored names are for code.
+STATUS_WORDS = {
+    "found": "New", "preparing": "Preparing", "prepared": "Ready for review", "needs_you": "Needs you",
+    "approved": "Approved", "submitting": "Sending", "submitted": "Applied", "filtered_out": "Set aside",
+    "failed": "Couldn't finish", "rejected": "Dropped", "skipped": "Not interested", "closed": "Posting closed",
+    # Background tasks.
+    "queued": "Waiting to start", "running": "Running", "stopping": "Stopping", "waiting": "Needs your answer",
+    "done": "Done", "stopped": "Stopped",
+}
+
+
+def say(status: str) -> str:
+    return STATUS_WORDS.get(status, status.replace("_", " "))
+
+
+def pill(status: str) -> str:
+    return f'<span class="pill {esc(status)}">{esc(say(status))}</span>'
 
 # A briefcase with a spark: the app's mark, inline so the page loads nothing else.
 LOGO = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
         'stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2.5"/>'
         '<path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M3 13h18"/></svg>')
 
-CSS = """
-:root{--bg:#f6f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--line:#e4e7ef;--soft:#f1f3f9;
---accent:#4f46e5;--accent-2:#7c3aed;--accent-soft:#eef0ff;--good:#059669;--good-soft:#e7f8f1;
---bad:#dc2626;--bad-soft:#fdecec;--warn:#b45309;--warn-soft:#fff5e5;--info:#0369a1;--info-soft:#e8f4fb;
---shadow:0 1px 2px rgba(15,23,42,.04),0 4px 16px rgba(15,23,42,.05);--radius:14px}
-@media (prefers-color-scheme:dark){:root{--bg:#0b0d14;--card:#141824;--text:#e6e8f0;--muted:#94a0b8;
---line:#242a3a;--soft:#1a1f2e;--accent:#8b85ff;--accent-2:#b18cff;--accent-soft:#1f2147;--good:#34d399;
---good-soft:#0f2a22;--bad:#f87171;--bad-soft:#2d1517;--warn:#fbbf24;--warn-soft:#2b2210;--info:#60a5fa;
---info-soft:#12233a;--shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.25)}}
-*{box-sizing:border-box}[hidden]{display:none!important}@view-transition{navigation:auto}
-body{margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
-font:14px/1.55 "Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-header{position:sticky;top:0;z-index:5;display:flex;gap:6px;align-items:center;padding:10px 24px;
-background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:blur(10px);
-border-bottom:1px solid var(--line);flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:9px;margin-right:14px;font-weight:700;font-size:15px;
-color:var(--text);letter-spacing:-.01em}.brand:hover{text-decoration:none}
-.logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:#fff;
-background:linear-gradient(135deg,var(--accent),var(--accent-2));box-shadow:0 2px 8px rgba(79,70,229,.35)}
-header nav{display:flex;gap:2px;flex-wrap:wrap}
-header nav a{color:var(--muted);padding:6px 11px;border-radius:9px;font-weight:500}
-header nav a:hover{background:var(--soft);color:var(--text);text-decoration:none}
-header nav a.on{background:var(--accent-soft);color:var(--accent)}
-.chip{margin-left:auto;display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:99px;
-border:1px solid var(--line);background:var(--card);color:var(--text);font-size:12.5px;font-weight:500}
-.chip:hover{text-decoration:none;border-color:var(--accent)}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}.dot.on{background:var(--good);
-box-shadow:0 0 0 3px var(--good-soft)}.dot.off{background:var(--bad);box-shadow:0 0 0 3px var(--bad-soft)}
-main{max-width:1160px;margin:0 auto;padding:28px 24px 48px}
-h1{font-size:24px;letter-spacing:-.02em;margin:0 0 18px}h2{font-size:15px;margin:0 0 12px;letter-spacing:-.01em}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;
-margin:0 0 18px;box-shadow:var(--shadow)}
-table{width:100%;border-collapse:separate;border-spacing:0}
-td,th{text-align:left;padding:11px 10px;border-top:1px solid var(--line);vertical-align:top}
-th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-top:0}
-tbody tr:hover td,table tr:hover td{background:color-mix(in srgb,var(--soft) 70%,transparent)}
-td a{font-weight:600;color:var(--text)}td a:hover{color:var(--accent)}
-.pill{display:inline-block;padding:2px 9px;border-radius:99px;background:var(--soft);color:var(--muted);
-font-size:12px;font-weight:600;white-space:nowrap}
-.pill.found{background:var(--info-soft);color:var(--info)}
-.pill.preparing,.pill.working,.pill.running,.pill.queued,.pill.submitting{background:var(--accent-soft);color:var(--accent)}
-.pill.prepared{background:var(--accent-soft);color:var(--accent)}
-.pill.approved,.pill.submitted,.pill.done{background:var(--good-soft);color:var(--good)}
-.pill.needs_you,.pill.waiting{background:var(--warn-soft);color:var(--warn)}
-.pill.failed,.pill.rejected{background:var(--bad-soft);color:var(--bad)}
-.pill.stopping,.pill.stopped{background:var(--soft);color:var(--muted)}
-.submitted,.approved,.good{color:var(--good)}.failed,.needs_you,.rejected{color:var(--bad)}.prepared{color:var(--accent)}
-.muted{color:var(--muted)}.warn{color:var(--warn)}.bad{color:var(--bad)}
-.pill.reach_out,.pill.interview{background:var(--good-soft);color:var(--good)}
-.pill.think_twice,.pill.maybe{background:var(--warn-soft);color:var(--warn)}.pill.pass{background:var(--bad-soft);color:var(--bad)}
-.pill.apply{background:var(--info-soft);color:var(--info)}
-.signals{margin:8px 0 0;padding-left:20px}.signals li.good::marker{content:"✓  ";color:var(--good)}
-.signals li.bad::marker{content:"!  ";color:var(--warn)}
-.concern{border-left:3px solid var(--warn);padding:2px 0 2px 12px;margin:10px 0}
-.concern q{display:block;font-style:italic;margin:2px 0}
-/* A job's page: the decision at a glance, then tabs (CSS :target, so live updates keep the tab). */
-.decide{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:0 0 14px}
-.decide a{display:block;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card);color:inherit;box-shadow:var(--shadow)}
-.decide a:hover{text-decoration:none;border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
-.decide .k{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
-.decide .v{margin:6px 0 4px;font-weight:650;font-size:15px}.decide .s{font-size:13px;color:var(--muted)}
-.decide .ok .v{color:var(--good)}.decide .todo .v{color:var(--warn)}
-.tabbar{margin:4px 0 16px}.tabbar .tab{text-transform:none}.panel{display:none;scroll-margin-top:150px}
-.panel:target,.panel:has(:target){display:block}
-.tabbed:not(:has(.panel:target,.panel :target)) .panel.default{display:block}
-.tabbed:not(:has(.panel:target,.panel :target)) .tabbar a.default,.tabbed:has(#t-review:target,#t-review :target) .tabbar a[href='#t-review'],.tabbed:has(#t-application:target,#t-application :target) .tabbar a[href='#t-application'],.tabbed:has(#t-fit:target,#t-fit :target) .tabbar a[href='#t-fit'],.tabbed:has(#t-people:target,#t-people :target) .tabbar a[href='#t-people']{background:var(--text);border-color:var(--text);color:var(--card)}
-.progress{list-style:none;padding:0;margin:10px 0 0}.progress li{display:flex;gap:10px;padding:5px 0;align-items:baseline}.progress .mark{width:18px;flex:none;text-align:center}
-.progress li.done .mark{color:var(--good)}.progress li.next{color:var(--muted)}
-.progress .t{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}
-button,.button{font:inherit;font-weight:600;padding:8px 14px;border-radius:10px;border:1px solid var(--line);
-background:var(--card);color:var(--text);cursor:pointer;text-decoration:none;display:inline-block;
-transition:background .15s,border-color .15s,transform .05s}
-button:hover,.button:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));text-decoration:none}
-button:active{transform:translateY(1px)}
-button.primary,.button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;
-box-shadow:0 2px 10px rgba(79,70,229,.28)}button.primary:hover,.button.primary:hover{filter:brightness(1.06);text-decoration:none}
-input[type=text],input[type=number],input[type=password],input[type=email],textarea,select{font:inherit;width:100%;
-padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);
-transition:border-color .15s,box-shadow .15s}
-input[type=file]{font:inherit;color:var(--muted)}
-input[type=file]::file-selector-button{font:inherit;font-weight:600;margin-right:12px;padding:8px 14px;border-radius:10px;
-border:1px dashed color-mix(in srgb,var(--accent) 50%,var(--line));background:var(--accent-soft);color:var(--accent);cursor:pointer}
-input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
-box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}textarea{min-height:90px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
-.stat{position:relative;padding:16px 16px 14px;border:1px solid var(--line);border-radius:var(--radius);
-background:var(--card);box-shadow:var(--shadow);overflow:hidden;transition:transform .12s,border-color .12s}
-.stat:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
-.stat::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--muted)}
-.stat b{display:block;font-size:28px;letter-spacing:-.02em;line-height:1.15}
-.stat span{font-size:12.5px;font-weight:500;text-transform:capitalize}
-.st-found::before{background:var(--info)}.st-prepared::before{background:var(--accent)}
-.st-needs_you::before{background:var(--warn)}.st-approved::before{background:var(--good)}
-.st-submitted::before{background:linear-gradient(90deg,var(--good),var(--accent))}
-.flash{padding:12px 16px;border-radius:12px;margin-bottom:16px;background:var(--info-soft);color:var(--text);
-border:1px solid color-mix(in srgb,var(--info) 25%,transparent)}
-.flash.warn{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
-.flash.bad{background:var(--bad-soft);border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
-.flash.good{background:var(--good-soft);border-color:color-mix(in srgb,var(--good) 30%,transparent)}
-.flash.warn,.flash.bad{color:var(--text)}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px}
-.tab{padding:6px 12px;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--muted);
-font-weight:600;font-size:13px;text-transform:capitalize}
-.tab:hover{color:var(--text);text-decoration:none;border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
-.tab.on{background:var(--text);border-color:var(--text);color:var(--card)}
-pre{white-space:pre-wrap;font:12px/1.55 ui-monospace,"SF Mono",monospace;max-height:520px;overflow:auto;
-background:var(--soft);border-radius:10px;padding:12px}
-code{font:12.5px ui-monospace,"SF Mono",monospace;background:var(--soft);padding:1px 6px;border-radius:6px}
-.src{font-size:12px;color:var(--muted);margin-top:2px}
-.below{opacity:.45}
-.score{display:inline-grid;place-items:center;min-width:42px;height:30px;padding:0 8px;border-radius:9px;
-font-weight:700;font-size:14.5px;background:var(--soft);color:var(--text)}
-.score.b-high{background:var(--good-soft);color:var(--good)}.score.b-mid{background:var(--warn-soft);color:var(--warn)}
-.score.b-low{background:var(--bad-soft);color:var(--bad)}
-.kind{font-size:10.5px;color:var(--muted);display:block;margin-top:3px;text-transform:uppercase;letter-spacing:.05em}
-.steps{counter-reset:step;list-style:none;padding:0;margin:0}
-.steps li{counter-increment:step;display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;min-height:38px;
-padding:0 0 12px}.steps li form.code{flex-basis:100%;margin-left:40px}
-.steps li::before{content:counter(step);flex:none;width:26px;height:26px;border-radius:50%;
-display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent)}
-.steps li.done::before{content:"✓";background:var(--good-soft);color:var(--good)}
-.chat{display:grid;grid-template-columns:230px minmax(0,1fr);gap:22px;align-items:start}
-.chats{position:sticky;top:76px;display:flex;flex-direction:column;gap:2px;max-height:calc(100vh - 100px);overflow:auto}
-.chats a.c{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:9px;color:var(--text);font-weight:500;
-font-size:13px}.chats a.c span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chats a.c:hover{background:var(--soft);text-decoration:none}.chats a.c.on{background:var(--accent-soft);color:var(--accent)}
-.chats a.c button{visibility:hidden;padding:0 6px;border:0;background:none;color:var(--muted);font-size:15px}
-.chats a.c:hover button{visibility:visible}.chats .new{margin-bottom:10px;text-align:center}
-.convo{max-width:820px;width:100%;margin:0 auto;display:flex;flex-direction:column;min-height:calc(100vh - 140px)}
-#log{flex:1}
-.item{margin:0 0 14px}.item.user{display:flex;justify-content:flex-end}
-.bubble{max-width:78%;padding:10px 14px;border-radius:16px 16px 4px 16px;background:var(--accent-soft);
-color:var(--text);white-space:normal;overflow-wrap:anywhere}
-.md{line-height:1.6;overflow-wrap:anywhere}.md p{margin:0 0 10px}.md ul,.md ol{margin:0 0 10px;padding-left:22px}
-.md h4{margin:14px 0 6px;font-size:14.5px}.md td a{color:var(--accent);font-weight:500}.md table{margin:0 0 12px;font-size:13px}.md td,.md th{padding:7px 8px}
-.item.tool{margin:0 0 6px;font-size:13px}.item.tool summary{cursor:pointer;color:var(--text);list-style:none}
-.item.tool summary::-webkit-details-marker{display:none}.item.tool pre{max-height:260px;margin:6px 0}
-.state{display:inline-grid;place-items:center;width:18px;color:var(--good)}.state.error{color:var(--warn)}
-.spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--accent);
-border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}@keyframes spin{to{transform:rotate(360deg)}}
-.card.ask{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));margin:4px 0 14px}.card.ask ul{margin:8px 0 12px}
-.undo{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted)}.undo button{padding:3px 10px;font-size:12.5px}
-.note{text-align:center;color:var(--muted);font-size:12.5px}
-.stats-line{color:var(--muted);font-size:11.5px;margin:-8px 0 0;opacity:.8}
-.thinking span{display:inline-block;width:7px;height:7px;margin-right:4px;border-radius:50%;background:var(--muted);
-animation:blink 1.2s infinite}.thinking span:nth-child(2){animation-delay:.2s}.thinking span:nth-child(3){animation-delay:.4s}
-@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-.composer{position:sticky;bottom:0;padding:14px 0 18px;background:linear-gradient(transparent,var(--bg) 28%)}
-.composer .box{padding:10px;border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:var(--shadow)}
-.composer textarea{min-height:44px;max-height:220px;border:0;box-shadow:none;resize:none;padding:6px 8px}
-.composer textarea:focus{box-shadow:none}.composer .row{justify-content:space-between}
-.composer select{width:auto;padding:5px 8px;font-size:12.5px}
-#tasks{position:sticky;top:64px;z-index:3}.task{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;margin:0 0 8px;
-border:1px solid var(--line);border-radius:12px;background:var(--card);font-size:13px}
-.task.waiting{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
-.task form{flex-basis:100%}.task input{max-width:320px}
-.prompts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:18px}
-.prompts button{text-align:left;font-weight:500;padding:12px 14px}
-@media (max-width:860px){.chat{grid-template-columns:1fr}.chats{position:static;max-height:none}}
-.start{padding:12px 16px;border-radius:12px;margin-bottom:16px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}.start ol{margin:6px 0 6px;padding-left:22px}.start li{margin:2px 0;color:var(--muted)}.start li.next{color:var(--text);font-weight:600}
-@media (max-width:1200px){header nav a{padding:6px 7px}.brand{margin-right:6px}}
-@media (max-width:640px){.card table{display:block;overflow-x:auto}select{max-width:100%}
-header{position:static;flex-wrap:wrap;padding:8px 12px}header nav{flex-wrap:nowrap;overflow-x:auto;max-width:100%}
-header nav a{white-space:nowrap}
-table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:auto!important}
-table.stack td:last-child{padding-top:0}}
-.person{border-top:1px solid var(--line);padding:16px 0 4px}.person:first-of-type{border-top:0;padding-top:4px}
-.person .draft{display:grid;gap:8px;margin:10px 0}.person .draft label{font-size:12px;color:var(--muted);font-weight:600}
-.person textarea.short{min-height:60px}.person .sent{color:var(--good);font-weight:600}
-.strip{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}.strip a{display:flex;flex-direction:column;padding:8px 11px;
-border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:12.5px;font-weight:600;min-width:96px}
-.strip a span{font-weight:500;color:var(--muted);font-size:11.5px}.strip a:hover{text-decoration:none;border-color:var(--accent)}
-.strip a.who-code{border-top:3px solid var(--good)}.strip a.who-model,.strip a.who-agent{border-top:3px solid var(--accent)}
-.strip a.who-you{border-top:3px solid var(--warn)}.strip a.ok{border-top:3px solid var(--good)}.strip a.caught{border-top:3px solid var(--warn)}.strip a.stopped{border-top:3px solid var(--bad)}
-.tl{list-style:none;margin:0;padding:0}.tl .tl{margin:6px 0 0 14px;padding-left:12px;border-left:2px solid var(--line)}
-.tl li{margin:0 0 8px}.tl .head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
-.tl .head b{font-size:14px}.tl .when{margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}
-.ev{font-size:13px;padding:5px 10px;border-radius:9px;background:var(--soft)}
-.ev.pass{background:var(--good-soft)}.ev.caught{background:var(--warn-soft)}.ev.err{background:var(--bad-soft)}
-.ev .tag{font-weight:700;margin-right:6px}.ev.pass .tag{color:var(--good)}.ev.caught .tag{color:var(--warn)}
-.ev.model .tag{color:var(--accent)}.raw{display:none}.show-raw .raw{display:block}.raw pre{max-height:360px;margin:6px 0}
-.only-checks .tl li.plain{display:none}.only-checks .tl li.step>.head{opacity:.6}
-.totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 16px}
-.totals div{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
-.totals b{display:block;font-size:20px}.totals span{font-size:12px;color:var(--muted)}
-.save{position:sticky;bottom:0;display:flex;gap:12px;align-items:center;padding:12px 0 2px;background:var(--card)}
-tr[id^="a-"]{scroll-margin-top:84px}tr[id^="a-"]:target td{background:var(--warn-soft)}
-button.quiet{font-weight:500;color:var(--muted);border-color:transparent;background:transparent}
-button.quiet:hover{color:var(--text);border-color:var(--line)}
-.diff .add{background:color-mix(in srgb,var(--good) 18%,transparent)}
-.diff .del{background:color-mix(in srgb,var(--bad) 18%,transparent);text-decoration:line-through}
-"""
 
 
 # Hosted only: the class platform refuses plain form posts as cross-origin but
@@ -278,6 +106,7 @@ class Dashboard:
         self.model = settings.model
         self.plan = llm.plan() if llm else {}  # Task -> (model, effort)
         self._missing: bool | None = None  # Tests set llm_missing directly.
+        self.tray_seen = 0  # Failed tasks up to this id are hidden from the tray ("Hide failures").
         self.chats = ChatStore(DB_PATH)
         self.chats.recover()
         self.turns = Turns(self.chats, self.tracker, settings, lambda: self.ensure_worker())
@@ -324,15 +153,19 @@ NAV = [("/", "Today"), ("/assistant", "Assistant"), ("/search", "Search"), ("/jo
        ("/resumes", "Resumes"), ("/profile", "Profile"), ("/activity", "Activity"), ("/how", "How it works")]
 
 
-def labeler(answers: list[dict]):
-    """A question's label, told apart from others with the same wording by its choices
-    (a form once asked "select the combination that matches your results" four times)."""
+def labeler(items: list[dict], profile: dict | None = None):
+    """A question's label, told apart from others with the same wording: an education row by the
+    degree it's for, others by their choices (a form once asked "select the combination that
+    matches your results" four times)."""
     from collections import Counter
 
-    counts = Counter(a["label"] for a in answers)
+    counts = Counter(a["label"] for a in items)
     seen = Counter()
 
     def label(a: dict) -> str:
+        degree = answers.education_row(a, profile or {})
+        if degree:
+            return f'{a["label"]} · {degree}'
         if counts[a["label"]] < 2:
             return a["label"]
         options = a.get("options") or []
@@ -356,6 +189,12 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     title = title or dict(NAV).get(active, "")
     chip = (f'<a class="chip" href="/connect"><span class="dot {"off" if app.llm_missing else "on"}"></span>'
             f'{esc(app.connection)}</a>')
+    steps = setup_steps(app)
+    if not steps[-1]["done"]:  # Until your first application, the way back to Get started,
+        # beside the connection as a dot only (it's a step there), so the header stays one line.
+        chip = (f'<a class="chip start-chip" href="/setup">Getting started {sum(s["done"] for s in steps)}/'
+                f'{len(steps)}</a><a class="chip" href="/connect" title="{esc(app.connection)}"><span class="dot '
+                f'{"off" if app.llm_missing else "on"}"></span></a>')
     # A page with work running updates itself in place (live.js), never by reloading.
     live = ' data-live' if refresh else ""
     banner = hosted_banner() if config.HOSTED else ""
@@ -367,70 +206,24 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=referrer content=same-origin><meta name=viewport "
             f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
             f"<title>{esc(title + ' · ' if title else '')}Job Agent</title><style>{FIRST_PAINT}</style>"
-            f"<link rel=stylesheet href=/style.css>{SCRIPT if config.HOSTED else ''}</head><body{live}><header>"
+            f"<link rel=stylesheet href=/style.css>{SCRIPT if config.HOSTED else ''}</head>"
+            f"<body{live}{' class=chat' if active == '/assistant' else ''}><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
-            f"<main>{banner}{note}{body}</main><script src=/live.js></script></body></html>").encode()
+            f"<main>{banner}{note}{body}</main>{tray(app)}<script src=/live.js></script></body></html>").encode()
 
 
 # The page's background before the stylesheet arrives, so moving between pages never flashes white.
 FIRST_PAINT = "html{background:#f6f7fb}@media (prefers-color-scheme:dark){html{background:#0b0d14}}"
 
-LIVE_JS = r"""// Pages with work running update in place: no reload, no flash, scroll and open sections kept.
-(() => {
-  if (!document.body.hasAttribute("data-live")) return;
-  const tick = async () => {
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
-    if (!typing && !document.hidden) {
-      try {
-        const html = await (await fetch(location.href, {cache: "no-store"})).text();
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const fresh = doc.querySelector("main"), now = document.querySelector("main");
-        if (fresh && now && fresh.innerHTML !== now.innerHTML) {
-          const open = [...now.querySelectorAll("details")].map((d) => d.open);
-          now.innerHTML = fresh.innerHTML;
-          now.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true; });
-          // Scripts in the page (toggles, copy buttons) bind to the new content again.
-          now.querySelectorAll("script[src]").forEach((old) => {
-            const s = document.createElement("script"); s.src = old.src; old.replaceWith(s);
-          });
-        }
-        if (!doc.body.hasAttribute("data-live")) return;  // Nothing running any more.
-      } catch (_) { /* The next tick tries again. */ }
-    }
-    setTimeout(tick, 2500);
-  };
-  setTimeout(tick, 2500);
-})();"""
 
 
 def start_here(app: Dashboard, active: str) -> str:
-    """First-run guidance: a model, then a resume and the jobs you want."""
-    parts = []
-    if app.llm_missing and active != "/connect":
+    """A warning on every page when no model is connected (Get started has its own step for it)."""
+    if app.llm_missing and active not in ("/connect", "/setup"):
         how = ("The class models aren't available this visit." if config.HOSTED else
                'Set <code>OPENROUTER_API_KEY</code> and <code>OPENROUTER_MODEL</code> in <code>.env</code> and restart.')
-        parts.append(f'<div class="flash bad"><b>No model connected.</b> {how} '
-                     '<a href="/connect">Details</a>.</div>')
-    try:
-        prefs = config.load_profile().get("preferences") or {}
-    except SystemExit:  # No profile yet.
-        prefs = {}
-    steps = [
-        (not app.llm_missing, '<a href="/connect">Connect a model</a>'),
-        ((config.PROFILE_DIR / "resume.md").exists(),
-         '<a href="/resumes">Add your resume</a> (PDFs are merged into one master resume you review)'),
-        (bool(prefs.get("description") or prefs.get("roles")),
-         'Say what you want on <a href="/search">Search</a>: roles, places, season'),
-        (bool(app.tracker.status_counts()), 'Find jobs: <b>Refresh job lists</b> on <a href="/">Today</a>'),
-    ]
-    if not all(done for done, _ in steps) and active not in ("/resumes", "/connect"):
-        nxt = next(i for i, (done, _) in enumerate(steps) if not done)
-        items = "".join(f'<li{" class=next" if i == nxt else ""}>{"✓ " if done else ""}{text}</li>'
-                        for i, (done, text) in enumerate(steps))
-        parts.append('<div class=start><b>Start here</b><ol>' + items + '</ol>'
-                     '<span class=muted>Optional: import the applications you already sent on '
-                     '<a href="/applications">Applications</a>, so they\'re never prepared again.</span></div>')
-    return "".join(parts)
+        return f'<div class="flash bad"><b>No model connected.</b> {how} <a href="/connect">Details</a>.</div>'
+    return ""
 
 
 def hosted_banner() -> str:
@@ -512,6 +305,14 @@ def form(app: Dashboard, action: str, button: str, fields: dict | None = None,
 
 def page_connect(app: Dashboard, flash: str) -> bytes:
     """Which model the app uses: the class broker's on the app store, OpenRouter on a laptop."""
+    body = f"""<h1>Model</h1><div class=card>{connect_state(app)}<p class=muted style="margin:0">One model does
+    every step: ranking, fit checks, tailored resumes, cover letters, answers, the agents and the assistant chat.</p>
+    </div>"""
+    return layout(app, "/connect", body, flash)
+
+
+def connect_state(app: Dashboard, back: str = "") -> str:
+    """The model connection, for the Model page and Get started's first step (nothing to sign in to)."""
     model = esc(app.model.split(",")[0]) if app.model else ""
     if app.backend == "Broker":
         state = (f'<h2><span class="dot on" style="display:inline-block;margin-right:8px"></span>Class models: '
@@ -533,14 +334,13 @@ def page_connect(app: Dashboard, flash: str) -> bytes:
         state = ('<h2><span class="dot off" style="display:inline-block;margin-right:8px"></span>No model '
                  'connected</h2><p class=muted>Put <code>OPENROUTER_API_KEY</code> and <code>OPENROUTER_MODEL</code> '
                  'in <code>.env</code> (see <code>.env.example</code>) and restart.</p>')
-    body = f"""<h1>Model</h1><div class=card>{state}<p class=muted style="margin:0">One model does every step:
-    ranking, fit checks, tailored resumes, cover letters, answers, the agents and the assistant chat.</p></div>"""
-    return layout(app, "/connect", body, flash)
+    return state
+
 
 # What each background task is, in words (tasks are stored by kind).
 TASK_NAMES = {
     "refresh": "Refresh job lists", "discover": "Discover companies", "score_matches": "Rank jobs",
-    "prepare": "Prepare", "draft": "Draft missing answers", "render": "Typeset again", "letter": "Write a cover letter",
+    "prepare": "Prepare", "link": "Prepare from a link", "draft": "Draft missing answers", "render": "Typeset again", "letter": "Write a cover letter",
     "people": "Find people to contact", "redraft": "Redraft messages", "submit": "Submit",
     "first_read": "Hiring manager's first read",
     "sync_profile": "Update profile from resume", "merge_resumes": "Merge resumes", "import_resume": "Read a resume PDF", "warmup": "Prepare resume typesetting",
@@ -550,6 +350,79 @@ TASK_NAMES = {
 def quiet_task(task: dict) -> bool:
     """Background housekeeping you needn't see unless it failed (the session's typesetting warm-up)."""
     return task["kind"] == "warmup" and task["status"] != "failed"
+
+
+# A failed task's error, said plainly, with what to do about it: (pattern, what happened, what to do).
+ERRORS = [
+    (r"No (Claude|model) connection|not signed in|log ?in|auth", "The model isn't connected.",
+     "Check the Model page, then try again."),
+    (r"spending cap|SPEND_CAP", "This run reached its spending cap.", "Raise SPEND_CAP_USD or try again later."),
+    (r"usage limit|rate.?limit|\b429\b|Too Many Requests|overloaded",
+     "The model or the site is limiting requests for now.", "Wait a few minutes, then try again."),
+    (r"net::ERR_|network problem|timed? ?out|Timeout|connection|socket",
+     "A network problem on the way to the site.", "Trying again is safe; it usually works the second time."),
+    (r"Couldn't read (this posting|a job posting)|signed in", "The posting couldn't be read.",
+     "Open the posting yourself to check it's still up."),
+]
+
+
+def plain_error(text: str) -> tuple[str, str]:
+    """(what happened, what to do) for a task's error text."""
+    text = re.sub(r"^\w+(Error|Exception|Exit): ", "", (text or "").strip()).split("\n")[0]
+    for pattern, happened, todo in ERRORS:
+        if re.search(pattern, text, re.I):
+            return happened, todo
+    return (text[:200] or "It stopped without saying why."), "Try again; if it fails the same way, open Activity."
+
+
+def task_line(app: Dashboard, task: dict, tasks: list[dict]) -> str:
+    """One background task in words: what it is, what it's on, and where it's got to."""
+    from .worker import OWN_LANE
+
+    about = app.tracker.get(task["job_id"]) if task["job_id"] else None
+    name = TASK_NAMES.get(task["kind"], task["kind"])
+    on = (f' · <a href="/job/{about["id"]}">{esc(about["title"][:50])}</a>' if about else "")
+    if task["status"] == "waiting":
+        where = '<a href="/">answer its question on Today</a>'
+    elif task["status"] == "queued":
+        ahead = sum(t["status"] in ("queued", "running") and t["id"] < task["id"] and t["kind"] not in OWN_LANE
+                    for t in tasks)
+        where = ("starts alongside other work" if task["kind"] in OWN_LANE else
+                 f"waiting for {ahead} task(s) ahead" if ahead else "starting")
+    elif task["kind"] in PREPARES and about:
+        state = prepare_progress(app, about["id"]) or {}
+        where = f'{state["current"]["name"].lower()}…' if state.get("current") else "starting…"
+    else:
+        where = esc((task["result"] or "running…")[:80])
+    return f'<li><span class=spin></span><b>{esc(name)}</b>{on} <span class=muted>· {where}</span></li>'
+
+
+def tray(app: Dashboard) -> str:
+    """Background work on every page: what's running, what's waiting, and what failed lately."""
+    from . import worker
+
+    tasks = app.tracker.tasks(40)
+    active = [t for t in tasks if t["status"] in ("queued", "running", "stopping", "waiting") and not quiet_task(t)]
+    since = utc_days_ago(2 / 24)
+    failed = [t for t in tasks if t["status"] == "failed" and t["updated_at"] >= since and t["id"] > app.tray_seen]
+    if not active and not failed:
+        return '<div id=tray hidden></div>'
+    items = [task_line(app, t, tasks) for t in reversed(active)]
+    for task in failed[:3]:
+        about = app.tracker.get(task["job_id"]) if task["job_id"] else None
+        happened, todo = plain_error(task["result"] or "")
+        link = f' <a href="/job/{about["id"]}">Open the job</a>' if about else ""
+        items.append(f'<li class=bad><b>{esc(TASK_NAMES.get(task["kind"], task["kind"]))} failed:</b> '
+                     f'{esc(happened)} <span class=muted>{esc(todo)}</span>{link}</li>')
+    stalled = any(t["status"] == "queued" for t in active) and not worker.running()
+    if stalled:
+        items.append('<li class=bad><b>Background work isn\'t running,</b> so queued tasks can\'t start. '
+                     + form(app, "/start-worker", "Start it") + '</li>')
+    clear = form(app, "/tray/clear", "Hide failures") if failed else ""
+    head = (f'{len(active)} running or waiting' if active else "Recent problems") + (
+        f' · {len(failed)} failed' if failed and active else "")
+    return (f'<div id=tray{" data-active" if active else ""}><details open><summary><b>Background work</b> '
+            f'<span class=muted>{head}</span></summary><ul>{"".join(items)}</ul>{clear}</details></div>')
 
 
 def waiting_on_you(app: Dashboard) -> list[dict]:
@@ -562,6 +435,215 @@ def waiting_on_you(app: Dashboard) -> list[dict]:
     return out
 
 
+# ----- getting started --------------------------------------------------------
+
+# How long the waits take, from real runs: reading a resume PDF, reading every company's job
+# list, and preparing one application.
+TAKES = {"resume": "under 2 minutes", "refresh": "2 to 6 minutes", "prepare": "a minute or two"}
+STARTED = ("prepared", "needs_you", "approved", "submitting", "submitted")  # An application exists.
+SETUP_SKIPPED = "setup-skipped"  # Files in data/: you chose to skip Get started,
+REVIEW_SEEN = "first-review-seen"  # and you've read the note on your first application.
+
+
+# Get started, in order (the demo command prints them too).
+SETUP_STEPS = (("connect", "Connect a model"), ("resume", "Add your resume"), ("wants", "Say what you want"),
+               ("first", "Get your first application"))
+
+
+def setup_steps(app: Dashboard) -> list[dict]:
+    """The steps to your first application, each done or not, worked out from what you've done."""
+    try:
+        prefs = config.load_profile().get("preferences") or {}
+    except SystemExit:  # No profile yet.
+        prefs = {}
+    done = {"connect": not app.llm_missing, "resume": (config.PROFILE_DIR / "resume.md").exists(),
+            "wants": bool(prefs.get("description") or prefs.get("roles")),
+            "first": bool(app.tracker.with_status(*STARTED))}
+    return [{"key": key, "title": title, "done": done[key]} for key, title in SETUP_STEPS]
+
+
+def setup_open(app: Dashboard) -> bool:
+    """Today shows Get started instead until your first application, unless you skipped it."""
+    return not setup_steps(app)[-1]["done"] and not (config.DATA_DIR / SETUP_SKIPPED).exists()
+
+
+def upload_form(app: Dashboard, back: str = "") -> str:
+    """Resume PDFs, dropped anywhere on the box or chosen. Kept as you left it while the page updates."""
+    fields = f'<input type=hidden name=next value="{esc(back)}">' if back else ""
+    return (f'<form method=post action="/resumes/upload" enctype="multipart/form-data" id=upload data-keep>'
+            f'<input type=hidden name=token value="{app.token}">{fields}'
+            f'<label class=dropzone><input type=file name=pdf accept="application/pdf,.pdf" multiple>'
+            f'<b>Drop your resume PDF here</b> <span class=muted>or click to choose. Several versions are fine: '
+            f'they\'re merged into one.</span><span class=picked></span></label>'
+            f'<div class=row style="margin-top:10px"><button class=primary>Upload and read</button></div></form>')
+
+
+def resume_step(app: Dashboard, busy: set) -> str:
+    if busy & {"import_resume", "merge_resumes"}:
+        return (f'<p><span class=spin></span> Reading your resume. Usually {TAKES["resume"]}. '
+                f'<b>Meanwhile, tell us what you want below.</b></p>')
+    proposal = resumes.proposal()
+    if not proposal:
+        return (upload_form(app, "/setup") + '<p class=muted style="margin:10px 0 0">It\'s read with its wording '
+                'kept and becomes your master resume: each application gets a tailored cut of it, never invented '
+                'lines. No PDF? <a href="/resumes">Write it on Resumes</a> instead.</p>')
+    lines = [line.strip() for line in proposal["markdown"].splitlines() if line.strip()]
+    name = next((line[2:] for line in lines if line.startswith("# ")), "")
+    contact = lines[lines.index("# " + name) + 1] if name and lines.index("# " + name) + 1 < len(lines) else ""
+    contact = "" if contact.startswith("#") else contact
+    sections = [line[3:] for line in lines if line.startswith("## ")]
+    roles = sum(line.startswith("### ") for line in lines)
+    checks = proposal["checks"]
+    flagged = any(checks.get(k) for k in ("invented_numbers", "unknown_words", "left_out")) or proposal.get("possible")
+    look = ('<div class="flash warn" style="margin:10px 0 0">A few lines need a look before you accept: '
+            '<a href="/resumes">see them on Resumes</a>.</div>' if flagged else "")
+    return (f'<p>Here\'s what was read. <b>Is this you?</b></p><div class=whoami><b>{esc(name or "No name found")}</b>'
+            f'<div>{esc(contact)}</div><div class=muted>{len(sections)} sections ({esc(", ".join(sections[:6]))}), '
+            f'{roles} roles or projects</div></div>{look}'
+            f'<div class=row style="margin-top:12px">{form(app, "/resumes/accept", "Yes, use this", {"next": "/setup"}, True)}'
+            f'<a class=button href="/resumes">Read all of it first</a></div>'
+            f'<p class=muted style="margin:8px 0 0">Your name, contact details and school are read from it for the '
+            f'forms; you can edit anything later on Resumes and Profile.</p>')
+
+
+def wants_step(app: Dashboard) -> str:
+    prefs = config.load_profile().get("preferences") or {}
+    types = prefs.get("job_types") or ["internship", "full_time"]
+    boxes = "".join(f'<label class=row style="gap:6px"><input type=checkbox name=job_types value="{t}"'
+                    f'{" checked" if t in types else ""}> {label}</label>'
+                    for t, label in (("internship", "Internships"), ("full_time", "Full-time")))
+    places = [p for p in prefs.get("locations") or [] if p.lower() != "any"]
+    auth = config.load_profile().get("work_authorization") or {}
+    if "authorized_in_us" in auth:
+        status = f'<p class=muted style="margin:12px 0 0">Work authorization: {esc(auth.get("rule") or "set")}.</p>'
+    else:
+        options = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in actions.AUTHORIZATION.items())
+        status = (f'<p style="margin:12px 0 4px"><b>Your work authorization</b> <span class=muted>(nearly every form '
+                  f'asks; answered from this by fixed rules, never guessed)</span></p><select name=authorization '
+                  f'style="width:auto"><option value="">Not listed: I\'ll set it on Profile</option>{options}</select>')
+    return (f'<form method=post action="/setup/wants" id=wants data-keep><input type=hidden name=token value="{app.token}">'
+            f'<p style="margin:0 0 4px"><b>What are you looking for?</b> <span class=muted>(in your own words: roles, '
+            f'fields, kinds of teams; anything that makes a job right or wrong for you)</span></p>'
+            f'<textarea name=description required style="min-height:100px" placeholder="e.g. Software or ML '
+            f'engineering internships for summer 2027, ideally at product companies. Not interested in sales.">'
+            f'{esc(prefs.get("description", ""))}</textarea>'
+            f'<div class=row style="gap:18px;margin-top:10px">{boxes}</div>'
+            f'<p style="margin:12px 0 4px"><b>Where?</b> <span class=muted>(one per line; "Remote" for remote in the '
+            f'US; empty for anywhere)</span></p><textarea name=locations style="min-height:60px" placeholder="New York, '
+            f'NY&#10;Remote">{esc(chr(10).join(places))}</textarea>'
+            f'<p style="margin:12px 0 4px"><b>Internship season</b> <span class=muted>(e.g. Summer 2027; empty for '
+            f'any)</span></p><input type=text name=terms value="{esc(", ".join(prefs.get("terms") or []))}">'
+            f'{status}<div class=row style="margin-top:14px"><button class=primary>Save and find jobs</button>'
+            f'<span class=muted>Everything else has sensible defaults; fine-tune it later on '
+            f'<a href="/search">Search</a>.</span></div></form>')
+
+
+def first_step(app: Dashboard, busy: set, tasks: list[dict]) -> str:
+    paste = (f'<h3>Have a job in mind?</h3><form method=post action="/link" class=row>'
+             f'<input type=hidden name=token value="{app.token}"><input type=url name=url required '
+             f'placeholder="Paste its link, e.g. https://jobs.lever.co/…" style="flex:1;min-width:240px">'
+             f'<button class=primary>Prepare this job</button></form>')
+    preparing = next((t for t in tasks if t["kind"] in PREPARES and t["status"] in ("queued", "running", "stopping")),
+                     None)
+    if preparing:
+        job = app.tracker.get(preparing["job_id"]) or {}
+        named = f'{esc(job.get("title", "the job"))} at {esc(job.get("company", ""))}'
+        return (f'<p><span class=spin></span> Preparing <a href="/job/{preparing["job_id"]}">{named}</a>. Usually '
+                f'{TAKES["prepare"]}: it reads the posting, checks your fit, tailors your resume, writes the cover '
+                f'letter and answers, and fills in the form, stopping before submit. '
+                f'<a href="/job/{preparing["job_id"]}">Watch each step on its page.</a></p>')
+    # A pick that couldn't go ahead (set aside once its posting was read): say why, and offer the next.
+    since = utc_days_ago(2 / 24)
+    tried = [app.tracker.get(t["job_id"]) for t in tasks
+             if t["kind"] in PREPARES and t["status"] == "done" and t["updated_at"] >= since]
+    stopped = next((j for j in tried if j and j["status"] in NOT_PREPARED), None)
+    note = (f'<div class="flash warn">Your pick, <a href="/job/{stopped["id"]}">{esc(stopped["title"])} at '
+            f'{esc(stopped["company"])}</a>, was {say(stopped["status"]).lower()}: {esc(stopped["reason"] or "")} '
+            f'That\'s found only once the whole posting is read. Pick another below.</div>' if stopped else "")
+    found = app.tracker.with_status("found")
+    ranked = [j for j in found if matching.ranking_score(j)[1] != "keyword"]
+    if not ranked and busy & {"refresh", "score_matches"}:
+        find = (f'<p><span class=spin></span> {"Ranking the jobs found against what you want" if "score_matches" in busy else "Reading the job lists for your search"}. '
+                f'Your first matches usually show in under a minute. You can paste a link above meanwhile.</p>')
+    elif found:
+        picks, _ = actions.top_picks(app.tracker, app.settings, 5)
+        rows = []
+        for job in picks:
+            score, kind = matching.ranking_score(job)
+            badge = (f'<span class="score {"b-high" if score >= 80 else "b-mid" if score >= 60 else "b-low"}">{score}'
+                     f'</span>' if score is not None and kind != "keyword" else '<span class=muted>—</span>')
+            rows.append(f'<tr><td>{badge}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a><div class=muted>'
+                        f'{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
+                        f'<td>{form(app, "/prepare", "Prepare this one", {"job_id": job["id"]})}</td></tr>')
+        more = (f' <span class=spin></span> Still reading company job boards ({TAKES["refresh"]} in all): more '
+                f'matches join as they\'re found.' if busy & {"refresh", "score_matches"} else "")
+        find = (f'<p class=muted>Your best matches so far, one per company. Pick one to start: it takes '
+                f'{TAKES["prepare"]}, and you can prepare more later from <a href="/jobs">Ranked jobs</a>.{more}</p>'
+                f'<table><tr><th>Match</th><th>Job</th><th></th></tr>{"".join(rows)}</table>')
+    elif app.tracker.all():
+        find = ('<p>None of the jobs read passed your search. Widen the places or season above (or on '
+                '<a href="/search">Search</a>), then look again.</p>'
+                + form(app, "/setup/find", "Look again"))
+    else:
+        find = (f'<p class=muted>Reads the job lists of thousands of companies ({TAKES["refresh"]}), then ranks them '
+                f'against what you want.</p>' + form(app, "/setup/find", "Find my matches", primary=True))
+    return f'{paste}<h3 style="margin-top:18px">Or let Job Agent find matches</h3>{note}{find}'
+
+
+def page_setup(app: Dashboard, flash: str) -> bytes:
+    """Get started: the steps to a first application, each done right here, one opening the next."""
+    steps = setup_steps(app)
+    tasks = app.tracker.tasks(30)
+    busy = {t["kind"] for t in tasks if t["status"] in ("queued", "running", "stopping")}
+    cards, blocked = [], False
+    for n, step in enumerate(steps, 1):
+        key = step["key"]
+        if key == "first" and not all(s["done"] for s in steps[:-1]):
+            blocked = True  # Preparing needs your resume and what you want.
+        if step["done"]:
+            summary = {"connect": esc(app.connection), "resume": 'Saved. <a href="/resumes">Edit it</a>',
+                       "wants": 'Saved. <a href="/search">Fine-tune your search</a>',
+                       "first": "Done."}[key]
+            cards.append(f'<div class="card step done"><h2><span class=num>✓</span>{step["title"]} '
+                         f'<span class=muted>· {summary}</span></h2></div>')
+            continue
+        if blocked:
+            cards.append(f'<div class="card step locked"><h2><span class=num>{n}</span>{step["title"]}</h2></div>')
+            continue
+        body = {"connect": lambda: connect_state(app, "/setup"), "resume": lambda: resume_step(app, busy),
+                "wants": lambda: wants_step(app), "first": lambda: first_step(app, busy, tasks)}[key]()
+        cards.append(f'<div class="card step open" id=step-{key}><h2><span class=num>{n}</span>{step["title"]}</h2>'
+                     f'{body}</div>')
+        # A resume being read, or waiting for your yes, needn't hold up the next step.
+        blocked = not (key == "resume" and (busy & {"import_resume", "merge_resumes"} or resumes.proposal()))
+    done = sum(s["done"] for s in steps)
+    skip = ("" if (config.DATA_DIR / SETUP_SKIPPED).exists() else
+            form(app, "/setup/skip", "Skip, show me everything"))
+    body = (f'<div class=row style="justify-content:space-between"><h1>Get started</h1>{quiet(skip)}</div>'
+            f'<p class=muted style="margin-top:-6px">{done} of {len(steps)} done. Four steps to your first '
+            f'application, about 5 minutes. Nothing is ever sent without you.</p>'
+            f'<div class=progress><span style="width:{done * 100 // len(steps)}%"></span></div>{"".join(cards)}')
+    return layout(app, "/setup", body, flash, refresh=bool(busy), title="Get started")
+
+
+def first_review_note(app: Dashboard, job: dict) -> str:
+    """On your first application, once: what to check before approving, and what approving does."""
+    if (job["status"] not in ("prepared", "needs_you") or (config.DATA_DIR / REVIEW_SEEN).exists()
+            or app.tracker.with_status("approved", "submitting", "submitted")):
+        return ""
+    return (f'<div class="card first-review"><h2>Your first application is ready. Here\'s what to check</h2><ol>'
+            f'<li><b>The Application tab</b>: first the questions only you can answer (Job Agent never guesses a '
+            f'fact about you), then the answers the model wrote in your name. Read those; the rest came from '
+            f'what you\'ve already told it.</li>'
+            f'<li><b>The tailored resume</b>, and the cover letter when the form has a place for one (the PDF '
+            f'buttons): every line comes from your master resume, but read them as the hiring manager would.</li>'
+            f'<li><b>The Review tab</b>: how to apply, and a hiring manager\'s quick first read.</li></ol>'
+            f'<p style="margin:0">Happy with it? <b>Approve</b> it. Approving doesn\'t send anything: you submit '
+            f'approved applications from the <a href="/queue">Approval queue</a>, and you can watch the form being '
+            f'filled in Chrome.</p><div class=row style="margin-top:10px">'
+            f'{form(app, "/setup/review-seen", "Got it", {"job_id": job["id"]})}</div></div>')
+
+
 def page_today(app: Dashboard, flash: str) -> bytes:
     jobs = app.tracker.all()
     counts = {s: 0 for s in ORDER}
@@ -570,7 +652,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     counts["needs_you"] = len(waiting_on_you(app))  # Incl. prepared packets with blank required answers.
     stats = "".join(f'<a class="stat st-{s}" href="{"/queue" if s == "needs_you" else f"/jobs?status={s}"}" '
                     'style="text-decoration:none;color:inherit">'
-                    f'<b>{counts[s]}</b><span class="muted">{s.replace("_", " ")}</span></a>'
+                    f'<b>{counts[s]}</b><span class="muted">{say(s)}</span></a>'
                     for s in ("found", "prepared", "needs_you", "approved", "submitted", "filtered_out")
                     if s in counts)
     tasks = [t for t in app.tracker.tasks(12) if not quiet_task(t)]
@@ -595,15 +677,18 @@ def page_today(app: Dashboard, flash: str) -> bytes:
         job = (f'<br><a href="/job/{about["id"]}">{esc(about["title"])} at {esc(about["company"])}</a>'
                if about else "")
         result = (task["result"] or "")[:160]
+        if task["status"] == "failed":
+            result = " ".join(plain_error(task["result"] or ""))
         if task["kind"] == "prepare" and re.fullmatch(r"[a-z_]+", result):  # A status: say why,
             latest = about and about["id"] not in explained  # with the job's reason for its newest run only.
-            result = result.replace("_", " ") + (f": {about['reason']}" if latest and about["reason"] else "")
+            result = say(result) + (f": {about['reason']}" if latest and about["reason"] else "")
             explained.add(task["job_id"])
         rows.append(f'<tr><td>{task["id"]}</td><td>{esc(TASK_NAMES.get(task["kind"], task["kind"]))}{job}</td>'
-                    f'<td><span class="pill {esc(task["status"])}">{esc(task["status"])}</span>{reply}</td>'
+                    f'<td>{pill(task["status"])}{reply}</td>'
                     f'<td class="muted">{esc(result[:220])}</td></tr>')
     body = f"""
     <h1>Today</h1>
+    {link_card(app)}
     <div class="stats">{stats}</div>
     <div class="card" style="margin-top:16px"><div class="row">
       {form(app, "/refresh", "Refresh job lists", primary=True)}
@@ -612,6 +697,7 @@ def page_today(app: Dashboard, flash: str) -> bytes:
       <span class="muted">Submitted today: {app.tracker.submitted_today()} of {app.settings.daily_submit_limit}
       · model {esc(app.settings.model or "not set")}</span>
     </div></div>
+    {top_matches_card(app)}
     {outreach_card(app)}
     <div class="card"><h2>Ask the assistant</h2>
     <form method=get action="/assistant"><textarea name=q rows=2 required
@@ -623,6 +709,49 @@ def page_today(app: Dashboard, flash: str) -> bytes:
     {"".join(rows) or '<tr><td colspan=4 class=muted>Nothing yet. Refresh the job lists to start.</td></tr>'}
     </table></div>"""
     return layout(app, "/", body, flash, refresh=running)
+
+
+def link_card(app: Dashboard) -> str:
+    """Paste a job's link: the whole application is made for that one job."""
+    return (f'<div class="card link-card"><h2>Apply to a job you found</h2>'
+            f'<form method=post action="/link" class=row><input type=hidden name=token value="{app.token}">'
+            f'<input type=url name=url required placeholder="Paste a job posting link, e.g. https://jobs.lever.co/…" '
+            f'style="flex:1;min-width:240px"><button class=primary>Prepare this job</button></form>'
+            f'<p class=muted style="margin:8px 0 0">Job Agent reads the posting and checks how well you fit. If the fit '
+            f'is low it stops and asks you. Otherwise it tailors your resume, writes the cover letter and answers, '
+            f'fills in the application and stops before submitting, for you to review. Usually a few minutes; '
+            f'you can keep using the app meanwhile.</p></div>')
+
+
+def top_matches_card(app: Dashboard) -> str:
+    """When the latest "Prepare top matches" prepared nothing because every job scored under
+    your fit threshold: the closest ones, to prepare anyway."""
+    from .worker import TOP_PICK
+
+    since = utc_days_ago(RECENT_HOURS / 24)
+    batch = [t for t in app.tracker.tasks(60) if t["kind"] == "prepare" and (t["arg"] or "").startswith(TOP_PICK)
+             and t["updated_at"] >= since]
+    if not batch or any(t["status"] in ("queued", "running", "stopping") for t in batch):
+        return ""
+    jobs = {t["job_id"]: app.tracker.get(t["job_id"]) for t in batch}
+    jobs = [j for j in jobs.values() if j]
+    if any(j["status"] in ("prepared", "needs_you", "approved", "submitting", "submitted") for j in jobs):
+        return ""
+    low = sorted((j for j in jobs if actions.below_threshold(j)), key=lambda j: -(j["fit_score"] or 0))
+    if not low:
+        return ""
+    threshold = config.fit_threshold(config.load_profile(), app.settings)
+    rows = "".join(f'<tr><td><input type=checkbox name=ids value="{j["id"]}" checked></td>'
+                   f'<td><a href="/job/{j["id"]}">{esc(j["title"])}</a><div class=muted>{esc(j["company"])}</div></td>'
+                   f'<td><b>{j["fit_score"]}</b></td></tr>' for j in low)
+    return (f'<div class=card><h2>None of your top matches passed your fit threshold</h2>'
+            f'<p class=muted>Prepare top matches checked {len(jobs)} job(s); each scored under {threshold} after '
+            f'reading the whole posting. Open one to see why, or prepare the closest anyway: it reuses the fit '
+            f'check and writes the rest of the application, which you still review before anything is sent.</p>'
+            f'<form method=post action="/prepare-anyway-many"><input type=hidden name=token value="{app.token}">'
+            f'<table><tr><th></th><th>Job</th><th>Fit</th></tr>{rows}</table>'
+            f'<div class=row style="margin-top:10px"><button class=primary>Prepare these anyway</button>'
+            f'<a class=button href="/search">Change your threshold</a></div></form></div>')
 
 
 def outreach_card(app: Dashboard) -> str:
@@ -662,15 +791,16 @@ def page_queue(app: Dashboard, flash: str) -> bytes:
         rows.append(f'<tr><td>{box}</td><td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
                     f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:60])}</div></td>'
                     f'<td>{esc(job["fit_score"])}</td><td style="max-width:320px">{route}</td>'
-                    f'<td><span class="pill {job["status"]}">'
-                    f'{job["status"].replace("_", " ")}</span><div class=muted>{esc(job["reason"] or "")}</div></td></tr>')
+                    f'<td>{pill(job["status"])}<div class=muted>{esc(job["reason"] or "")}</div></td></tr>')
     approved = [j for j in app.tracker.with_status("approved")]
     send = (form(app, "/submit", f"Submit {len(approved)} approved", {"ids": ",".join(str(j["id"]) for j in approved)}, True)
             if approved else "")
     body = f"""<h1>Approval queue</h1>
     <form method=post action="/approve"><input type=hidden name=token value="{app.token}">
     <div class="card"><table><tr><th></th><th>Job</th><th>Fit</th><th>How to apply</th><th>Status</th></tr>
-    {"".join(rows) or '<tr><td colspan=5 class=muted>Nothing waiting. Prepare some jobs from Today or Jobs.</td></tr>'}
+    {"".join(rows) or '<tr><td colspan=5 class=muted>Nothing waiting for you. Prepared applications land here for '
+     'you to check and approve; nothing is sent until you do. Paste a job link on <a href="/">Today</a>, or press '
+     '<b>Prepare</b> on a job in <a href="/jobs">Ranked jobs</a>.</td></tr>'}
     </table><div class="row" style="margin-top:12px">{'<button class=primary>Approve selected</button>' if selectable else
     '<span class=muted>Nothing here can be approved yet: open a job and answer its open questions first.</span>' if rows
     else ""}</div></div></form>
@@ -692,8 +822,8 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
     counts = app.tracker.status_counts()
     # Tabs only for statuses that have jobs, each with its count.
     views = [("active", "To apply", sum(counts.get(s, 0) for s in ACTIVE)),
-             *[(s, s.replace("_", " "), counts[s]) for s in ORDER if s != "working" and counts.get(s)],
-             ("all", "all", sum(counts.values()))]
+             *[(s, say(s), counts[s]) for s in ORDER if counts.get(s)],
+             ("all", "All", sum(counts.values()))]
     keep = f"&q={quote(query)}" if query else ""
     tabs = "".join(f'<a class="tab{" on" if key == status else ""}" href="/jobs?status={key}{keep}">{name} '
                    f'<span class=muted>{n}</span></a>' for key, name, n in views)
@@ -721,7 +851,7 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
             act = (prepare_button(app, job) + " "
                    + quiet(form(app, "/skip", "Not interested", {"job_id": job["id"], "back": f"/jobs?status={status}{keep}&page={page}"})))
         elif job["status"] in ("failed", "rejected", "skipped", "closed", "filtered_out"):
-            act = form(app, "/requeue", "Back to found", {"job_id": job["id"]})
+            act = form(app, "/requeue", "Move back to New", {"job_id": job["id"]})
         else:
             act = f'<a href="/job/{job["id"]}">open</a>'
         below = score is not None and kind != "keyword" and score < threshold
@@ -731,11 +861,12 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
                  else '<span class=muted>—</span>')
         rows.append(f'<tr class="{"below" if below else ""}"><td>{badge}</td>'
                     f'<td><a href="/job/{job["id"]}">{esc(job["title"])}</a>'
-                    f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])}</div>'
+                    f'<div class=muted>{esc(job["company"])} · {esc((job["location"] or "")[:70])} · '
+                    f'<a href="{esc(job["url"])}" target=_blank rel=noopener>posting ↗</a></div>'
                     f'{f"<div class=src>{esc(why)}</div>" if why else ""}{route}{also_listed(others)}</td>'
                     f'<td class=muted style="white-space:nowrap">{esc((job["posted_at"] or "")[:10])}'
                     f'<div class=src>{esc(job["ats"] or "")}</div></td>'
-                    f'<td><span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span>'
+                    f'<td>{pill(job["status"])}'
                     f'<div class=muted>{esc((job["reason"] or "")[:120])}</div></td><td><div class=row>{act}</div></td></tr>')
     pager = ""
     if pages > 1:
@@ -771,7 +902,11 @@ def page_jobs(app: Dashboard, status: str, flash: str, query: str = "", page: in
     <input type=text name=q value="{esc(query)}" placeholder="Search title, company or location" style="max-width:420px">
     <button>Search</button>{'<a href="/jobs?status=' + esc(status) + '">Clear</a>' if query else ''}</form>
     <div class="card"><table><tr><th>Score</th><th>Job</th><th>Posted</th><th>Status</th><th></th></tr>
-    {"".join(rows) or '<tr><td colspan=5 class=muted>' + ('No jobs match “' + esc(query) + '”.' if query else 'None.') + '</td></tr>'}</table>
+    {"".join(rows) or '<tr><td colspan=5 class=muted>' + ('No jobs match “' + esc(query) + '”.' if query else
+     'None with this status.' if counts else
+     f'No jobs yet. Job Agent reads the job lists of thousands of companies ({TAKES["refresh"]}), keeps the ones '
+     f'that fit your <a href="/search">search</a>, and ranks them here, best first. '
+     + form(app, "/refresh", "Refresh job lists", primary=True)) + '</td></tr>'}</table>
     {pager}</div>"""
     return layout(app, "/jobs", body, flash, refresh=bool(refreshing) or preparing)
 
@@ -785,7 +920,7 @@ def recent_prepares(app: Dashboard) -> tuple[str, bool]:
     since = utc_days_ago(RECENT_HOURS / 24)
     seen, rows, running = set(), [], False
     for task in app.tracker.tasks(40):
-        if task["kind"] != "prepare" or task["job_id"] in seen or task["updated_at"] < since:
+        if task["kind"] not in PREPARES or task["job_id"] in seen or task["updated_at"] < since:
             continue
         seen.add(task["job_id"])
         job = app.tracker.get(task["job_id"])
@@ -797,10 +932,10 @@ def recent_prepares(app: Dashboard) -> tuple[str, bool]:
             state = prepare_progress(app, job["id"]) or {}
             now = ("queued" if "waiting" in state else
                    f'{state["current"]["name"]}…' if state.get("current") else "starting…")
-            outcome = (f'<span class="pill preparing">preparing</span> <span class=muted>{esc(now)} '
+            outcome = (f'{pill("preparing")} <span class=muted>{esc(now)} '
                        f'({len(state.get("done", []))} step(s) done)</span>')
         else:
-            outcome = (f'<span class="pill {esc(job["status"])}">{esc(job["status"].replace("_", " "))}</span> '
+            outcome = (f'{pill(job["status"])} '
                        f'<span class=muted>{esc((job["reason"] or "")[:140])}</span>')
             if actions.below_threshold(job):
                 outcome += " " + form(app, "/prepare-anyway", "Prepare anyway", {"job_id": job["id"]})
@@ -819,7 +954,7 @@ def also_listed(others: list[dict]) -> str:
         return ""
     places = sorted({(o["location"] or "").split(";")[0].strip() for o in others} - {""})
     items = "".join(f'<li><a href="/job/{o["id"]}">{esc(o["location"] or o["title"])}</a> '
-                    f'<span class=muted>· {esc((o["posted_at"] or "")[:10])} · {o["status"].replace("_", " ")}</span></li>'
+                    f'<span class=muted>· {esc((o["posted_at"] or "")[:10])} · {say(o["status"])}</span></li>'
                     for o in others)
     return (f'<details class=src><summary>Also listed {len(others)} more time{"s" if len(others) > 1 else ""}'
             f'{": " + esc(", ".join(places[:3])) if places else ""}</summary><ul style="margin:4px 0">{items}</ul></details>')
@@ -921,6 +1056,47 @@ def people_settings(prefs: dict) -> str:
     <select name=people_per_job style="width:auto">{options}</select></div>"""
 
 
+SETTLED = ("profile", "saved", "approved earlier", "you")  # Answers you already gave, filled in code.
+
+
+def answer_groups(answers: list[dict], shown, editable: bool) -> str:
+    """The answers, grouped by how much they need your eye. A long list of equals gets skimmed
+    and approved (automation bias), so what only you can answer and what the model wrote in
+    your name come first, open; what code filled from your own answers is folded away."""
+    def blank(a):
+        return a.get("value") in (None, "", [])
+
+    def asked_no_ai(a):  # Drafted anyway, as you chose; gone once the words are yours.
+        policy = a.get("ai_policy")
+        if not policy or not str(a["source"]).startswith("model"):
+            return ""
+        return (f'<div class=aiflag>⚑ {"This question" if policy["where"] == "question" else "This application"} '
+                f'says “{esc(policy["quote"])}” The model drafted it as you asked: rewrite it in your own words '
+                f'before approving.</div>')
+
+    def table(group):
+        return '<table class=stack>' + "".join(
+            f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
+            f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div>{asked_no_ai(a)}</td>'
+            f'<td style="width:50%">{answer_input(a, editable)}</td></tr>' for a in group) + '</table>'
+
+    groups = [
+        ([a for a in answers if blank(a) and a["required"]], True, "Needs you",
+         "Required, and nothing in your material answers them."),
+        ([a for a in answers if not blank(a) and a["source"] not in SETTLED], True, "Written by the model",
+         "These go to the employer in your name: read each one, and change anything that isn't how you'd say it."),
+        ([a for a in answers if not blank(a) and a["source"] in SETTLED], False, "From your profile and saved answers",
+         "Filled in code from what you've already told the app."),
+        ([a for a in answers if blank(a) and not a["required"]], False, "Optional, left blank",
+         "Nothing in your material answers these; the form accepts them empty."),
+    ]
+    return "".join(
+        (f'<h3 class=group>{title} <span class=muted>({len(group)})</span></h3><p class=muted>{hint}</p>{table(group)}'
+         if open_ else f'<details class=group><summary><b>{title}</b> <span class=muted>({len(group)})</span>'
+                       f'</summary><p class=muted>{hint}</p>{table(group)}</details>')
+        for group, open_, title, hint in groups if group)
+
+
 def answer_input(answer: dict, editable: bool) -> str:
     """One answer's field inside the packet's single answers form (named by its key)."""
     value = answer.get("value")
@@ -959,6 +1135,19 @@ def fit_card(fit: dict, flags: bool = False) -> str:
 NOT_PREPARED = {"filtered_out": "Set aside", "failed": "Preparing failed", "closed": "The posting has closed"}
 
 
+def description_card(job: dict, packet: dict | None = None, open_: bool = False) -> str:
+    """The posting as it was read (preparing reads it), folded; or where to read it."""
+    text = (packet or {}).get("description") or json.loads(job["details"] or "{}").get("description") or ""
+    link = (f'<a href="{esc(job["url"])}" target=_blank rel=noopener>Open the posting on '
+            f'{esc(urlsplit(job["url"]).hostname or "its site")} ↗</a>' if job["url"] else "")
+    if not text:
+        return (f'<div class=card><h2>Job description</h2><p class=muted style="margin:0">Not read yet: preparing '
+                f'reads it. {link}</p></div>')
+    return (f'<div class=card><details{" open" if open_ else ""}><summary><b>Job description</b> '
+            f'<span class=muted>({len(text.split()):,} words, as read when preparing)</span></summary>'
+            f'<div class=posting>{esc(text)}</div></details><p class=muted style="margin:8px 0 0">{link}</p></div>')
+
+
 def not_prepared_card(app: Dashboard, job: dict) -> str:
     """Why a job you asked for wasn't prepared, and what you can do about it."""
     if job["status"] not in NOT_PREPARED:
@@ -970,10 +1159,12 @@ def not_prepared_card(app: Dashboard, job: dict) -> str:
     if job["status"] == "failed" and job["url"]:  # Most often a page it couldn't read: you can.
         buttons.append(f'<a class="button primary" target=_blank rel=noopener href="{esc(job["url"])}">'
                        'Open the posting</a>')
-    buttons.append(form(app, "/requeue", "Back to found", {"job_id": job["id"]}))
+    buttons.append(form(app, "/requeue", "Move back to New", {"job_id": job["id"]}))
+    if not setup_steps(app)[-1]["done"]:  # Getting a first application: the next match is a click away.
+        buttons.insert(0, '<a class=button href="/setup#step-first">Pick another match</a>')
     hint = ("The fit check below is why: read it before deciding. Prepare anyway reuses it (no second fit "
             "check) and makes the rest of the packet." if actions.below_threshold(job) else
-            "Your filters are on the Search page; after changing one, Back to found puts the job up "
+            "Your filters are on the Search page; after changing one, Move back to New puts the job up "
             "for preparing again." if job["status"] == "filtered_out" else "")
     trail = (f' <a href="/job/{job["id"]}/trace">How it decided</a>' if trace.runs(job["id"]) else "")
     return (f'<div class="card" id=why><h2>{NOT_PREPARED[job["status"]]}</h2>'
@@ -1033,7 +1224,7 @@ def prepare_progress(app: Dashboard, job_id: int) -> dict | None:
     from .prepare import STEPS
 
     tasks = app.tracker.tasks(40)
-    task = next((t for t in tasks if t["kind"] == "prepare" and t["job_id"] == job_id
+    task = next((t for t in tasks if t["kind"] in PREPARES and t["job_id"] == job_id
                  and t["status"] in ("queued", "running", "stopping", "waiting")), None)
     if task is None:
         return None
@@ -1044,7 +1235,7 @@ def prepare_progress(app: Dashboard, job_id: int) -> dict | None:
                     for t in tasks)
         return {"waiting": ahead, "task": task["id"]}
     entries = trace.read(trace.runs(job_id)[0]) if trace.runs(job_id) else []
-    if not entries or entries[0].get("kind") != "prepare" or entries[-1]["type"] == "end_run":
+    if not entries or entries[0].get("kind") not in PREPARES or entries[-1]["type"] == "end_run":
         return {"done": [], "current": None, "next": list(STEPS), "seconds": 0, "task": task["id"]}
     steps = [n for n in trace.tree(entries)["root"]["children"] if n["type"] == "step"]
     done = [n for n in steps if n.get("done")]
@@ -1088,7 +1279,7 @@ def progress_card(app: Dashboard, job_id: int) -> str:
             f'job are skipped. <a href="/job/{job_id}/trace">Every model request and check</a>.</p>'
             f'<ul class=progress>{"".join(rows)}</ul>'
             f'<div class=row style="margin-top:8px">{stop}<span class=muted style="font-size:13px">Stops after the '
-            'step running now; the job goes back to found.</span></div></div>')
+            'step running now; the job goes back to New.</span></div></div>')
 
 
 def decision_bar(job: dict, packet: dict, advice: dict | None, blockers: int, needs: int) -> str:
@@ -1126,7 +1317,7 @@ def decision_bar(job: dict, packet: dict, advice: dict | None, blockers: int, ne
     elif job["status"] in ("prepared", "needs_you"):
         state = ("Ready to approve", "Every required answer is filled.", "ok")
     else:
-        state = (job["status"].replace("_", " ").capitalize(), job["reason"] or "", "")
+        state = (say(job["status"]), job["reason"] or "", "")
     tiles.append(tile("#t-application", "Application", state[0], state[1], state[2]))
     return f'<div class=decide>{"".join(tiles)}</div>'
 
@@ -1154,16 +1345,17 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
     if job is None:
         return layout(app, "/queue", "<h1>No such job</h1>")
     packet = packets.load(job)
-    head = (f'<h1>{esc(job["title"])}</h1><p class=muted>{esc(job["company"])} · {esc(job["location"])} · '
-            f'<a href="{esc(job["url"])}" target=_blank rel=noopener>posting</a> · '
-            f'<span class="pill {job["status"]}">{job["status"].replace("_", " ")}</span> '
+    where = " · ".join(esc(part) for part in (job["company"], job["location"]) if part)
+    head = (f'<h1>{esc(job["title"])}</h1><p class=muted>{where} · '
+            f'<a href="{esc(job["url"])}" target=_blank rel=noopener>open the posting ↗</a> · '
+            f'{pill(job["status"])} '
             # Said in full below for jobs that weren't prepared.
             f'{"" if packet is None and job["status"] in NOT_PREPARED else esc(job["reason"] or "")}</p>')
     if packet is None:
         details = json.loads(job["details"] or "{}")
         fit = details.get("fit")
         preparing = job["status"] == "preparing" or any(
-            t["kind"] == "prepare" and t["job_id"] == job_id and t["status"] in ("queued", "running", "stopping")
+            t["kind"] in PREPARES and t["job_id"] == job_id and t["status"] in ("queued", "running", "stopping")
             for t in app.tracker.tasks(30))
         note = ""
         if preparing:
@@ -1172,20 +1364,21 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
             note = (f'<div class=row style="margin:0 0 14px">{prepare_button(app, job, True)}<span class=muted>Not '
                     'prepared yet: reads the posting, checks your fit, then writes the application.</span></div>')
         elif job["status"] in ("rejected", "skipped"):
-            note = form(app, "/requeue", "Back to found", {"job_id": job_id}) + " "
+            note = form(app, "/requeue", "Move back to New", {"job_id": job_id}) + " "
         mark = (form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id})
                 if job["status"] in ("found", "filtered_out", "closed", "skipped", "failed", "rejected") else "")
         advice = strategy.Advisor(app.tracker, app.settings).advise(job)
         return layout(app, "/applications" if job["status"] == "submitted" else "/jobs",
                       head + note + ("" if preparing else not_prepared_card(app, job)) + route_card(advice)
-                      + application_block(app, job) + (fit_card(fit, flags=True) if fit else "") + mark,
+                      + application_block(app, job) + (fit_card(fit, flags=True) if fit else "")
+                      + description_card(job) + mark,
                       flash, refresh=preparing, title=f"{job['title']} at {job['company']}")
     editable = job["status"] in ("prepared", "approved", "needs_you")
     fit = packet["fit"]
     problems = packets.missing(packet)
     checks = packet["checks"]
     warn = []
-    shown = labeler(packet["answers"])
+    shown = labeler(packet["answers"], config.load_profile())
     needs = (f'<div class="flash warn"><b>{len(problems)} question(s) need your answer</b>'
              f'<ul style="margin:6px 0 0;padding-left:20px">'
              + "".join(f'<li><a href="#a-{esc(a["key"])}">{esc(shown(a))}</a></li>' for a in problems)
@@ -1195,23 +1388,27 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
                           if any("work_authorization" in (a.get("note") or "") for a in problems) else "")
              + "</div>") if problems else ""
     warn += [esc(c) for c in packets.consistency(packet, config.load_profile())]
-    if checks.get("resume_pages", 1) > 1:
-        warn.append(f"The resume is {checks['resume_pages']} pages.")
+    prefs = config.for_job(config.load_profile(), job).get("preferences") or {}
+    if checks.get("resume_pages", 1) > int(prefs.get("resume_pages") or 1):
+        warn.append(f"The resume is {checks['resume_pages']} pages, more than the {prefs.get('resume_pages') or 1} chosen.")
+    own = json.loads(job["details"] or "{}").get("settings")
+    if own:  # Set from the chat for this job; every other job follows the Search page.
+        from .prepare import LETTER_MODES
+
+        warn.append("This job has its own settings: " + "; ".join(
+            f"a {v}-page resume" if k == "resume_pages" else f"cover letters {LETTER_MODES[v]}"
+            for k, v in own.items()) + ". The Search page's apply to every other job.")
     if checks.get("invented_numbers"):
         warn.append(f"Tailoring invented {esc(checks['invented_numbers'])}; your resume was used unchanged.")
     warn += [esc(n) for n in packet.get("form_notes", [])]
     docs = "".join(f'<a class=button target=_blank href="/file?path={esc(d["pdf"])}">{k.replace("_", " ")} PDF</a> '
                    for k, d in packet["documents"].items() if d)
-    rows = "".join(
-        f'<tr id="a-{esc(a["key"])}"><td><b>{esc(shown(a))}</b>{" *" if a["required"] else ""}'
-        f'<div class=src>{esc(a["source"])}{" · " + esc(a["note"]) if a.get("note") else ""}</div></td>'
-        f'<td style="width:50%">{answer_input(a, editable)}</td></tr>'
-        for a in packet["answers"])
+    rows = answer_groups(packet["answers"], shown, editable)
     answers_card = (f'<form method=post action="/edit-all" class=card><input type=hidden name=token value="{app.token}">'
-                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2><table class=stack>{rows}</table>'
+                    f'<input type=hidden name=job_id value="{job_id}"><h2>Answers</h2>{rows}'
                     '<div class=save><button class=primary>Save changes</button>'
                     '<span class=muted>Only answers you changed are saved.</span></div></form>'
-                    if editable else f'<div class=card><h2>Answers</h2><table class=stack>{rows}</table></div>')
+                    if editable else f'<div class=card><h2>Answers</h2>{rows}</div>')
     tail = packet.get("submission")
     researched = recorded = proof = ""
     if packet.get("research"):  # Company facts the letter and "why us" answers could use.
@@ -1264,10 +1461,10 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         ("review", "Review", route_card(advice) + first_read_card(app, job, packet)),
         ("application", "Application" + (f" · {len(problems)} need you" if problems else ""),
          answers_card + tailoring + recorded),
-        ("fit", "Fit and research", fit_card(fit, flags=True) + researched),
+        ("fit", "Fit and research", fit_card(fit, flags=True) + researched + description_card(job, packet)),
         ("people", "People" + (f" · {len(listed)}" if listed else ""), people_card(app, job, packet)),
     ]
-    body = f"""{head}
+    body = f"""{head}{first_review_note(app, job)}
     {"".join(f'<div class="flash bad">{w}</div>' for w in warn)}{needs}
     {decision_bar(job, packet, advice, len(warn), len(problems))}
     <div class="row" style="margin-bottom:16px">{" ".join(buttons)} {docs}</div>
@@ -1383,12 +1580,6 @@ def send_buttons(app: Dashboard, job_id: int, pid: str, follow_up: bool = False)
     return out
 
 
-PEOPLE_JS = """document.querySelectorAll("form.send").forEach(f => f.addEventListener("submit", () =>
-  setTimeout(() => location.reload(), 1500)));
-document.querySelectorAll("button[data-copy]").forEach(b => b.addEventListener("click", () => {
-  navigator.clipboard.writeText(document.getElementById(b.dataset.copy).value).then(() => {
-    b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy LinkedIn note", 1500); });
-}));"""
 
 
 def page_resumes(app: Dashboard, flash: str) -> bytes:
@@ -1460,10 +1651,7 @@ def page_resumes(app: Dashboard, flash: str) -> bytes:
     wording kept, then all are merged into one master resume: everything from every version, with
     the newest version winning where they disagree. You review the result before it replaces
     your master resume, and the old one is kept in profile/resume-history/.</p>
-    <form method=post action="/resumes/upload" enctype="multipart/form-data">
-    <input type=hidden name=token value="{app.token}">
-    <div class=row><input type=file name=pdf accept="application/pdf" multiple required>
-    <button class=primary>Upload and merge</button></div></form></div>
+    {upload_form(app)}</div>
     <div class=card><h2>Your resumes <span class=muted>(oldest content first)</span></h2>
     <table><tr><th>File</th><th>Content through</th><th></th></tr>
     {"".join(rows) or '<tr><td colspan=3 class=muted>None yet.</td></tr>'}</table>
@@ -1601,7 +1789,9 @@ def page_applications(app: Dashboard, show: str, flash: str) -> bytes:
     {'<a href="/applications">Show all</a>' if show else ''}</p>
     {rates}
     <div class=card><table><tr><th>Applied</th><th>Job</th><th>How</th><th>Outcome</th></tr>
-    {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Import your job sheet below.</td></tr>'}
+    {"".join(rows) or '<tr><td colspan=4 class=muted>No applications yet. Each one you submit shows here, and '
+     'you record what came of it (assessment, interview, offer) to see what works. Already applied to some jobs? '
+     'Import your job sheet below, so they are never prepared again.</td></tr>'}
     </table>{legend}</div>
     <div class=card><h2>Import or export</h2>
     <p class=muted>Import a CSV job sheet with a link, company, role and a status column
@@ -1735,7 +1925,7 @@ def page_trace(app: Dashboard, job_id: int, run_id: str) -> bytes:
     steps = [n for n in shown["root"]["children"] if n["type"] == "step"]
     strip = "".join(f'<a class="{node_state(n)}" href="#s{n["n"]}">{esc(n["name"])}'
                     f'<span>{seconds_text(n.get("seconds"))}</span></a>' for n in steps)
-    status = (end.get("status") or "running…").replace("_", " ")
+    status = say(end.get("status") or "running") + ("…" if not end.get("status") else "")
     cost = (f'<div><b>${totals["cost"]:.2f}</b><span>'
             f'{"model cost"}'
             f'</span></div>') if totals["cost"] else ""
@@ -1759,7 +1949,7 @@ def page_trace(app: Dashboard, job_id: int, run_id: str) -> bytes:
     return layout(app, "/queue", body, refresh=live, title=f"How it was made: {job['title']}")
 
 
-HOW_MD = Path(__file__).parent / "static" / "how-it-works.md"
+HOW_MD = STATIC / "how-it-works.md"
 # The journey of one application: (stage, who does it, what happens, where in the code).
 JOURNEY = [
     ("Find", "code", "Job lists and company boards, read in a few minutes; Discover searches job sites for companies "
@@ -1802,14 +1992,6 @@ def page_how(app: Dashboard) -> bytes:
     return layout(app, "/how", body)
 
 
-TRACE_JS = """const box = document.getElementById("timeline").parentElement;
-for (const [id, cls] of [["show-raw", "show-raw"], ["only-checks", "only-checks"]]) {
-  const input = document.getElementById(id);
-  try { input.checked = localStorage.getItem(id) === "1"; } catch (_) {}
-  const apply = () => { box.classList.toggle(cls, input.checked);
-    try { localStorage.setItem(id, input.checked ? "1" : "0"); } catch (_) {} };
-  input.addEventListener("change", apply); apply();
-}"""
 
 
 def page_run(app: Dashboard, name: str, start: int = 0) -> bytes:
@@ -1845,7 +2027,6 @@ def page_run(app: Dashboard, name: str, start: int = 0) -> bytes:
     return layout(app, "/", body)
 
 
-CHAT_JS = Path(__file__).parent / "static" / "chat.js"
 SUGGESTIONS = [
     "Find my 5 best matches, one per company, and prepare them.",
     "What's waiting for me, and what should I look at first?",
@@ -1948,7 +2129,9 @@ def chat_card(app: Dashboard, item_id: int, choice: str) -> None:
 
 def page_activity(app: Dashboard) -> bytes:
     """Recent runs on jobs (each opens its timeline), then the worker's raw log."""
-    text = LOG_PATH.read_text(encoding="utf-8")[-20000:] if LOG_PATH.exists() else "No activity yet."
+    text = LOG_PATH.read_text(encoding="utf-8")[-20000:] if LOG_PATH.exists() else (
+        "No activity yet. Everything Job Agent does in the background is written here as it happens: useful "
+        "when something fails and you want to see why.")
     running = app.worker is not None and app.worker.poll() is None
     rows = []
     for path in trace.recent(40):
@@ -1956,7 +2139,7 @@ def page_activity(app: Dashboard) -> bytes:
         job = app.tracker.get(job_id)
         shown = trace.tree(trace.read(path))
         end, totals = shown["end"], shown["totals"]
-        status = (end.get("status") or "running").replace("_", " ")
+        status = say(end.get("status") or "running")
         rows.append(f'<tr><td class=muted style="white-space:nowrap">{path.stem[4:6]}/{path.stem[6:8]} '
                     f'{path.stem[9:11]}:{path.stem[11:13]}</td>'
                     f'<td><a href="/job/{job_id}/trace?run={path.stem}">{esc(trace.KINDS.get(shown["run"].get("kind"), ""))}'
@@ -2029,8 +2212,10 @@ def handler_for(app: Dashboard):
                 return self.send(b"ok", ctype="text/plain")
             if not self.host_ok():
                 return self.send(b"Forbidden", 403, "text/plain")
-            if url.path == "/style.css":
-                return self.send(CSS.encode(), ctype="text/css; charset=utf-8")
+            if url.path in ASSETS:
+                name = ASSETS[url.path]
+                kind = "text/css" if name.endswith(".css") else "text/javascript"
+                return self.send((STATIC / name).read_bytes(), ctype=f"{kind}; charset=utf-8")
             if url.path == "/forms.js":
                 return self.send(FORMS_JS.encode(), ctype="text/javascript; charset=utf-8")
             if url.path == "/export.zip" and config.HOSTED:
@@ -2040,7 +2225,9 @@ def handler_for(app: Dashboard):
             flash = query.get("msg", "")
             parts = url.path.strip("/").split("/")
             if url.path == "/":
-                return self.send(page_today(app, flash))
+                return self.send(page_setup(app, flash) if setup_open(app) else page_today(app, flash))
+            if url.path == "/setup":
+                return self.send(page_setup(app, flash))
             if url.path == "/assistant":
                 chat = query.get("chat", "")
                 latest = app.chats.chats()
@@ -2048,12 +2235,8 @@ def handler_for(app: Dashboard):
                     # The Assistant tab goes back to your latest chat; "+ New chat" starts one.
                     return self.send(b"", 303, headers={"Location": f"/assistant?chat={latest[0]['id']}"})
                 return self.send(page_assistant(app, int(chat) if chat.isdigit() else None, query.get("q", "")))
-            if url.path == "/live.js":
-                return self.send(LIVE_JS.encode(), ctype="text/javascript; charset=utf-8")
-            if url.path == "/people.js":
-                return self.send(PEOPLE_JS.encode(), ctype="text/javascript; charset=utf-8")
-            if url.path == "/assistant/chat.js":
-                return self.send(CHAT_JS.read_bytes(), ctype="text/javascript; charset=utf-8")
+            if url.path == "/tray":
+                return self.send(tray(app).encode())
             if url.path == "/assistant/api/poll":
                 chat, since = query.get("chat", ""), query.get("since", "0")
                 state = chat_poll(app, int(chat) if chat.isdigit() else None, int(since) if since.isdigit() else 0)
@@ -2088,8 +2271,6 @@ def handler_for(app: Dashboard):
                 return self.send(page_run(app, parts[1], int(start) if start.isdigit() else 0))
             if parts[0] == "job" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "trace":
                 return self.send(page_trace(app, int(parts[1]), query.get("run", "")))
-            if url.path == "/trace.js":
-                return self.send(TRACE_JS.encode(), ctype="text/javascript; charset=utf-8")
             if parts[0] == "job" and len(parts) == 2 and parts[1].isdigit():
                 return self.send(page_job(app, int(parts[1]), flash))
             if url.path == "/file":
@@ -2204,6 +2385,10 @@ def handler_for(app: Dashboard):
 
         def act(self, path: str, one: dict, fields: dict, back: str) -> tuple[str, str]:
             tracker = app.tracker
+
+            def to(page: str) -> str:  # Where a form goes after: Get started, when it was sent from there.
+                return "/setup" if one.get("next") == "/setup" else page
+
             ids = [int(i) for raw in fields.get("ids", []) for i in raw.split(",") if i.strip().isdigit()]
             if path == "/discover":
                 app.ensure_worker()
@@ -2267,8 +2452,57 @@ def handler_for(app: Dashboard):
                     tracker.add_task("refresh")
                     return message + " Follow it on Today.", "/"
                 return message + " Rank them on the Ranked jobs page.", "/search"
+            if path == "/setup/wants":
+                if not one.get("description", "").strip():
+                    raise ValueError("Say in a sentence or two what you're looking for: it's what jobs are ranked by.")
+                if one.get("authorization") and "authorized_in_us" not in (
+                        config.load_profile().get("work_authorization") or {}):
+                    actions.set_work_authorization(tracker, one["authorization"])
+                types = [t for t in fields.get("job_types", []) if t in ("internship", "full_time")]
+                message, refresh = actions.save_search(tracker, app.settings, {
+                    **config.load_search(),  # Only these change; the rest of Search stays as it was.
+                    "description": one.get("description", "").strip(),
+                    "job_types": types or ["internship", "full_time"],
+                    "locations": [l.strip() for l in one.get("locations", "").splitlines() if l.strip()] or ["any"],
+                    "terms": [w.strip() for w in one.get("terms", "").split(",") if w.strip()],
+                })
+                if refresh:
+                    app.ensure_worker()
+                    tracker.add_task("refresh", arg=None if app.llm_missing else "rank")
+                    return "Saved. Finding jobs for it now.", "/setup"
+                return message, "/setup"
+            if path == "/setup/find":
+                app.ensure_worker()
+                tracker.add_task("refresh", arg=None if app.llm_missing else "rank")
+                return "Finding jobs for your search.", "/setup"
+            if path == "/setup/skip":
+                config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                (config.DATA_DIR / SETUP_SKIPPED).touch()
+                return "Get started is out of your way. The “Getting started” link at the top brings it back.", "/"
+            if path == "/setup/review-seen":
+                config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                (config.DATA_DIR / REVIEW_SEEN).touch()
+                return "", back
             if path == "/stop-task":
                 return tracker.stop_task(int(one["task_id"])), back
+            if path == "/link":
+                if app.llm_missing:
+                    raise ValueError("Connect a model first (the Connect page): reading and preparing a job needs one.")
+                job_id, queued, said = actions.prepare_link(tracker, one.get("url", ""))
+                if queued:
+                    app.ensure_worker()
+                return said, f"/job/{job_id}"
+            if path == "/start-worker":
+                app.ensure_worker()
+                return "Started background work: queued tasks will begin in a moment.", back
+            if path == "/tray/clear":
+                app.tray_seen = max((t["id"] for t in tracker.tasks(1)), default=0)
+                return "", back
+            if path == "/prepare-anyway-many":
+                app.ensure_worker()
+                for job_id in ids:
+                    actions.prepare_anyway(tracker, job_id)
+                return f"Preparing {len(ids)} job(s) anyway. Each shows on this page as it finishes.", "/"
             if path == "/prepare-anyway":
                 app.ensure_worker()
                 actions.prepare_anyway(tracker, int(one["job_id"]))
@@ -2349,11 +2583,11 @@ def handler_for(app: Dashboard):
             if path == "/skip":
                 actions.skip(tracker, int(one["job_id"]))
                 where = one.get("back", "")
-                return ("Set aside: not interested. “Back to found” on the Skipped tab undoes it.",
+                return ("Set aside: not interested. “Move back to New” on the Not interested tab undoes it.",
                         where if where.startswith("/jobs?") else back)
             if path == "/requeue":
                 actions.requeue(tracker, int(one["job_id"]))
-                return "Back in found.", back
+                return "Moved back to New.", back
             if path == "/outcome":
                 tracker.set_outcome(int(one["job_id"]), one["outcome"], None, one.get("note", ""))
                 return "Saved.", back
@@ -2382,7 +2616,7 @@ def handler_for(app: Dashboard):
                 for pdf in saved:
                     tracker.add_task("import_resume", arg=str(pdf))
                 tracker.add_task("merge_resumes")
-                return f"Reading {len(saved)} resume(s), then merging. This page updates itself.", "/resumes"
+                return f"Reading {len(saved)} resume(s), then merging. This page updates itself.", to("/resumes")
             if path == "/resumes/merge":
                 app.ensure_worker()
                 tracker.add_task("merge_resumes")
@@ -2395,7 +2629,7 @@ def handler_for(app: Dashboard):
                 app.ensure_worker()
                 tracker.add_task("sync_profile")
                 return ("Saved as your master resume; updating your profile from it."
-                        + (f" The previous one is in {shown(backup)}." if backup else "")), "/resumes"
+                        + (f" The previous one is in {shown(backup)}." if backup else "")), to("/resumes")
             if path == "/resumes/edit":
                 resumes.edit_proposal(one.get("markdown", ""))
                 return "Saved your edits to the proposal.", "/resumes"

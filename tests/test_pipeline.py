@@ -11,7 +11,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from job_agent import (actions, answers, companies, config, demo_greenhouse, demo_site,
+from job_agent import (actions, answers, companies, config, demo_greenhouse, demo_site, packets,
                        greenhouse, prepare, submit)
 from job_agent.tracker import Tracker
 from job_agent.worker import Context
@@ -425,3 +425,114 @@ def test_a_form_page_that_wont_load_is_tried_longer_then_prepared_without_it(ctx
     assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
     packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
     assert len(tries) == 2 and any("didn't load" in n for n in packet["form_notes"])
+
+
+def test_a_pasted_link_is_named_from_its_posting_and_prepared_past_your_filters(ctx, monkeypatch):
+    from job_agent import filters, links, worker
+
+    monkeypatch.setattr(filters, "check", lambda *a: "Location: Boston, MA (you're looking in New York).")
+
+    scripted = ctx.llm.json
+    ctx.llm.json = lambda *a: ({"title": "Wrong title", "company": "Contoso AI", "location": "Boston, MA"}
+                               if a[3] == "posting_facts" else scripted(*a))
+    url = "https://job-boards.greenhouse.io/contoso/jobs/4001"
+    job_id, queued, _ = actions.prepare_link(ctx.tracker, url)
+    assert queued and ctx.tracker.get(job_id)["title"] == links.PLACEHOLDER
+    [task] = [t for t in ctx.tracker.tasks(5) if t["kind"] == "link"]
+    result = worker._link(task, ctx, lambda *_: None)
+    job = ctx.tracker.get(job_id)
+    # Greenhouse gives the title and place itself; the model only supplies the company the API lacks.
+    assert (job["title"], job["company"], job["location"]) == (demo_greenhouse.JOBS["4001"], "Contoso AI", "New York, NY")
+    assert job["status"] == "prepared", result  # Your filters would set it aside: you chose it anyway.
+    assert actions.prepare_link(ctx.tracker, url)[1] is False  # The same link again prepares nothing twice.
+
+
+def test_a_link_that_isnt_one_is_refused_before_anything_is_added(ctx):
+    from job_agent import links
+
+    with pytest.raises(ValueError, match="doesn't look like a link"):
+        links.add(ctx.tracker, "senior engineer at acme")
+    assert links.clean("jobs.lever.co/acme/123") == "https://jobs.lever.co/acme/123"
+    assert not ctx.tracker.leads(5)
+
+
+def test_without_latex_the_resume_is_printed_by_the_browser_on_its_own_thread(ctx, monkeypatch):
+    """Without LaTeX the PDF is printed by the browser, which only the thread that opened it may
+    drive: the resume is then tailored in turn, not alongside the answers."""
+    from job_agent import latex
+
+    monkeypatch.setattr(latex, "available", lambda: False)
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    packet = json.loads(open(f"{ctx.tracker.get(job_id)['packet_dir']}/packet.json").read())
+    assert packet["documents"]["resume"]["pdf"].endswith(".pdf")
+
+
+def test_what_you_change_while_a_slow_step_runs_stays(ctx, monkeypatch):
+    """A step that spends minutes on the model changes only its own part when it finishes: an
+    answer you typed meanwhile isn't overwritten by the older copy it started from."""
+    from job_agent import answers, first_read, packets
+
+    job_id = add_job(ctx, "4001")
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    job = ctx.tracker.get(job_id)
+    texts = [a["key"] for a in packets.load(job)["answers"] if a["kind"] in ("text", "textarea")][:2]
+    yours, blank = texts
+
+    def you_type(key, value):
+        def change(packet):
+            next(a for a in packet["answers"] if a["key"] == key)["value"] = value
+        packets.update(job, change)
+
+    # A hiring manager's read, again: you answer a question while it reads.
+    reader = first_read.read
+    monkeypatch.setattr(first_read, "read", lambda c, p: (you_type(yours, "Mine"), reader(c, p))[1])
+    first_read.again(job_id, ctx, log=lambda *_: None)
+    packet = packets.load(job)
+    assert by_key(packet, yours)["value"] == "Mine" and packet["first_read"]
+
+    # Drafting what's blank: a question you answer meanwhile keeps your answer; the other gets the draft.
+    you_type(yours, None)
+    you_type(blank, None)
+
+    def model_drafts(llm, fields, *rest):
+        you_type(yours, "Mine again")
+        for field in fields:
+            field["value"] = "Drafted"
+
+    monkeypatch.setattr(answers, "ask_model", model_drafts)
+    prepare.draft_missing(job_id, ctx, log=lambda *_: None)
+    packet = packets.load(job)
+    assert by_key(packet, yours)["value"] == "Mine again" and by_key(packet, blank)["value"] == "Drafted"
+
+
+def test_a_redo_keeps_your_answers_and_reuses_what_nothing_changed(ctx):
+    job_id = add_job(ctx, "4001")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    actions.edit_answer(ctx.tracker, job_id, "question_9004", "https://linkedin.com/in/jane")
+    fits = sum(name == "fit" for name, _ in ctx.llm.seen)
+
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None, note="lead with research") == "prepared"
+    packet = packets.load(ctx.tracker.get(job_id))
+    assert by_key(packet, "question_9004")["value"] == "https://linkedin.com/in/jane"
+    assert by_key(packet, "question_9004")["source"] == "you"
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits, "same posting, profile and resume today"
+    assert sum(name == "tailored_resume" for name, _ in ctx.llm.seen) == 2, "the documents are redone"
+
+    (config.PROFILE_DIR / "resume.md").write_text(config.read_master_resume() + "\n- Built a parser.\n")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits + 1, "a changed resume is checked again"
+
+
+def test_a_job_can_have_its_own_settings(ctx):
+    job_id, other = add_job(ctx, "4001"), add_job(ctx, "4002")
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    fits = sum(name == "fit" for name, _ in ctx.llm.seen)
+
+    ctx.tracker.merge_details(job_id, settings={"resume_pages": 2})
+    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    sent = [json.loads(user) for name, user in ctx.llm.seen if name == "tailored_resume"][-1]
+    assert sent["page_limit"] == 2
+    assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits, "page count isn't fit: today's check stands"
+    profile = config.load_profile()
+    assert int(config.for_job(profile, ctx.tracker.get(other))["preferences"].get("resume_pages") or 1) == 1

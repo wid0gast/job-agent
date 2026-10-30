@@ -75,8 +75,8 @@ class Scout(Researcher):
         self.people: list[dict] = []
         self.email_format: dict | None = None
 
-    def web_search(self, query: str):
-        found = super().web_search(query)
+    def web_search(self, query: str, site: str = ""):  # site: as declared, e.g. linkedin.com for profiles
+        found = super().web_search(query, site)
         for r in found["results"]:
             self.seen[r["url"]] = f"{r['title']} {r['snippet']}"
         return found
@@ -326,14 +326,6 @@ DRAFT_SCHEMA = {
 DRAFT_CHECK = "Message follows the advice (under 100 words, one question) and invents no numbers"
 
 
-def summary_line(found: dict) -> str:
-    listed = found.get("people") or []
-    if not listed:
-        return found.get("summary", "")[:200] or "No one found"
-    with_email = sum(bool(p.get("email")) for p in listed)
-    return f"{len(listed)} people ({with_email} with an email address)"
-
-
 # Numbers the advice itself puts in a message (a 15-minute chat).
 ASKS = "10 15 20 30 minutes"
 
@@ -361,6 +353,13 @@ def problems(message: dict, known: str) -> list[str]:
     return found
 
 
+def requisition(job_id: str | None) -> str:
+    """The job's ID as a recruiter would know it (R-12345, JR102345), or "". Lever and Ashby IDs
+    are 36-character keys: quoted in an email they read like a bot wrote it (seen in a draft)."""
+    job_id = (job_id or "").strip()
+    return job_id if re.fullmatch(r"[A-Za-z]{0,4}[-_]?\d{3,9}(-\d{1,3})?", job_id) else ""
+
+
 def draft(llm, people: list[dict], job: dict, description: str, profile: dict, master: str,
           facts: list[dict] | None = None, note: str = "") -> None:
     """Write subject, email, LinkedIn note and follow-up for each person, in place."""
@@ -370,7 +369,7 @@ def draft(llm, people: list[dict], job: dict, description: str, profile: dict, m
     request = {
         "candidate": {"name": contact.get("name", ""), "linkedin": contact.get("linkedin", ""),
                       "education": profile.get("education"), "applied": job.get("status") == "submitted"},
-        "job": {"company": job["company"], "title": job["title"], "job_id": job.get("ats_job_id") or ""},
+        "job": {"company": job["company"], "title": job["title"], "job_id": requisition(job.get("ats_job_id"))},
         "people": [{"id": p["id"], "name": p["name"], "kind": p["kind"], "title": p["title"],
                     "shared": p["shared"], "what_their_page_says": p["quote"]} for p in people],
         "resume": master, "story_bank": config.read_optional("story-bank.md"), "company_facts": facts or [],
@@ -580,8 +579,14 @@ def _refresh(job_id: int, ctx, log) -> str:
     keep = [p for p in (packet.get("people") or {}).get("people", []) if p.get("sent_at")]
     found = find(ctx, job, packet.get("description", ""), profile, master, log, keep,
                  (packet.get("research") or {}).get("facts"))
-    packet["people"] = found
-    packets.store(packet)
+
+    def replace(latest: dict) -> None:
+        # The search takes minutes: only its people change, and anyone you emailed meanwhile stays as you left them.
+        sent = {p["id"]: p for p in (latest.get("people") or {}).get("people", []) if p.get("sent_at")}
+        new = [sent.pop(p["id"], p) for p in found["people"]]
+        latest["people"] = {**found, "people": new + list(sent.values())}
+
+    packets.update(job, replace)
     fresh = len(found["people"]) - len(keep)
     return f"Found {fresh} people to contact." if fresh else f"No one found. {found['summary']}"[:300]
 
@@ -602,5 +607,12 @@ def _redraft(job_id: int, ctx, person_ids: list[str], note: str) -> str:
         raise ValueError("No unsent drafts to rewrite.")
     draft(ctx.llm, people, job, packet.get("description", ""), config.load_profile(),
           config.read_master_resume(), (packet.get("research") or {}).get("facts"), note)
-    packets.store(packet)
+    drafted = {p["id"]: p for p in people}
+
+    def rewrite(latest: dict) -> None:  # Only drafts still unsent: one you sent meanwhile keeps its words.
+        for person in (latest.get("people") or {}).get("people", []):
+            if person["id"] in drafted and not person.get("sent_at"):
+                person.update(draft=drafted[person["id"]]["draft"], checks=drafted[person["id"]]["checks"])
+
+    packets.update(job, rewrite)
     return f"Redrafted {len(people)} message(s)."

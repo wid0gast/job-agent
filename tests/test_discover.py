@@ -10,9 +10,10 @@ from job_agent import companies, config, discover, filters, sources
 from job_agent.ats import identify
 from job_agent.tracker import Tracker, match_key
 
-WORKABLE = {"results": [{"shortcode": "AB12", "title": "Software Engineer Intern", "state": "published",
-                         "remote": False, "location": {"city": "New York", "region": "NY", "country": "United States"},
-                         "published": "2026-10-01T00:00:00.000Z", "type": "internship"}], "total": 1}
+WORKABLE = {"name": "Acme", "jobs": [{"shortcode": "AB12", "title": "Software Engineer Intern",
+                                      "employment_type": "", "telecommuting": False, "published_on": "2026-10-01",
+                                      "locations": [{"city": "New York", "region": "NY", "country": "United States",
+                                                     "hidden": False}]}]}
 SMARTRECRUITERS = {"totalFound": 1, "content": [
     {"id": "744000111", "name": "Data Engineer", "company": {"name": "Acme Corp"}, "releasedDate": "2026-10-02",
      "location": {"fullLocation": "Austin, TX, United States", "remote": True},
@@ -83,6 +84,25 @@ def test_each_board_reader():
             assert (job["title"], job["location"]) == (title, place), ats
             assert identify(job["url"]).ats == ats and job["active"]
     assert sources.BOARD_FEEDS["workable"](client(), "acme")[0]["job_type"] == "internship"
+
+
+def test_a_site_that_refuses_is_skipped_for_the_rest_of_the_refresh():
+    asked = []
+
+    def refusing(request):
+        asked.append(str(request.url))
+        return httpx.Response(429, headers={"Retry-After": "86400"}) if "workable" in str(request.url) \
+            else fake_sites(request)
+
+    todo = [("workable", {"board": f"w{i}", "name": f"W{i}"}) for i in range(30)] + \
+           [("bamboohr", {"board": "acme", "name": "Acme"})]
+    lines, counts = [], {"boards": 0}
+    with httpx.Client(transport=httpx.MockTransport(refusing)) as c:
+        jobs = sources.read_boards(c, todo, ["other"], counts, log=lines.append)
+    assert [j["title"] for j in jobs] == ["Backend Engineer"] and counts["boards"] == 1  # Other sites still read.
+    assert sum("workable" in url for url in asked) <= 8                # At most the boards already in flight.
+    assert not any("For more information" in line for line in lines)
+    assert "skipped its other" in lines[-1]
 
 
 @pytest.fixture()
@@ -211,3 +231,57 @@ def test_discover_without_a_web_searching_model(world, monkeypatch):
     assert '"Software Engineer" New York' in asked[0]
     assert companies.Companies(company_file).by_board("workable", "acme")
     assert counts["new_boards"] == 1 and counts["new"] >= 1
+
+
+def test_a_refresh_from_get_started_ranks_what_it_found(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from job_agent import matching, worker
+    from job_agent.tracker import Tracker
+
+    ranked_early = []
+
+    def read(tracker, profile, lists_read=None, **_):  # The lists are in, then the boards take minutes.
+        if lists_read:
+            lists_read()
+            ranked_early.append(any(t["kind"] == "score_matches" for t in tracker.tasks(10)))
+        return {"new": 3, "closed": 0, "seen": 0, "skipped": 0}
+
+    monkeypatch.setattr(sources, "refresh", read)
+    monkeypatch.setattr(matching, "keyword_rank", lambda *a: 0)
+    tracker = Tracker(tmp_path / "t.db")
+    for arg, ranked in ((None, False), ("rank", True)):
+        task = tracker.task(tracker.add_task("refresh", arg=arg))
+        worker._refresh(task, SimpleNamespace(tracker=tracker), print)
+        tracker.set_task(task["id"], status="done")
+        assert any(t["kind"] == "score_matches" for t in tracker.tasks(10)) is ranked
+    assert ranked_early == [True]  # Ranking starts once the lists are in, before the boards.
+
+
+def test_a_task_that_hits_a_missing_file_fails_without_stopping_its_lane(tmp_path, monkeypatch):
+    """config raises SystemExit for a missing file (no master resume yet). In a lane of its own
+    that once ended the lane's thread, leaving the task "running" and the lane dead."""
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from job_agent import worker
+    from job_agent.tracker import Tracker
+
+    def no_resume(task, ctx, log):
+        raise SystemExit("Add your master resume at profile/resume.md.")
+
+    monkeypatch.setitem(worker.HANDLERS, "people", no_resume)
+    tracker = Tracker(tmp_path / "t.db")
+    ids = [tracker.add_task("people", job_id) for job_id in (1, 2)]
+    stop = threading.Event()
+    side = threading.Thread(target=worker.lane, daemon=True,
+                            args=(SimpleNamespace(tracker=tracker, llm=object()), lambda *_: None, stop, ("people",)))
+    side.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and any(tracker.task(i)["status"] != "failed" for i in ids):
+        time.sleep(0.2)
+    stop.set()
+    side.join(timeout=5)
+    assert [tracker.task(i)["status"] for i in ids] == ["failed", "failed"]  # The second ran too.
+    assert "resume.md" in tracker.task(ids[0])["result"]

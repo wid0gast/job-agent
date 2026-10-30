@@ -81,11 +81,19 @@ def scout_steps():
     ]
 
 
+def prepare_and_find(job_id, ctx, **kwargs):  # noqa: F811
+    """Prepare, then find people, as the worker does (people are a task of their own, after)."""
+    status = prepare.prepare(job_id, ctx, **kwargs)
+    if status in ("prepared", "needs_you") and prepare.wants_people(ctx, job_id):
+        people.refresh(job_id, ctx, log=lambda *_: None)
+    return status
+
+
 def test_people_are_checked_drafted_and_sent_only_by_you(ctx, monkeypatch):  # noqa: F811
     monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
     ctx.llm = PeopleModel(scout_steps())
     job_id = add_job(ctx, "4001")
-    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "prepared"
+    assert prepare_and_find(job_id, ctx, log=lambda *_: None) == "prepared"
 
     results = ctx.llm.results
     assert "LinkedIn pages aren't opened" in results[1]["error"]
@@ -133,11 +141,12 @@ def test_people_are_checked_drafted_and_sent_only_by_you(ctx, monkeypatch):  # n
     people.set_state(ctx.tracker, job_id, maria["id"], "replied")
     assert people.due(ctx.tracker) == []
 
-    # A redo of the packet keeps the people you've emailed.
-    ctx.llm = PeopleModel([("finish", {"summary": "No one new."})])
-    prepare.prepare(job_id, ctx, log=lambda *_: None, note="shorter")
+    # A redo of the packet keeps the people found, with their drafts, and doesn't search again.
+    ctx.llm = PeopleModel([])
+    prepare_and_find(job_id, ctx, log=lambda *_: None, note="shorter")
     kept = packets.load(ctx.tracker.get(job_id))["people"]["people"]
-    assert [p["name"] for p in kept] == ["Maria Gomez"] and kept[0]["replied_at"]
+    assert [p["name"] for p in kept] == ["Maria Gomez", "Leo Chen"] and kept[0]["replied_at"]
+    assert not prepare.wants_people(ctx, job_id)
 
 
 def test_search_page_choices_and_no_contact_postings(ctx, monkeypatch):  # noqa: F811
@@ -157,7 +166,7 @@ def test_your_edits_are_checked(ctx, monkeypatch):  # noqa: F811
     monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
     ctx.llm = PeopleModel(scout_steps())
     job_id = add_job(ctx, "4001")
-    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    prepare_and_find(job_id, ctx, log=lambda *_: None)
     pid = packets.load(ctx.tracker.get(job_id))["people"]["people"][0]["id"]
     person = people.edit(ctx.tracker, job_id, pid, {"body": "Hi Maria, " + "word " * 120, "email": "m@x.org"})
     assert (person["email"], person["email_status"]) == ("m@x.org", "yours")
@@ -176,7 +185,7 @@ def test_the_assistant_asks_and_you_send(ctx, tmp_path, monkeypatch):  # noqa: F
     monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
     ctx.llm = PeopleModel(scout_steps())
     job_id = add_job(ctx, "4001")
-    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    prepare_and_find(job_id, ctx, log=lambda *_: None)
     cards = Cards("Her address is maria@contoso-mail.com")
     tools = Assistant(ctx.tracker, ctx.settings, cards.chat())
     listed = tools.get_packet(job_id)["people_to_contact"]["people"]
@@ -215,7 +224,7 @@ def test_dashboard_shows_people_and_opens_your_email(ctx, tmp_path, monkeypatch)
     monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
     ctx.llm = PeopleModel(scout_steps())
     job_id = add_job(ctx, "4001")
-    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    prepare_and_find(job_id, ctx, log=lambda *_: None)
     monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "data" / "t.db")
     app = dashboard.Dashboard(ctx.settings, 0)
     server = ThreadingHTTPServer(("127.0.0.1", 0), None)
@@ -255,7 +264,7 @@ def test_headline_only_people_are_flagged_and_removed_people_stay_removed(ctx, m
     monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
     ctx.llm = PeopleModel(scout_steps())
     job_id = add_job(ctx, "4001")
-    prepare.prepare(job_id, ctx, log=lambda *_: None)
+    prepare_and_find(job_id, ctx, log=lambda *_: None)
     maria = packets.load(ctx.tracker.get(job_id))["people"]["people"][0]
     assert maria["evidence"] == "search result"
 
@@ -268,3 +277,57 @@ def test_headline_only_people_are_flagged_and_removed_people_stay_removed(ctx, m
     names = [p["name"] for p in packets.load(ctx.tracker.get(job_id))["people"]["people"] if not p.get("removed")]
     assert "Maria Gomez" not in names
     assert any("removed this person before" in (r.get("error") or "") for r in again.results)
+
+
+def test_the_application_is_ready_before_people_are_found(ctx, monkeypatch):  # noqa: F811
+    """Finding people takes minutes, so it runs after, alongside other work: the application is
+    ready to review at once."""
+    from job_agent import worker
+
+    monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
+    ctx.llm = PeopleModel(scout_steps())
+    job_id = add_job(ctx, "4001")
+    task = ctx.tracker.task(ctx.tracker.add_task("prepare", job_id))
+    worker._prepare(task, ctx, lambda *_: None)
+    assert ctx.tracker.get(job_id)["status"] == "prepared" and "people" not in packets.load(ctx.tracker.get(job_id))
+    # Queued after the prepare, on the worker's main loop: the class broker allows two requests at
+    # once, so a people search alongside the next prepare would compete with it.
+    assert [t["kind"] for t in ctx.tracker.tasks(5)].count("people") == 1 and ("people",) not in worker.LANES
+
+
+def test_someone_you_email_while_people_are_searched_stays_sent(ctx, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(research, "search", lambda http, query: RESULTS)
+    ctx.llm = PeopleModel(scout_steps())
+    job_id = add_job(ctx, "4001")
+    prepare_and_find(job_id, ctx, log=lambda *_: None)
+    maria = packets.load(ctx.tracker.get(job_id))["people"]["people"][0]
+
+    def search_while_you_send(*args):
+        people.mark_sent(ctx.tracker, job_id, maria["id"])
+        return {"found_at": people.now(), "people": [], "email_format": None, "summary": "No one new."}
+
+    monkeypatch.setattr(people, "find", search_while_you_send)
+    people.refresh(job_id, ctx, log=lambda *_: None)
+    kept = packets.load(ctx.tracker.get(job_id))["people"]["people"]
+    assert [p["name"] for p in kept] == ["Maria Gomez"] and kept[0]["sent_at"]
+
+
+def test_a_message_quotes_a_job_id_only_when_a_recruiter_would_know_it():
+    assert people.requisition("R-12345") == "R-12345" and people.requisition("JR102345") == "JR102345"
+    for key in ("bb45b7f6-dd7e-40e5-84e6-52e21650a7b8", "4523416007", "", None):  # Lever/Ashby, Greenhouse keys.
+        assert people.requisition(key) == ""
+
+
+def test_the_people_search_can_be_limited_to_one_site(ctx, monkeypatch):  # noqa: F811
+    """The tool offers site (linkedin.com is where people's roles show), so the search takes it:
+    without it every search the agent limited to LinkedIn failed, and nobody was found. The free
+    search refuses site: queries, so the site is named and only its results are kept."""
+    asked = []
+    monkeypatch.setattr(research, "search", lambda http, query: asked.append(query) or RESULTS)
+    ctx.llm = PeopleModel([])  # No web_json: the free search, as for test stand-ins.
+    job = ctx.tracker.get(add_job(ctx, "4001"))
+    scout = people.Scout(ctx, job, "", lambda *_: None, list(people.KINDS), 2, "")
+    tool = next(t for t in scout.tools() if t.name == "web_search")
+    found = tool.fn(query="Contoso recruiter", site="linkedin.com")["results"]
+    assert asked == ["Contoso recruiter linkedin"]
+    assert found and all("linkedin.com" in r["url"] for r in found)

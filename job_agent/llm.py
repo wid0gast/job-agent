@@ -19,7 +19,7 @@ REQUEST_LIMIT_SECONDS = 90  # The class proxy's deadline for one broker request 
 # Each step and how hard it should think (passed on where a model supports it).
 TASKS = {
     "match_scores": "low", "resume_markdown": "low", "resume_merge": "medium", "resume_facts": "low",
-    "research": "medium",
+    "research": "medium", "posting_facts": "low",
     "assistant": "medium", "fit": "medium", "tailored_resume": "high", "cover_letter": "high",
     "form_answers": "medium", "explore": "medium", "discover": "low",
     "people": "medium", "web_search": "low", "outreach": "medium", "first_read": "medium",
@@ -432,24 +432,10 @@ def parse_json(text: str):
         raise ValueError(f"not JSON ({error})") from None
 
 
-def check(value, schema: dict, path: str = "$") -> None:
-    """A small JSON Schema check: types, required keys, enums, nested objects and arrays."""
-    kind = schema.get("type")
-    types = {"object": dict, "array": list, "string": str, "integer": int,
-             "number": (int, float), "boolean": bool}
-    if kind in types and not isinstance(value, types[kind]):
-        raise ValueError(f"{path} should be {kind}")
-    if kind in ("integer", "number") and isinstance(value, bool):
-        raise ValueError(f"{path} should be {kind}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ValueError(f"{path} must be one of {schema['enum']}")
-    if kind == "object":
-        for key in schema.get("required", []):
-            if key not in value:
-                raise ValueError(f"{path}.{key} is missing")
-        for key, sub in schema.get("properties", {}).items():
-            if key in value:
-                check(value[key], sub, f"{path}.{key}")
-    if kind == "array" and "items" in schema:
-        for index, item in enumerate(value):
-            check(item, schema["items"], f"{path}[{index}]")
+def check(value, schema: dict) -> None:
+    """A model's JSON reply against its schema (the harness's checker; extra keys allowed)."""
+    from .harness import argument_problems
+
+    problems = argument_problems(schema, value, "the reply", strict=False)
+    if problems:
+        raise ValueError("; ".join(problems[:3]))

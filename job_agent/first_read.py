@@ -11,7 +11,6 @@ words that aren't there is dropped). Nothing is changed for you: you decide what
 by editing or asking the assistant.
 """
 
-import hashlib
 import json
 import re
 from datetime import UTC, date, datetime
@@ -52,7 +51,7 @@ def material(packet: dict) -> dict:
 
 def basis(packet: dict) -> str:
     """Changes when what the employer reads changes: an older read is then out of date."""
-    return hashlib.sha1(json.dumps(material(packet), sort_keys=True).encode()).hexdigest()[:12]
+    return packets.basis(material(packet))
 
 
 def flat(text: str) -> str:
@@ -113,7 +112,8 @@ def again(job_id: int, ctx, log=print) -> str:
             raise ValueError(f"Job {job_id} has no packet to read (it is {job['status']}).")
         with trace.step("A hiring manager's first read") as step:
             log("  reading it as the hiring manager")
-            packet["first_read"] = read(ctx, packet)
-            step.summary = summary(packet["first_read"])
-        packets.store(packet)  # Advice only: the approval fingerprint covers what's sent, not this.
+            found = read(ctx, packet)
+            step.summary = summary(found)
+        # Advice only: the approval fingerprint covers what's sent, not this.
+        packets.update(job, lambda latest: latest.update(first_read=found))
         return step.summary
