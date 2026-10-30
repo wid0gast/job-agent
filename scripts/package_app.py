@@ -55,7 +55,9 @@ files = {
     "companies.csv": ROOT / "companies.csv",
     "company-rules.yaml": ROOT / "company-rules.yaml",
 }
-for pattern in ("job_agent/*.py", "job_agent/templates/*.tex", "job_agent/static/*.js", "job_agent/static/*.md"):
+# All of static/: the pages' styles and scripts and the How it works text (a stylesheet left out once
+# meant every page on the platform was unstyled).
+for pattern in ("job_agent/*.py", "job_agent/templates/*.tex", "job_agent/static/*"):
     for path in sorted(ROOT.glob(pattern)):
         if not path.name.startswith("demo_"):  # Fake job boards for the tests.
             files[str(path.relative_to(ROOT))] = path
