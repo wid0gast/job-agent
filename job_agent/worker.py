@@ -75,10 +75,35 @@ class Context:
             raise SystemExit(NOT_SET_UP)
         self.http = http()
         self.playwright = sync_playwright().start()
-        self.headless = Headless(self.playwright, settings.browser_channel)
+        self._owner, self._local = threading.current_thread(), threading.local()
+        self._local.headless = Headless(self.playwright, settings.browser_channel)
         self._browser = None
         self.profile_dir = profile_dir or BROWSER_PROFILE
         self.headless_window = headless_window  # Tests only; real submits stay visible.
+
+    @property
+    def headless(self):
+        """The headless browser of the calling thread. Playwright's objects work only on the thread
+        that made them: a people search on its own lane once read pages with the worker's browser,
+        and every prepare after it failed ("Cannot switch to a different thread")."""
+        mine = getattr(self._local, "headless", None)
+        if mine is None:
+            from playwright.sync_api import sync_playwright
+
+            from .browser import Headless
+
+            mine = self._local.headless = Headless(sync_playwright().start(), self.settings.browser_channel)
+        return mine
+
+    def close_thread(self) -> None:
+        """Close the calling thread's own headless browser (a lane's, as it stops)."""
+        mine = getattr(self._local, "headless", None)
+        if mine is not None and threading.current_thread() is not self._owner:
+            self._local.headless = None
+            try:
+                mine.close()
+            finally:
+                mine.playwright.stop()
 
     def browser(self):
         """The visible Chrome window, opened the first time a submit needs it."""
@@ -293,13 +318,17 @@ def lane(ctx: Context, log, stop: threading.Event, kinds: tuple[str, ...] = LANE
         # asks you things, and it must stay pointed at the prepare's task.
         return HANDLERS[task["kind"]](task, ctx, log)
 
-    while not stop.is_set():
-        task = ctx.tracker.claim_task(kinds=kinds)
-        if task is None:
-            stop.wait(1)
-            continue
-        log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
-        finish(task, ctx, log, work)
+    try:
+        while not stop.is_set():
+            task = ctx.tracker.claim_task(kinds=kinds)
+            if task is None:
+                stop.wait(1)
+                continue
+            log(f"Task {task['id']}: {task['kind']} (alongside other tasks)")
+            finish(task, ctx, log, work)
+    finally:
+        if hasattr(ctx, "close_thread"):  # Tests run lanes with a stand-in context.
+            ctx.close_thread()
 
 
 def serve(settings, log=print, idle_exit: float | None = None) -> None:

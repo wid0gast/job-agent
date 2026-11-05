@@ -75,6 +75,10 @@ class Headless:
 
     @property
     def browser(self):
+        # A long-running worker outlives its browser at times (the laptop slept, Chrome crashed):
+        # launch a new one rather than fail every task after.
+        if self._browser is not None and not self._browser.is_connected():
+            self._browser = None
         if self._browser is None:
             try:
                 self._browser = self.playwright.chromium.launch(channel=self.channel or None)

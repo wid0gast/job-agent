@@ -536,3 +536,28 @@ def test_a_job_can_have_its_own_settings(ctx):
     assert sum(name == "fit" for name, _ in ctx.llm.seen) == fits, "page count isn't fit: today's check stands"
     profile = config.load_profile()
     assert int(config.for_job(profile, ctx.tracker.get(other))["preferences"].get("resume_pages") or 1) == 1
+
+
+def test_a_side_lane_reads_pages_with_its_own_browser(ctx):
+    """A people search on its own lane once read pages with the worker's browser; Playwright's
+    objects work only on the thread that made them, so every prepare after it failed."""
+    import threading
+
+    main, seen = ctx.headless, {}
+
+    def lane():
+        seen["browser"] = ctx.headless
+        seen["text"] = ctx.headless.visible_text("<p>Read on a lane</p>")
+        ctx.close_thread()
+
+    side = threading.Thread(target=lane)
+    side.start()
+    side.join(60)
+    assert seen["text"] == "Read on a lane" and seen["browser"] is not main
+    assert ctx.headless is main and ctx.headless.visible_text("<p>Still reading</p>") == "Still reading"
+
+
+def test_a_browser_that_died_is_launched_again(ctx):
+    ctx.headless.visible_text("<p>Before</p>")
+    ctx.headless.browser.close()  # As when the laptop sleeps or Chrome crashes under a long-running worker.
+    assert ctx.headless.visible_text("<p>After</p>") == "After"
