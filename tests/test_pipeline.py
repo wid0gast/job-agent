@@ -389,6 +389,29 @@ def test_no_reply_to_the_agents_question_ends_its_run(ctx):
         explorer.ask("May I create an account?")
 
 
+def test_a_question_left_unanswered_leaves_the_job_waiting_on_you_not_failed(ctx, monkeypatch):
+    # JPMC's CAPTCHA and Amazon's account question went unanswered overnight and both jobs read
+    # "Couldn't finish", though nothing had gone wrong: they were waiting on you.
+    from job_agent import web
+
+    from job_agent import systems
+
+    job_id = add_job(ctx, "4001")
+    greenhouse = systems.adapter("greenhouse")
+    posting = greenhouse.fetch(ctx.http, *greenhouse.resolve(ctx.http, ctx.tracker.get(job_id)))
+    ctx.tracker.db.execute("UPDATE jobs SET ats = 'other' WHERE id = ?", (job_id,))  # A site the agent fills.
+    monkeypatch.setattr(web, "fetch", lambda ctx, job: {**posting, "html": f"<h1>{job['title']}</h1>{posting['html']}"})
+
+    def explore(*args, **kwargs):
+        raise web.Unanswered("It asked you: “Please solve the CAPTCHA.” No reply came within 15 minutes.")
+
+    monkeypatch.setattr(web, "explore", explore)
+    assert prepare.prepare(job_id, ctx, log=lambda *_: None) == "needs_you"
+    job = ctx.tracker.get(job_id)
+    assert job["status"] == "needs_you" and "CAPTCHA" in job["reason"]
+    assert json.loads(job["details"])["fit"], "the fit check is kept for the next prepare"
+
+
 def test_an_empty_fit_check_is_a_failure_not_a_score_of_zero(ctx):
     # One class-platform model answered every fit check with the schema's bare minimum.
     job_id = add_job(ctx, "4001")

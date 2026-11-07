@@ -1319,6 +1319,9 @@ def page_job(app: Dashboard, job_id: int, flash: str) -> bytes:
         elif job["status"] == "found":
             note = (f'<div class=row style="margin:0 0 14px">{prepare_button(app, job, True)}<span class=muted>Not '
                     'prepared yet: reads the posting, checks your fit, then writes the application.</span></div>')
+        elif job["status"] == "needs_you":  # Stopped on a question you didn't answer in time.
+            note = (f'<div class=row style="margin:0 0 14px">{prepare_button(app, job, True)}<span class=muted>Prepare '
+                    'again when you can answer. Today\'s fit check is reused, so it goes straight to the form.</span></div>')
         elif job["status"] in ("rejected", "skipped"):
             note = form(app, "/requeue", "Move back to New", {"job_id": job_id}) + " "
         mark = (form(app, "/mark-applied", "I applied to this myself", {"job_id": job_id})

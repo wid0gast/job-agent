@@ -85,6 +85,9 @@ def with_frames(page, title: str) -> str:
 
 # ----- explore -------------------------------------------------------------
 
+class Unanswered(ValueError):
+    """The agent asked you something and no reply came in time: the job waits on you, it didn't fail."""
+
 def explore(ctx, job: dict, description: str, document, log, facts=lambda: []) -> dict:
     """Run the explore agent. `document(kind)` returns a PDF path ("resume",
     "cover_letter"), making the letter on first request. Returns answers,
@@ -114,6 +117,9 @@ def explore(ctx, job: dict, description: str, document, log, facts=lambda: []) -
         page.close()
     except PlaywrightError:
         pass
+    if explorer.unanswered:
+        raise Unanswered(f"It asked you: “{explorer.unanswered[:300]}” No reply came within 15 minutes, so it "
+                         "stopped. Prepare again when you're at your computer to answer.")
     if not explorer.final:
         raise ValueError(f"The agent didn't reach the final step: {report}")
     return {"answers": explorer.answers, "report": report,
@@ -132,6 +138,7 @@ class Explorer:
         self.auth_pages: set[str] = set()
         self.allowed_hosts: set[str] = set()
         self.final = False
+        self.unanswered = ""  # The question that went unanswered, if one did.
 
     # ----- recording --------------------------------------------------------
 
@@ -156,6 +163,7 @@ class Explorer:
         try:
             return self._ask(question)
         except TimeoutError:
+            self.unanswered = question
             raise StopRun(f"Stopped: no reply within 15 minutes to “{question[:200]}”. Prepare again when "
                           "you can answer.") from None
 

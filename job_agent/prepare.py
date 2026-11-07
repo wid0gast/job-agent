@@ -415,6 +415,8 @@ def build(job: dict, ctx, log, note: str = "") -> dict:
                 log("  filling the application (explore agent)")
                 try:
                     explored = web.explore(ctx, job, description, document, log, company_facts)
+                except web.Unanswered as waiting:
+                    raise Stop("needs_you", str(waiting)) from None
                 except ValueError as error:
                     raise Stop("failed", str(error)[:1500]) from None
                 step.summary = f"{len(explored['answers'])} fields filled; stopped before the final submit"

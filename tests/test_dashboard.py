@@ -338,3 +338,26 @@ def test_an_education_row_says_which_degree_it_is_for():
                                         "Start date year · Bachelor of Engineering, BITS Pilani"]
     note = answers.row_note(rows[1], profile)
     assert "start year of your Bachelor of Engineering, BITS Pilani" in note
+
+
+def test_a_job_waiting_on_an_unanswered_question_offers_prepare_again(tmp_path, monkeypatch):
+    """No packet yet, only the question it stopped on: the page says so and offers Prepare again,
+    and the job is listed with the others that need you."""
+    monkeypatch.setattr(dashboard, "DB_PATH", tmp_path / "t.db")
+    tracker = Tracker(tmp_path / "t.db")
+    tracker.add_lead("https://jpmc.example/job/1", "s", "JPMC", "ML Intern", "NYC", ats="other")
+    job = tracker.all()[0]
+    tracker.move(job["id"], "found", "preparing")
+    tracker.move(job["id"], "preparing", "needs_you", reason="It asked you: “Please solve the CAPTCHA.”")
+    app = dashboard.Dashboard(config.Settings.from_env(require_model=False), 0)
+    assert [j["id"] for j in dashboard.waiting_on_you(app)] == [job["id"]]
+    server = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    app.port = server.server_port
+    server.RequestHandlerClass = dashboard.handler_for(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        page = request(app.port, "GET", f"/job/{job['id']}")[1]
+        assert "CAPTCHA" in page and 'action="/prepare"' in page
+        assert "CAPTCHA" in request(app.port, "GET", "/queue")[1]
+    finally:
+        server.shutdown()
