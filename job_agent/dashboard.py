@@ -184,7 +184,7 @@ def layout(app: Dashboard, active: str, body: str, flash: str = "", refresh: boo
     return (f"<!doctype html><html><head><meta charset=utf-8><meta name=referrer content=same-origin><meta name=viewport "
             f"content='width=device-width,initial-scale=1'><meta name=color-scheme content='light dark'>"
             f"<title>{esc(title + ' · ' if title else '')}Job Agent</title><style>{FIRST_PAINT}</style>"
-            f"<link rel=stylesheet href=/style.css></head><body{live}{' class=chat' if active == '/assistant' else ''}><header>"
+            f"<link rel=stylesheet href=/style.css></head><body{live}{' class=assistant' if active == '/assistant' else ''}><header>"
             f'<a class="brand" href="/"><span class="logo">{LOGO}</span>Job Agent</a><nav>{nav}</nav>{chip}</header>'
             f"<main>{banner}{note}{body}</main>{tray(app)}<script src=/live.js></script></body></html>").encode()
 
